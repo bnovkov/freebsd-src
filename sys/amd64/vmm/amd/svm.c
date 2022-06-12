@@ -33,12 +33,12 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/smp.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/reg.h>
+#include <sys/smp.h>
 #include <sys/smr.h>
 #include <sys/sysctl.h>
 
@@ -46,10 +46,10 @@ __FBSDID("$FreeBSD$");
 #include <vm/pmap.h>
 
 #include <machine/cpufunc.h>
-#include <machine/psl.h>
 #include <machine/md_var.h>
-#include <machine/specialreg.h>
+#include <machine/psl.h>
 #include <machine/smp.h>
+#include <machine/specialreg.h>
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
 #include <machine/vmm_instruction_emul.h>
@@ -1420,6 +1420,12 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			info1 = 0;
 			break;
 
+    case IDT_DB:
+	    /* HW watchpoint overhaul */
+	    reflect = 0;
+	    errcode_valid = 0;
+	    info1 = 0;
+	    break;
 		case IDT_BP:
 		case IDT_OF:
 		case IDT_BR:
@@ -2325,6 +2331,9 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		if (val == 0)
 			error = EINVAL;
 		break;
+	case VM_CAP_DB_EXIT:
+		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
+		break;
 	default:
 		error = ENOENT;
 		break;
@@ -2352,6 +2361,10 @@ svm_getcap(void *arg, int vcpu, int type, int *retval)
 		break;
 	case VM_CAP_UNRESTRICTED_GUEST:
 		*retval = 1;	/* unrestricted guest is always enabled */
+		break;
+	case VM_CAP_DB_EXIT:
+		*retval = svm_get_intercept(
+		    sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB));
 		break;
 	default:
 		error = ENOENT;
