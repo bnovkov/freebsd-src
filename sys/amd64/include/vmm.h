@@ -486,6 +486,7 @@ enum vm_cap_type {
 	VM_CAP_RDPID,
 	VM_CAP_RDTSCP,
 	VM_CAP_DB_EXIT,
+	VM_CAP_RFLAGS_SSTEP,
 	VM_CAP_MAX
 };
 

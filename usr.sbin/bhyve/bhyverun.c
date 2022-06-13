@@ -928,6 +928,20 @@ vmexit_debug(struct vmctx *ctx, struct vm_exit *vmexit, int *pvcpu)
 }
 
 static int
+vmexit_db(struct vmctx *ctx, struct vm_exit *vmexit, int *pvcpu)
+{
+
+#ifdef BHYVE_SNAPSHOT
+	checkpoint_cpu_suspend(*pvcpu);
+#endif
+	gdb_cpu_debug(*pvcpu, vmexit);
+#ifdef BHYVE_SNAPSHOT
+	checkpoint_cpu_resume(*pvcpu);
+#endif
+	return (VMEXIT_CONTINUE);
+}
+
+static int
 vmexit_breakpoint(struct vmctx *ctx, struct vm_exit *vmexit, int *pvcpu)
 {
 
@@ -936,21 +950,22 @@ vmexit_breakpoint(struct vmctx *ctx, struct vm_exit *vmexit, int *pvcpu)
 }
 
 static vmexit_handler_t handler[VM_EXITCODE_MAX] = {
-	[VM_EXITCODE_INOUT]  = vmexit_inout,
-	[VM_EXITCODE_INOUT_STR]  = vmexit_inout,
-	[VM_EXITCODE_VMX]    = vmexit_vmx,
-	[VM_EXITCODE_SVM]    = vmexit_svm,
-	[VM_EXITCODE_BOGUS]  = vmexit_bogus,
+	[VM_EXITCODE_INOUT] = vmexit_inout,
+	[VM_EXITCODE_INOUT_STR] = vmexit_inout,
+	[VM_EXITCODE_VMX] = vmexit_vmx,
+	[VM_EXITCODE_SVM] = vmexit_svm,
+	[VM_EXITCODE_BOGUS] = vmexit_bogus,
 	[VM_EXITCODE_REQIDLE] = vmexit_reqidle,
-	[VM_EXITCODE_RDMSR]  = vmexit_rdmsr,
-	[VM_EXITCODE_WRMSR]  = vmexit_wrmsr,
-	[VM_EXITCODE_MTRAP]  = vmexit_mtrap,
+	[VM_EXITCODE_RDMSR] = vmexit_rdmsr,
+	[VM_EXITCODE_WRMSR] = vmexit_wrmsr,
+	[VM_EXITCODE_MTRAP] = vmexit_mtrap,
 	[VM_EXITCODE_INST_EMUL] = vmexit_inst_emul,
 	[VM_EXITCODE_SPINUP_AP] = vmexit_spinup_ap,
 	[VM_EXITCODE_SUSPENDED] = vmexit_suspend,
 	[VM_EXITCODE_TASK_SWITCH] = vmexit_task_switch,
 	[VM_EXITCODE_DEBUG] = vmexit_debug,
 	[VM_EXITCODE_BPT] = vmexit_breakpoint,
+	[VM_EXITCODE_DB] = vmexit_db,
 };
 
 static void

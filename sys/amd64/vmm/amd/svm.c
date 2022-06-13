@@ -27,6 +27,7 @@
  */
 
 #include <sys/cdefs.h>
+#include <x86/psl.h>
 __FBSDID("$FreeBSD$");
 
 #include "opt_bhyve_snapshot.h"
@@ -576,6 +577,9 @@ svm_init(struct vm *vm, pmap_t pmap)
 	svm_sc->vm = vm;
 	svm_sc->nptp = (vm_offset_t)vtophys(pmap->pm_pmltop);
 
+	/* Zero all optional caps */
+	memset(svm_sc->pcpu_caps, 0, sizeof(svm_sc->pcpu_caps));
+
 	/*
 	 * Intercept read and write accesses to all MSRs.
 	 */
@@ -621,6 +625,8 @@ svm_init(struct vm *vm, pmap_t pmap)
 		vmcb_init(svm_sc, i, iopm_pa, msrpm_pa, pml4_pa);
 		svm_msr_guest_init(svm_sc, i);
 	}
+
+
 	return (svm_sc);
 }
 
@@ -1390,6 +1396,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	case 0x40 ... 0x5F:
 		vmm_stat_incr(svm_sc->vm, vcpu, VMEXIT_EXCEPTION, 1);
 		reflect = 1;
+		handled = 1;
 		idtvec = code - 0x40;
 		switch (idtvec) {
 		case IDT_MC:
@@ -1400,6 +1407,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			reflect = 0;
 			VCPU_CTR0(svm_sc->vm, vcpu, "Vectoring to MCE handler");
 			__asm __volatile("int $18");
+			handled = 1;
 			break;
 		case IDT_PF:
 			error = svm_setreg(svm_sc, vcpu, VM_REG_GUEST_CR2,
@@ -1421,11 +1429,22 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			break;
 
     case IDT_DB:
-	    /* HW watchpoint overhaul */
-	    reflect = 0;
-	    errcode_valid = 0;
-	    info1 = 0;
-	    break;
+	    /*
+	     * Check if we are being stepped (RFLAGS.TF)
+	     * or if a gdb-related watchpoint has been triggered
+	     * and bounce vmexit to userland.
+	     */
+	    if ((svm_sc->pcpu_caps[vcpu] & (1 << VM_CAP_RFLAGS_SSTEP)) != 0) {
+		    vmexit->exitcode = VM_EXITCODE_DB;
+		    vmexit->u.dbg.trace_trap = 1;
+
+		    reflect = 0;
+		    handled = 0;
+		    break;
+	    } else {
+		    /* TODO: check hw watchpoints*/
+		    /* fallthru */
+	    }
 		case IDT_BP:
 		case IDT_OF:
 		case IDT_BR:
@@ -1461,7 +1480,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			KASSERT(error == 0, ("%s: vm_inject_exception error %d",
 			    __func__, error));
 		}
-		handled = 1;
+    //		handled = 1;
 		break;
 	case VMCB_EXIT_MSR:	/* MSR access. */
 		eax = state->rax;
@@ -1987,7 +2006,7 @@ svm_dr_leave_guest(struct svm_regctx *gctx)
 	load_dr7(gctx->host_dr7);
 }
 
-/*
+ /*
  * Start vcpu with specified RIP.
  */
 static int
@@ -2331,9 +2350,41 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		if (val == 0)
 			error = EINVAL;
 		break;
-	case VM_CAP_DB_EXIT:
+	case VM_CAP_BPT_EXIT:
+		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP), val);
+		break;
+	case VM_CAP_RFLAGS_SSTEP:{
+		/* TODO: dont overwrite intercept if VM_CAP_DB_EXIT is active */
+		/* TODO: rflags.tf shadowing */
+
+		uint64_t rflags;
+		vmcb_read(sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+
+		if (val) {
+			sc->pcpu_caps[vcpu] |= (1 << VM_CAP_RFLAGS_SSTEP);
+			vmcb_write(
+			    sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T));
+		} else {
+			sc->pcpu_caps[vcpu] &= ~(1 << VM_CAP_RFLAGS_SSTEP);
+			vmcb_write(
+			    sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags & ~PSL_T));
+		}
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
 		break;
+	}
+	case VM_CAP_DB_EXIT:
+		/*
+		 * TODO: dont overwrite intercept if
+		 * VM_CAP_RFLAGS_SSTEP is active
+		 */
+		if (val) {
+			sc->pcpu_caps[vcpu] |= (1 << VM_CAP_DB_EXIT);
+		} else {
+			sc->pcpu_caps[vcpu] &= ~(1 << VM_CAP_DB_EXIT);
+		}
+		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
+		break;
+
 	default:
 		error = ENOENT;
 		break;
@@ -2363,9 +2414,18 @@ svm_getcap(void *arg, int vcpu, int type, int *retval)
 		*retval = 1;	/* unrestricted guest is always enabled */
 		break;
 	case VM_CAP_DB_EXIT:
-		*retval = svm_get_intercept(
-		    sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB));
+		*retval = (sc->pcpu_caps[vcpu] & (1 << VM_CAP_DB_EXIT)) ? 1 : 0;
 		break;
+	case VM_CAP_BPT_EXIT:
+		*retval = svm_get_intercept(
+		    sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP));
+		break;
+	case VM_CAP_RFLAGS_SSTEP:
+		*retval = (sc->pcpu_caps[vcpu] & (1 << VM_CAP_RFLAGS_SSTEP)) ?
+		    1 :
+		    0;
+		break;
+
 	default:
 		error = ENOENT;
 		break;

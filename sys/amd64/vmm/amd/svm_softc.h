@@ -67,6 +67,7 @@ struct svm_softc {
 	uint8_t		*msr_bitmap;    /* shared by all vcpus */
 	struct vm	*vm;
 	struct vm_mtrr  mtrr[VM_MAXCPU];
+	int pcpu_caps[VM_MAXCPU];
 };
 
 CTASSERT((offsetof(struct svm_softc, nptp) & PAGE_MASK) == 0);
