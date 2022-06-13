@@ -1445,7 +1445,14 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    /* TODO: check hw watchpoints*/
 		    /* fallthru */
 	    }
-		case IDT_BP:
+    case IDT_BP:
+	    if (svm_get_intercept(svm_sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP)) == 1) {
+		    vmexit->exitcode = VM_EXITCODE_BPT;
+
+		    reflect = 0;
+		    handled = 0;
+		    break;
+	    }
 		case IDT_OF:
 		case IDT_BR:
 			/*
