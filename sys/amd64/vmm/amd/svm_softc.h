@@ -41,6 +41,10 @@ struct asid {
 	uint32_t	num;	/* range is [1, nasid - 1] */
 };
 
+struct svm_vcpu_debug_info {
+	bool shadow_rflags_tf;
+};
+
 /*
  * XXX separate out 'struct vmcb' from 'svm_vcpu' to avoid wasting space
  * due to VMCB alignment requirements.
@@ -54,6 +58,8 @@ struct svm_vcpu {
 	uint32_t	dirty;	 /* state cache bits that must be cleared */
 	long		eptgen;	 /* pmap->pm_eptgen when the vcpu last ran */
 	struct asid	asid;
+  int caps; /* optional vm capabilities */
+  struct svm_vcpu_debug_info db_info;
 } __aligned(PAGE_SIZE);
 
 /*
@@ -67,7 +73,6 @@ struct svm_softc {
 	uint8_t		*msr_bitmap;    /* shared by all vcpus */
 	struct vm	*vm;
 	struct vm_mtrr  mtrr[VM_MAXCPU];
-	int pcpu_caps[VM_MAXCPU];
 };
 
 CTASSERT((offsetof(struct svm_softc, nptp) & PAGE_MASK) == 0);
