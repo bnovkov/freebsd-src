@@ -135,6 +135,7 @@ static VMM_STAT_AMD(VMEXIT_VINTR, "VM exits due to interrupt window");
 
 static int svm_getdesc(void *arg, int vcpu, int reg, struct seg_desc *desc);
 static int svm_setreg(void *arg, int vcpu, int ident, uint64_t val);
+static int svm_getreg(void *arg, int vcpu, int ident, uint64_t *val);
 
 static __inline int
 flush_by_asid(void)
@@ -851,8 +852,9 @@ svm_npf_emul_fault(uint64_t exitinfo1)
 		return (false);
 	}
 
-	return (true);	
+	return (true);
 }
+
 
 static void
 svm_handle_inst_emul(struct vmcb *vmcb, uint64_t gpa, struct vm_exit *vmexit)
@@ -1211,9 +1213,92 @@ gpf:
 	return (0);
 }
 
+static uint64_t
+emulate_popf(struct svm_softc *sc, int vcpu, struct vm_exit *vmexit)
+{
+	struct vmcb *vmcb;
+	struct vm_guest_paging pg;
+	struct vm_copyinfo copyinfo;
+
+	uint64_t rsp;
+	uint64_t new_rflags;
+	int opsize;
+	int fault;
+
+	/* APMv3, page 290-291 */
+	/*
+	 * TODO: perform all pseudocode checks
+	 * and inject exception if necessary
+	 */
+  vmcb = svm_get_vmcb(sc, vcpu);
+  // assume opsize is 8 for now
+  opsize = 8;
+  // TODO: handle error
+  svm_getreg(sc, vcpu, VM_REG_GUEST_RSP, &rsp);
+
+  /* Prepare copying and check stack permission */
+  svm_paging_info(vmcb, &pg);
+
+  vm_copy_setup(
+      sc->vm, vcpu, &pg, rsp, opsize, PROT_WRITE, &copyinfo, 1, &fault);
+  if (fault) {
+	  return 0;
+	}
+
+  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+
+	vm_copy_teardown(sc->vm, vcpu, &copyinfo, 1);
+
+  rsp += opsize;
+  svm_setreg(sc, vcpu, VM_REG_GUEST_RSP, rsp);
+
+  return new_rflags;
+}
+
 static int
-emulate_wrmsr(struct svm_softc *sc, int vcpu, u_int num, uint64_t val,
-    bool *retu)
+emulate_pushf(
+    struct svm_softc *sc, int vcpu, struct vm_exit *vmexit, uint64_t rflags)
+{
+	struct vmcb *vmcb;
+	struct vm_guest_paging pg;
+	struct vm_copyinfo copyinfo;
+
+	uint64_t rsp;
+	int opsize;
+	int fault;
+
+	/* APMv3, page 290-291 */
+	/*
+	 * TODO: perform all pseudocode checks
+	 * and inject exception if necessary
+	 */
+	vmcb = svm_get_vmcb(sc, vcpu);
+	// assume opsize is 8 for now
+	opsize = 8;
+	// TODO: handle error
+	svm_getreg(sc, vcpu, VM_REG_GUEST_RSP, &rsp);
+	rsp -= opsize;
+
+	/* Prepare copying and check stack permission */
+	svm_paging_info(vmcb, &pg);
+
+	vm_copy_setup(
+	    sc->vm, vcpu, &pg, rsp, opsize, PROT_WRITE, &copyinfo, 1, &fault);
+	if (fault) {
+		return -1;
+	}
+
+  vm_copyout(sc->vm, vcpu, &rflags, &copyinfo, opsize);
+  svm_setreg(sc, vcpu, VM_REG_GUEST_RSP, rsp);
+
+  vm_copy_teardown(sc->vm, vcpu, &copyinfo, 1);
+
+  return (0);
+}
+
+static int
+emulate_wrmsr(
+    struct svm_softc *sc, int vcpu, u_int num, uint64_t val, bool *retu)
 {
 	int error;
 
@@ -1571,26 +1656,64 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	case VMCB_EXIT_MWAIT:
 		vmexit->exitcode = VM_EXITCODE_MWAIT;
 		break;
-	case VMCB_EXIT_PUSHF:
-		if (svm_get_vcpu(svm_sc, vcpu)->caps &
-		    (1 << VM_CAP_RFLAGS_SSTEP)) {
-			/*
-			 * TODO: push shadowed rflags
-			 */
+	case VMCB_EXIT_PUSHF:{
+		struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
+		if (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
+			uint64_t rflags;
+			if(svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags)){
+				// TODO: figure out an appropriate way to handle
+				// this error
+      }
+      handled = 1;
+
+      rflags &= ~PSL_T;
+      if(s_vcpu->db_info.shadow_rflags_tf){
+	      rflags |= (PSL_T);
+      }
+
+      if (emulate_pushf(svm_sc, vcpu, vmexit, rflags)) {
+	      /* Fault was injected into guest */
+	      // TODO: figure out an appropriate way to handle
+	      // this error
+      }
+
+      break;
 		}
-		handled = 1;
-		break;
-	case VMCB_EXIT_POPF:
-		if (svm_get_vcpu(svm_sc, vcpu)->caps &
-		    (1 << VM_CAP_RFLAGS_SSTEP)) {
+	}
+	case VMCB_EXIT_POPF: {
+		struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
+		uint64_t new_rflags;
+
+		if (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
 			/*
 			 * TODO: fetch new rflags value from
 			 * top of saved guest stack and update
 			 * shadowed rflags.tf
 			 */
+			handled = 1;
+
+			new_rflags = emulate_popf(svm_sc, vcpu, vmexit);
+			if (new_rflags == 0) {
+				/* Fault was injected into guest */
+				// TODO: figure out an appropriate way to handle
+				// this error
+				break;
+			}
+			/* Update shadowed value */
+			s_vcpu->db_info.shadow_rflags_tf = !!(
+			    new_rflags & PSL_T);
+
+			/* Set TF bit */
+			new_rflags |= PSL_T;
+
+			error = svm_setreg(
+			    svm_sc, vcpu, VM_REG_GUEST_RFLAGS, new_rflags);
+			KASSERT(error == 0,
+			    ("%s: error %d updating guest RFLAGS", __func__,
+				error));
+			break;
 		}
-		handled = 1;
-		break;
+	}
 	case VMCB_EXIT_SHUTDOWN:
 	case VMCB_EXIT_VMRUN:
 	case VMCB_EXIT_VMMCALL:
@@ -1608,7 +1731,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	default:
 		vmm_stat_incr(svm_sc->vm, vcpu, VMEXIT_UNKNOWN, 1);
 		break;
-	}	
+		}
 
 	VCPU_CTR4(svm_sc->vm, vcpu, "%s %s vmexit at %#lx/%d",
 	    handled ? "handled" : "unhandled", exit_reason_to_str(code),
