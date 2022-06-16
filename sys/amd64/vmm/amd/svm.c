@@ -1219,40 +1219,122 @@ emulate_popf(struct svm_softc *sc, int vcpu, struct vm_exit *vmexit)
 	struct vmcb *vmcb;
 	struct vm_guest_paging pg;
 	struct vm_copyinfo copyinfo;
+	struct vie *vie = &vmexit->u.inst_emul.vie;
 
 	uint64_t rsp;
-	uint64_t new_rflags;
-	int opsize;
-	int fault;
+	uint64_t rip;
+  uint64_t cr4;
+	uint64_t old_rflags;
+	uint64_t new_rflags = 0;
+	const uint64_t rflags_reserved_mask = (BIT(22) - 1) |
+	    PSL_RESERVED_DEFAULT | BIT(15) | BIT(5) | BIT(3);
+	uint64_t rflags_affected_mask;
 
-	/* APMv3, page 290-291 */
-	/*
-	 * TODO: perform all pseudocode checks
-	 * and inject exception if necessary
-	 */
-  vmcb = svm_get_vmcb(sc, vcpu);
-  // assume opsize is 8 for now
-  opsize = 8;
-  // TODO: handle error
-  svm_getreg(sc, vcpu, VM_REG_GUEST_RSP, &rsp);
+	uint64_t inst_gpa;
+	int opsize;
+	int addrsize;
+	int error;
+
+	/* APMv3, page 280-281 */
+	rflags_affected_mask = ~(PSL_VIP | PSL_VM | PSL_RF);
+  /* Clear reserved bits */
+	rflags_affected_mask &= ~(rflags_reserved_mask);
+
+	vmcb = svm_get_vmcb(sc, vcpu);
+	svm_paging_info(vmcb, &pg);
+	// TODO: handle error
+	svm_getreg(sc, vcpu, VM_REG_GUEST_RSP, &rsp);
+	svm_getreg(sc, vcpu, VM_REG_GUEST_RIP, &rip);
+	svm_getreg(sc, vcpu, VM_REG_GUEST_RFLAGS, &old_rflags);
+	svm_getreg(sc, vcpu, VM_REG_GUEST_CR4, &cr4);
+
+	/* Decode instruction */
+	vm_gla2gpa(sc->vm, vcpu, &pg, rip, VM_PROT_EXECUTE, &inst_gpa, &error);
+	if (error) {
+		return 0;
+  }
+  svm_handle_inst_emul(vmcb, inst_gpa, vmexit);
+  if (vmm_decode_instruction(sc->vm, vcpu, VIE_INVALID_GLA, pg.cpu_mode,
+	  vmexit->u.inst_emul.cs_d, vie)) {
+	  vm_inject_ud(sc->vm, vcpu);
+	  return 0;
+  }
+
+  opsize = vie->opsize;
 
   /* Prepare copying and check stack permission */
-  svm_paging_info(vmcb, &pg);
-
-  vm_copy_setup(
-      sc->vm, vcpu, &pg, rsp, opsize, PROT_WRITE, &copyinfo, 1, &fault);
-  if (fault) {
+  vm_copy_setup(sc->vm, vcpu, &pg, rsp, opsize, PROT_READ | PROT_WRITE,
+      &copyinfo, 1, &error);
+  if (error) {
 	  return 0;
-	}
+  }
 
-  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+  /*
+   * Perform various mode-dependent checks and
+   * update affected rflags bitmask.
+   */
+  error = 0;
+  switch(pg.cpu_mode){
+  case CPU_MODE_REAL:
+	  addrsize = 2;
+	  rflags_affected_mask &= ~(PSL_VIF);
+	  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+	  break;
+  case CPU_MODE_COMPATIBILITY:
+	  // TODO: addr size based on ss
+  case CPU_MODE_PROTECTED: {
+	  int cur_iopl = (old_rflags & PSL_IOPL) >> 12;
+	  // TODO: addr size based on ss
+
+	  rflags_affected_mask &= ~(PSL_VIF);
+	  if (pg.cpl != 0) {
+		  rflags_affected_mask &= ~(PSL_IOPL);
+    }
+    if (!(pg.cpl <= cur_iopl)) {
+	    rflags_affected_mask &= ~(PSL_I);
+    }
+
+    vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+    break;
+  }
+  case CPU_MODE_64BIT:{
+	  int cur_iopl = (old_rflags & PSL_IOPL) >> 12;
+	  addrsize = 8;
+	  if (cur_iopl == 3) {
+		  rflags_affected_mask &= ~(PSL_VIF | PSL_IOPL);
+		  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+	  } else if ((cr4 & CR4_VME) && opsize == 2) {
+		  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+		  if (((new_rflags & PSL_I) && (old_rflags & PSL_VIP)) ||
+		      (new_rflags & PSL_T)) {
+			  vm_inject_gp(sc->vm, vcpu);
+			  error = 1;
+		  }
+	  }else{
+		  vm_inject_gp(sc->vm, vcpu);
+		  error = 1;
+    }
+	  break;
+  }
+  }
 
 	vm_copy_teardown(sc->vm, vcpu, &copyinfo, 1);
 
-  rsp += opsize;
-  svm_setreg(sc, vcpu, VM_REG_GUEST_RSP, rsp);
+  if(error == 0){
+	  /* Clear unaffected and reserved bits */
+	  new_rflags &= ~(rflags_affected_mask);
+	  /* Extract unaffected bits from old_rflags */
+	  new_rflags |= (old_rflags & ~rflags_affected_mask);
+    /* Clear RF */
+	  new_rflags &= ~(PSL_RF);
 
-  return new_rflags;
+	  rsp += addrsize;
+	  svm_setreg(sc, vcpu, VM_REG_GUEST_RSP, rsp);
+
+	  return new_rflags;
+  }
+
+  return 0;
 }
 
 static int
@@ -1262,38 +1344,87 @@ emulate_pushf(
 	struct vmcb *vmcb;
 	struct vm_guest_paging pg;
 	struct vm_copyinfo copyinfo;
+	struct vie *vie = &vmexit->u.inst_emul.vie;
 
 	uint64_t rsp;
+	uint64_t rip;
+	uint64_t cr4;
+	uint64_t inst_gpa;
 	int opsize;
-	int fault;
+	int addrsize;
+	int error;
 
 	/* APMv3, page 290-291 */
-	/*
-	 * TODO: perform all pseudocode checks
-	 * and inject exception if necessary
-	 */
 	vmcb = svm_get_vmcb(sc, vcpu);
-	// assume opsize is 8 for now
-	opsize = 8;
-	// TODO: handle error
-	svm_getreg(sc, vcpu, VM_REG_GUEST_RSP, &rsp);
-	rsp -= opsize;
-
-	/* Prepare copying and check stack permission */
 	svm_paging_info(vmcb, &pg);
 
-	vm_copy_setup(
-	    sc->vm, vcpu, &pg, rsp, opsize, PROT_WRITE, &copyinfo, 1, &fault);
-	if (fault) {
+	// TODO: handle error
+	svm_getreg(sc, vcpu, VM_REG_GUEST_RSP, &rsp);
+	svm_getreg(sc, vcpu, VM_REG_GUEST_RIP, &rip);
+	svm_getreg(sc, vcpu, VM_REG_GUEST_CR4, &cr4);
+
+	/* Decode instruction */
+	vm_gla2gpa(sc->vm, vcpu, &pg, rip, VM_PROT_EXECUTE, &inst_gpa, &error);
+	if (error) {
+		return -1;
+	}
+	svm_handle_inst_emul(vmcb, inst_gpa, vmexit);
+	if (vmm_decode_instruction(sc->vm, vcpu, VIE_INVALID_GLA, pg.cpu_mode,
+		vmexit->u.inst_emul.cs_d, vie)) {
+		vm_inject_ud(sc->vm, vcpu);
 		return -1;
 	}
 
-  vm_copyout(sc->vm, vcpu, &rflags, &copyinfo, opsize);
-  svm_setreg(sc, vcpu, VM_REG_GUEST_RSP, rsp);
+	opsize = vie->opsize;
 
+	/* Prepare copying and check stack permission */
+	vm_copy_setup(sc->vm, vcpu, &pg, rsp, opsize, PROT_WRITE | PROT_READ,
+	    &copyinfo, 1, &error);
+	if (error) {
+		return -1;
+	}
+
+	/*
+	 * Perform various mode-dependent checks and
+	 * adjust rflags accordingly.
+	 */
+	error = 0;
+	switch (pg.cpu_mode) {
+	case CPU_MODE_REAL:
+		addrsize = 2;
+		rflags &= ~(PSL_RF | PSL_VM);
+		break;
+	case CPU_MODE_COMPATIBILITY:
+		// TODO: addr size based on ss
+	case CPU_MODE_PROTECTED:
+		rflags &= ~(PSL_RF);
+		addrsize = 4;
+		break;
+	case CPU_MODE_64BIT:{
+		addrsize = 8;
+		int cur_iopl = (rflags & PSL_IOPL) >> 12;
+    if (cur_iopl == 3){
+	    rflags &= ~(PSL_RF | PSL_VM);
+    } else if ((cr4 & CR4_VME) && (opsize == 2)) {
+	    rflags |= (rflags & PSL_VIF) >> 10; // set IF to VIF
+	    rflags &= ~(PSL_IOPL);		// clear and set iopl to 3
+	    rflags |= (3 << 12);
+    }else {
+      vm_inject_gp(sc->vm, vcpu);
+      error = 1;
+    }
+		break;
+	}
+  }
+
+  if (error == 0) {
+	  vm_copyout(sc->vm, vcpu, &rflags, &copyinfo, opsize);
+	  rsp -= addrsize;
+	  svm_setreg(sc, vcpu, VM_REG_GUEST_RSP, rsp);
+  }
   vm_copy_teardown(sc->vm, vcpu, &copyinfo, 1);
 
-  return (0);
+  return (error);
 }
 
 static int
@@ -1517,6 +1648,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	     * and bounce vmexit to userland.
 	     */
 
+	    /* TODO: Check why guest DR6[BS] is not being set for TF vmexits */
 	    if (state->rip != ctrl->nrip &&
 		(svm_get_vcpu(svm_sc, vcpu)->caps &
 		    (1 << VM_CAP_RFLAGS_SSTEP))) {
@@ -1579,7 +1711,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		eax = state->rax;
 		ecx = ctx->sctx_rcx;
 		edx = ctx->sctx_rdx;
-		retu = false;	
+		retu = false;
 
 		if (info1) {
 			vmm_stat_incr(svm_sc->vm, vcpu, VMEXIT_WRMSR, 1);
@@ -1685,11 +1817,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		uint64_t new_rflags;
 
 		if (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
-			/*
-			 * TODO: fetch new rflags value from
-			 * top of saved guest stack and update
-			 * shadowed rflags.tf
-			 */
 			handled = 1;
 
 			new_rflags = emulate_popf(svm_sc, vcpu, vmexit);
