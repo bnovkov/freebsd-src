@@ -894,7 +894,7 @@ svm_handle_inst_emul(struct vmcb *vmcb, uint64_t gpa, struct vm_exit *vmexit)
 	default:
 		vmexit->u.inst_emul.cs_base = 0;
 		vmexit->u.inst_emul.cs_d = 0;
-		break;	
+		break;
 	}
 
 	/*
@@ -1213,6 +1213,10 @@ gpf:
 	return (0);
 }
 
+/*
+ * Emulates popf according to APMv3, page 280-281.
+ * Currently used as a part of the RFLAGS.TF single-stepping mechanism.
+ */
 static uint64_t
 emulate_popf(struct svm_softc *sc, int vcpu, struct vm_exit *vmexit)
 {
@@ -1235,7 +1239,6 @@ emulate_popf(struct svm_softc *sc, int vcpu, struct vm_exit *vmexit)
 	int addrsize;
 	int error;
 
-	/* APMv3, page 280-281 */
 	rflags_affected_mask = ~(PSL_VIP | PSL_VM | PSL_RF);
   /* Clear reserved bits */
 	rflags_affected_mask &= ~(rflags_reserved_mask);
@@ -1280,42 +1283,47 @@ emulate_popf(struct svm_softc *sc, int vcpu, struct vm_exit *vmexit)
 	  rflags_affected_mask &= ~(PSL_VIF);
 	  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
 	  break;
-  case CPU_MODE_COMPATIBILITY:
-	  // TODO: addr size based on ss
   case CPU_MODE_PROTECTED: {
 	  int cur_iopl = (old_rflags & PSL_IOPL) >> 12;
-	  // TODO: addr size based on ss
+	  addrsize = 4;
 
-	  rflags_affected_mask &= ~(PSL_VIF);
-	  if (pg.cpl != 0) {
-		  rflags_affected_mask &= ~(PSL_IOPL);
-    }
-    if (!(pg.cpl <= cur_iopl)) {
-	    rflags_affected_mask &= ~(PSL_I);
-    }
+	  /* Check for virtual-8086 mode*/
+	  if (old_rflags & PSL_VM) {
+		  addrsize = 2;
 
-    vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
-    break;
-  }
-  case CPU_MODE_64BIT:{
-	  int cur_iopl = (old_rflags & PSL_IOPL) >> 12;
-	  addrsize = 8;
-	  if (cur_iopl == 3) {
-		  rflags_affected_mask &= ~(PSL_VIF | PSL_IOPL);
-		  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
-	  } else if ((cr4 & CR4_VME) && opsize == 2) {
-		  vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
-		  if (((new_rflags & PSL_I) && (old_rflags & PSL_VIP)) ||
-		      (new_rflags & PSL_T)) {
+		  if (cur_iopl == 3) {
+			  rflags_affected_mask &= ~(PSL_VIF | PSL_IOPL);
+			  vm_copyin(
+			      sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+		  } else if ((cr4 & CR4_VME) && opsize == 2) {
+			  vm_copyin(
+			      sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+			  if (((new_rflags & PSL_I) &&
+				  (old_rflags & PSL_VIP)) ||
+			      (new_rflags & PSL_T)) {
+				  vm_inject_gp(sc->vm, vcpu);
+				  error = 1;
+			  }
+		  } else {
 			  vm_inject_gp(sc->vm, vcpu);
 			  error = 1;
 		  }
-	  }else{
-		  vm_inject_gp(sc->vm, vcpu);
-		  error = 1;
+    } else { /* Protected mode */
+	    rflags_affected_mask &= ~(PSL_VIF);
+	    if (pg.cpl != 0) {
+		    rflags_affected_mask &= ~(PSL_IOPL);
+	    }
+	    if (!(pg.cpl <= cur_iopl)) {
+		    rflags_affected_mask &= ~(PSL_I);
+	    }
     }
-	  break;
+    vm_copyin(sc->vm, vcpu, &copyinfo, &new_rflags, opsize);
+    break;
   }
+  case CPU_MODE_COMPATIBILITY:
+  case CPU_MODE_64BIT:
+	  opsize = addrsize = 8;
+	  break;
   }
 
 	vm_copy_teardown(sc->vm, vcpu, &copyinfo, 1);
@@ -1337,6 +1345,10 @@ emulate_popf(struct svm_softc *sc, int vcpu, struct vm_exit *vmexit)
   return 0;
 }
 
+/*
+ * Emulates pushf according to APMv3, page 290-291.
+ * Currently used as a part of the RFLAGS.TF single-stepping mechanism.
+ */
 static int
 emulate_pushf(
     struct svm_softc *sc, int vcpu, struct vm_exit *vmexit, uint64_t rflags)
@@ -1354,7 +1366,6 @@ emulate_pushf(
 	int addrsize;
 	int error;
 
-	/* APMv3, page 290-291 */
 	vmcb = svm_get_vmcb(sc, vcpu);
 	svm_paging_info(vmcb, &pg);
 
@@ -1394,27 +1405,36 @@ emulate_pushf(
 		addrsize = 2;
 		rflags &= ~(PSL_RF | PSL_VM);
 		break;
-	case CPU_MODE_COMPATIBILITY:
-		// TODO: addr size based on ss
-	case CPU_MODE_PROTECTED:
+	case CPU_MODE_PROTECTED:{
 		rflags &= ~(PSL_RF);
 		addrsize = 4;
-		break;
-	case CPU_MODE_64BIT:{
-		addrsize = 8;
-		int cur_iopl = (rflags & PSL_IOPL) >> 12;
-    if (cur_iopl == 3){
-	    rflags &= ~(PSL_RF | PSL_VM);
-    } else if ((cr4 & CR4_VME) && (opsize == 2)) {
-	    rflags |= (rflags & PSL_VIF) >> 10; // set IF to VIF
-	    rflags &= ~(PSL_IOPL);		// clear and set iopl to 3
-	    rflags |= (3 << 12);
-    }else {
-      vm_inject_gp(sc->vm, vcpu);
-      error = 1;
-    }
-		break;
-	}
+
+		/* Check for virtual-8086 mode*/
+		if (rflags & PSL_VM) {
+			int cur_iopl = (rflags & PSL_IOPL) >> 12;
+			addrsize = 2;
+
+			if (cur_iopl == 3) {
+				rflags &= ~(PSL_RF | PSL_VM);
+			} else if ((cr4 & CR4_VME) && (opsize == 2)) {
+				rflags |= (rflags & PSL_VIF) >>
+				    10; // set IF to VIF
+				rflags &= ~(
+				    PSL_IOPL); // clear and set iopl to 3
+				rflags |= (3 << 12);
+			} else {
+				vm_inject_gp(sc->vm, vcpu);
+				error = 1;
+			}
+		}
+
+
+    break;
+		}
+		case CPU_MODE_COMPATIBILITY:
+		case CPU_MODE_64BIT:
+			opsize = addrsize = 8;
+			break;
   }
 
   if (error == 0) {
@@ -1792,21 +1812,21 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
 		if (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
 			uint64_t rflags;
-			if(svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags)){
-				// TODO: figure out an appropriate way to handle
-				// this error
-      }
-      handled = 1;
+			handled = 1;
 
-      rflags &= ~PSL_T;
-      if(s_vcpu->db_info.shadow_rflags_tf){
-	      rflags |= (PSL_T);
+			error = svm_getreg(
+			    svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+			KASSERT(error == 0,
+			    ("%s: error %d fetching guest RFLAGS", __func__,
+				error));
+
+			rflags &= ~PSL_T;
+			if (s_vcpu->db_info.shadow_rflags_tf) {
+				rflags |= (PSL_T);
       }
 
       if (emulate_pushf(svm_sc, vcpu, vmexit, rflags)) {
 	      /* Fault was injected into guest */
-	      // TODO: figure out an appropriate way to handle
-	      // this error
       }
 
       break;
@@ -1822,8 +1842,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			new_rflags = emulate_popf(svm_sc, vcpu, vmexit);
 			if (new_rflags == 0) {
 				/* Fault was injected into guest */
-				// TODO: figure out an appropriate way to handle
-				// this error
 				break;
 			}
 			/* Update shadowed value */
