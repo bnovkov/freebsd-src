@@ -1828,9 +1828,8 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
       if (emulate_pushf(svm_sc, vcpu, vmexit, rflags)) {
 	      /* Fault was injected into guest */
       }
-
-      break;
 		}
+		break;
 	}
 	case VMCB_EXIT_POPF: {
 		struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
@@ -1856,8 +1855,8 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			KASSERT(error == 0,
 			    ("%s: error %d updating guest RFLAGS", __func__,
 				error));
-			break;
 		}
+		break;
 	}
 	case VMCB_EXIT_SHUTDOWN:
 	case VMCB_EXIT_VMRUN:
@@ -2663,7 +2662,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		s_vcpu = svm_get_vcpu(sc, vcpu);
 
 		if (val) {
-			if (svm_setreg(sc, vcpu, VM_REG_GUEST_RFLAGS,
+			if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS,
 				(rflags | PSL_T))) {
 				error = (EINVAL);
 				break;
@@ -2684,7 +2683,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 					0);
 				s_vcpu->db_info.shadow_rflags_tf = 0;
 
-				if (svm_setreg(sc, vcpu, VM_REG_GUEST_RFLAGS,
+				if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS,
 					rflags)) {
 					error = (EINVAL);
 					break;
@@ -2695,9 +2694,8 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 			}
 		}
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
-
 		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
-		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_IRET, val);
+		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, val);
 
 		break;
 	}
