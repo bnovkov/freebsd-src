@@ -1530,8 +1530,21 @@ vm_handle_inst_emul(struct vm *vm, int vcpuid, bool *retu)
 	VCPU_CTR1(vm, vcpuid, "nextrip updated to %#lx after instruction "
 	    "decoding", vcpu->nextrip);
 
-	/* return to userland unless this is an in-kernel emulated device */
-	if (gpa >= DEFAULT_APIC_BASE && gpa < DEFAULT_APIC_BASE + PAGE_SIZE) {
+	/* Handle POPF/PUSHF exists due to RFLAGS.TF stepping */
+	int stepped = 0;
+	vmmops_getcap(vm->cookie, vcpuid, VM_CAP_RFLAGS_SSTEP, &stepped);
+	if (stepped) {
+		mread = NULL;
+		mwrite = NULL;
+
+		/* Disable single-stepping before emulation, thus restoring the
+		 * original TF bit */
+		vmmops_setcap(
+		    vm->cookie, vcpuid, VM_CAP_RFLAGS_SSTEP, 0);
+
+	} /* return to userland unless this is an in-kernel emulated device */
+	else if (gpa >= DEFAULT_APIC_BASE &&
+	    gpa < DEFAULT_APIC_BASE + PAGE_SIZE) {
 		mread = lapic_mmio_read;
 		mwrite = lapic_mmio_write;
 	} else if (gpa >= VIOAPIC_BASE && gpa < VIOAPIC_BASE + VIOAPIC_SIZE) {
@@ -1547,6 +1560,11 @@ vm_handle_inst_emul(struct vm *vm, int vcpuid, bool *retu)
 
 	error = vmm_emulate_instruction(vm, vcpuid, gpa, vie, paging,
 	    mread, mwrite, retu);
+
+	/* Restore single stepping */
+	if (!error && stepped) {
+		vmmops_setcap(vm->cookie, vcpuid, VM_CAP_RFLAGS_SSTEP, 1);
+  }
 
 	return (error);
 }
