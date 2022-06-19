@@ -67,12 +67,9 @@ __FBSDID("$FreeBSD$");
 #include <x86/psl.h>
 #include <x86/specialreg.h>
 
-#ifndef BIT
-#define BIT(n) (1ULL << n)
-#endif
-
 /* struct vie_op.op_type */
-enum { VIE_OP_TYPE_NONE = 0,
+enum {
+	VIE_OP_TYPE_NONE = 0,
 	VIE_OP_TYPE_MOV,
 	VIE_OP_TYPE_MOVSX,
 	VIE_OP_TYPE_MOVZX,
@@ -91,9 +88,8 @@ enum { VIE_OP_TYPE_NONE = 0,
 	VIE_OP_TYPE_ADD,
 	VIE_OP_TYPE_TEST,
 	VIE_OP_TYPE_BEXTR,
-	VIE_OP_TYPE_POPF,
-	VIE_OP_TYPE_PUSHF,
-	VIE_OP_TYPE_LAST };
+	VIE_OP_TYPE_LAST
+};
 
 /* struct vie_op.op_flags */
 #define	VIE_OP_F_IMM		(1 << 0)  /* 16/32-bit immediate operand */
@@ -241,14 +237,6 @@ static const struct vie_op one_byte_opcodes[256] = {
 		/* XXX Group 1A extended opcode - not just POP */
 		.op_byte = 0x8F,
 		.op_type = VIE_OP_TYPE_POP,
-	},
- 	[0x9C] = {
-		.op_byte = 0x9C,
-		.op_type = VIE_OP_TYPE_PUSHF,
-	},
-	[0x9D] = {
-		.op_byte = 0x9D,
-		.op_type = VIE_OP_TYPE_POPF,
 	},
 	[0xF7] = {
 		/* XXX Group 3 extended opcode - not just TEST */
@@ -1526,215 +1514,6 @@ emulate_sub(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	return (error);
 }
 
-
-
-
-/*
- * Emulates popf according to APMv3, page 280-281.
- * Currently used as a part of the RFLAGS.TF single-stepping mechanism.
- */
-static int
-emulate_popf(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
-    struct vm_guest_paging *paging, mem_region_read_t memread,
-    mem_region_write_t memwrite, void *arg)
-{
-
-	struct vm_copyinfo copyinfo;
-	uint64_t rsp;
-	uint64_t rip;
-  uint64_t cr4;
-	uint64_t old_rflags;
-	uint64_t new_rflags = 0;
-	const uint64_t rflags_reserved_mask = (BIT(22) - 1) |
-	    PSL_RESERVED_DEFAULT | BIT(15) | BIT(5) | BIT(3);
-	uint64_t rflags_affected_mask;
-
-	int opsize;
-	int addrsize;
-	int error;
-
-	rflags_affected_mask = ~(PSL_VIP | PSL_VM | PSL_RF);
-  /* Clear reserved bits */
-	rflags_affected_mask &= ~(rflags_reserved_mask);
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RSP, &rsp);
-	KASSERT(error == 0, ("%s: error %d getting rsp", __func__, error));
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_CR4, &cr4);
-	KASSERT(error == 0, ("%s: error %d getting cr4", __func__, error));
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RIP, &rip);
-	KASSERT(error == 0, ("%s: error %d getting rip", __func__, error));
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RFLAGS, &old_rflags);
-	KASSERT(error == 0, ("%s: error %d getting rflags", __func__, error));
-
-  opsize = vie->opsize;
-
-  /* Prepare copying and check stack permission */
-  vm_copy_setup(
-      vm, vcpuid, paging, rsp, opsize, PROT_READ, &copyinfo, 1, &error);
-  if (error) {
-	  return 0;
-  }
-
-  /*
-   * Perform various mode-dependent checks and
-   * update affected rflags bitmask.
-   */
-  error = 0;
-  switch (paging->cpu_mode) {
-  case CPU_MODE_REAL:
-	  addrsize = 2;
-	  rflags_affected_mask &= ~(PSL_VIF);
-	  vm_copyin(vm, vcpuid, &copyinfo, &new_rflags, opsize);
-	  break;
-  case CPU_MODE_PROTECTED: {
-	  int cur_iopl = (old_rflags & PSL_IOPL) >> 12;
-	  addrsize = 4;
-
-	  /* Check for virtual-8086 mode*/
-	  if (old_rflags & PSL_VM) {
-		  addrsize = 2;
-
-		  if (cur_iopl == 3) {
-			  rflags_affected_mask &= ~(PSL_VIF | PSL_IOPL);
-			  vm_copyin(
-			      vm, vcpuid, &copyinfo, &new_rflags, opsize);
-		  } else if ((cr4 & CR4_VME) && opsize == 2) {
-			  vm_copyin(
-			      vm, vcpuid, &copyinfo, &new_rflags, opsize);
-			  if (((new_rflags & PSL_I) &&
-				  (old_rflags & PSL_VIP)) ||
-			      (new_rflags & PSL_T)) {
-				  vm_inject_gp(vm, vcpuid);
-				  error = 1;
-			  }
-		  } else {
-			  vm_inject_gp(vm, vcpuid);
-			  error = 1;
-		  }
-    } else { /* Protected mode */
-	    rflags_affected_mask &= ~(PSL_VIF);
-	    if (paging->cpl != 0) {
-		    rflags_affected_mask &= ~(PSL_IOPL);
-	    }
-	    if (!(paging->cpl <= cur_iopl)) {
-		    rflags_affected_mask &= ~(PSL_I);
-	    }
-    }
-    vm_copyin(vm, vcpuid, &copyinfo, &new_rflags, opsize);
-    break;
-  }
-  case CPU_MODE_COMPATIBILITY:
-  case CPU_MODE_64BIT:
-	  opsize = addrsize = 8;
-	  break;
-  }
-
-  vm_copy_teardown(vm, vcpuid, &copyinfo, 1);
-
-  if(error == 0){
-	  /* Clear unaffected and reserved bits */
-	  new_rflags &= ~(rflags_affected_mask);
-	  /* Extract unaffected bits from old_rflags */
-	  new_rflags |= (old_rflags & ~rflags_affected_mask);
-    /* Clear RF */
-	  new_rflags &= ~(PSL_RF);
-
-	  rsp += addrsize;
-	  vie_update_register(vm, vcpuid, VM_REG_GUEST_RSP, rsp, addrsize);
-	  vie_update_register(
-	      vm, vcpuid, VM_REG_GUEST_RFLAGS, new_rflags, sizeof(new_rflags));
-  }
-
-  return (error);
-}
-
-/*
- * Emulates pushf according to APMv3, page 290-291.
- * Currently used as a part of the RFLAGS.TF single-stepping mechanism.
- */
-static int
-emulate_pushf(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
-    struct vm_guest_paging *paging, mem_region_read_t memread,
-    mem_region_write_t memwrite, void *arg)
-{
-	struct vm_copyinfo copyinfo;
-
-	uint64_t rsp;
-	uint64_t rip;
-	uint64_t cr4;
-	uint64_t rflags;
-	int opsize;
-	int addrsize;
-	int error;
-
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RSP, &rsp);
-	KASSERT(error == 0, ("%s: error %d getting rsp", __func__, error));
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_CR4, &cr4);
-	KASSERT(error == 0, ("%s: error %d getting cr4", __func__, error));
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RIP, &rip);
-	KASSERT(error == 0, ("%s: error %d getting rip", __func__, error));
-
-	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RFLAGS, &rflags);
-	KASSERT(error == 0, ("%s: error %d getting rflags", __func__, error));
-
-	opsize = vie->opsize;
-
-	/*
-	 * Perform various mode-dependent checks and
-	 * adjust rflags accordingly.
-	 */
-	error = 0;
-	switch (paging->cpu_mode) {
-	case CPU_MODE_REAL:
-		addrsize = 2;
-		rflags &= ~(PSL_RF | PSL_VM);
-		break;
-	case CPU_MODE_PROTECTED:{
-		rflags &= ~(PSL_RF);
-		addrsize = 4;
-
-		/* Check for virtual-8086 mode*/
-		if (rflags & PSL_VM) {
-			int cur_iopl = (rflags & PSL_IOPL) >> 12;
-			addrsize = 2;
-
-			if (cur_iopl == 3) {
-				rflags &= ~(PSL_RF | PSL_VM);
-			} else if ((cr4 & CR4_VME) && (opsize == 2)) {
-				rflags |= (rflags & PSL_VIF) >>
-				    10; // set IF to VIF
-				rflags &= ~(
-				    PSL_IOPL); // clear and set iopl to 3
-				rflags |= (3 << 12);
-			} else {
-				vm_inject_gp(vm, vcpuid);
-				error = 1;
-			}
-		}
-    break;
-		}
-		case CPU_MODE_COMPATIBILITY:
-		case CPU_MODE_64BIT:
-			opsize = addrsize = 8;
-			break;
-		}
-
-  if (error == 0) {
-	  vm_copyout(vm, vcpuid, &rflags, &copyinfo, opsize);
-	  rsp -= addrsize;
-	  vie_update_register(vm, vcpuid, VM_REG_GUEST_RSP, rsp, addrsize);
-  }
-  vm_copy_teardown(vm, vcpuid, &copyinfo, 1);
-
-  return (error);
-}
-
 static int
 emulate_stack_op(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
     struct vm_guest_paging *paging, mem_region_read_t memread,
@@ -2055,14 +1834,6 @@ vmm_emulate_instruction(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	case VIE_OP_TYPE_BEXTR:
 		error = emulate_bextr(vm, vcpuid, gpa, vie, paging,
 		    memread, memwrite, memarg);
-		break;
-	case VIE_OP_TYPE_POPF:
-		error = emulate_popf(
-		    vm, vcpuid, gpa, vie, paging, memread, memwrite, memarg);
-		break;
-	case VIE_OP_TYPE_PUSHF:
-		error = emulate_pushf(
-		    vm, vcpuid, gpa, vie, paging, memread, memwrite, memarg);
 		break;
 	default:
 		error = EINVAL;

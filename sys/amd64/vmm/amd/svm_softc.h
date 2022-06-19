@@ -42,7 +42,9 @@ struct asid {
 };
 
 struct svm_vcpu_debug_info {
-	bool shadow_rflags_tf;
+  bool popf_next;
+  bool pushf_next;
+  bool shadow_rflags_tf;
 };
 
 /*

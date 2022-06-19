@@ -1527,24 +1527,13 @@ vm_handle_inst_emul(struct vm *vm, int vcpuid, bool *retu)
 	 */
 	vme->inst_length = vie->num_processed;
 	vcpu->nextrip += vie->num_processed;
-	VCPU_CTR1(vm, vcpuid, "nextrip updated to %#lx after instruction "
-	    "decoding", vcpu->nextrip);
+	VCPU_CTR1(vm, vcpuid,
+	    "nextrip updated to %#lx after instruction "
+	    "decoding",
+	    vcpu->nextrip);
 
-	/* Handle POPF/PUSHF exists due to RFLAGS.TF stepping */
-	int stepped = 0;
-	vmmops_getcap(vm->cookie, vcpuid, VM_CAP_RFLAGS_SSTEP, &stepped);
-	if (stepped) {
-		mread = NULL;
-		mwrite = NULL;
-
-		/* Disable single-stepping before emulation, thus restoring the
-		 * original TF bit */
-		vmmops_setcap(
-		    vm->cookie, vcpuid, VM_CAP_RFLAGS_SSTEP, 0);
-
-	} /* return to userland unless this is an in-kernel emulated device */
-	else if (gpa >= DEFAULT_APIC_BASE &&
-	    gpa < DEFAULT_APIC_BASE + PAGE_SIZE) {
+	/* return to userland unless this is an in-kernel emulated device */
+	if (gpa >= DEFAULT_APIC_BASE && gpa < DEFAULT_APIC_BASE + PAGE_SIZE) {
 		mread = lapic_mmio_read;
 		mwrite = lapic_mmio_write;
 	} else if (gpa >= VIOAPIC_BASE && gpa < VIOAPIC_BASE + VIOAPIC_SIZE) {
@@ -1561,10 +1550,7 @@ vm_handle_inst_emul(struct vm *vm, int vcpuid, bool *retu)
 	error = vmm_emulate_instruction(vm, vcpuid, gpa, vie, paging,
 	    mread, mwrite, retu);
 
-	/* Restore single stepping */
-	if (!error && stepped) {
-		vmmops_setcap(vm->cookie, vcpuid, VM_CAP_RFLAGS_SSTEP, 1);
-  }
+
 
 	return (error);
 }
@@ -1639,6 +1625,42 @@ vm_handle_reqidle(struct vm *vm, int vcpuid, bool *retu)
 	vcpu_unlock(vcpu);
 	*retu = true;
 	return (0);
+}
+
+static int
+vm_handle_db(struct vm *vm, int vcpuid, struct vm_exit *vme, bool *retu)
+{
+	int error, fault;
+	uint64_t rsp;
+	uint64_t rflags;
+	struct vm_copyinfo copyinfo;
+
+	*retu = true;
+	if (!vme->u.dbg.pushf) {
+		return 0;
+  }
+  printf("%s: writing back rflags after pushf\r\n", __func__);
+
+  vm_get_register(vm, vcpuid, VM_REG_GUEST_RSP, &rsp);
+
+  error = vm_copy_setup(vm, vcpuid, &vme->u.dbg.paging, rsp, sizeof(uint64_t),
+      VM_PROT_WRITE, &copyinfo, 1, &fault);
+  if(error || fault){
+	  *retu = false;
+	  return (EINVAL);
+  }
+
+  /* Read pushed rflags value */
+  vm_copyin(vm, vcpuid, &copyinfo, &rflags, sizeof(uint64_t));
+  /* Set TF bit to shadowed value*/
+  rflags &= ~(PSL_T);
+  rflags |= vme->u.dbg.tf_shadow_val;
+  /* Write updated value back to memory*/
+  vm_copyout(vm, vcpuid, &rflags, &copyinfo, sizeof(uint64_t));
+
+  vm_copy_teardown(vm, vcpuid, &copyinfo, 1);
+
+  return (0);
 }
 
 int
@@ -1814,6 +1836,9 @@ restart:
 		case VM_EXITCODE_INOUT:
 		case VM_EXITCODE_INOUT_STR:
 			error = vm_handle_inout(vm, vcpuid, vme, &retu);
+			break;
+		case VM_EXITCODE_DB:
+			error = vm_handle_db(vm, vcpuid, vme, &retu);
 			break;
 		case VM_EXITCODE_MONITOR:
 		case VM_EXITCODE_MWAIT:
