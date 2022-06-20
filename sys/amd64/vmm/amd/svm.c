@@ -1435,34 +1435,46 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	     * and bounce vmexit to userland.
 	     */
 
+	    struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
+
 	    /* TODO: Check why guest DR6[BS] is not being set for TF vmexits */
 	    if (state->rip != ctrl->nrip &&
-		(svm_get_vcpu(svm_sc, vcpu)->caps &
-		    (1 << VM_CAP_RFLAGS_SSTEP))) {
+		(s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 1;
-		    vmexit->u.dbg.pushf = 0;
+		    vmexit->u.dbg.pushf_intercept = 0;
 
-		    if (svm_get_vcpu(svm_sc, vcpu)->db_info.popf_next) {
-			    /* Breakpoint exit was caused by stepping over popf
-			     */
+		    if (s_vcpu->db_info.popf_next) {
+			    /* DB exit was caused by stepping over popf */
+			    uint64_t rflags;
 			    printf("%s: popf trace trap\r\n", __func__);
 
-			    svm_get_vcpu(svm_sc, vcpu)->db_info.popf_next = 0;
-		    }
-		    else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next)
-		    {
-			    /* Breakpoint exit was caused by stepping over pushf
+			    s_vcpu->db_info.popf_next = 0;
+			    /*
+			     * Update shadowed TF bit so the next setcap(...,
+			     * RFLAGS_SSTEP, 0) restores the correct value
 			     */
+			    vmcb_read(
+				svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+			    s_vcpu->db_info.shadow_rflags_tf = !!(
+				rflags & PSL_T);
+		    } else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next) {
+			    /* DB exit was caused by stepping over pushf */
 			    printf("%s: pushf trace trap\r\n", __func__);
 
-			    vmexit->u.dbg.pushf = 1;
+			    /*
+			     * Adjusting the pushed rflags after a restarted
+			     * pushf instruction must be handled outside of
+			     * svm.c due
+			     * to the critical_enter() lock being held.
+			     */
+			    vmexit->u.dbg.pushf_intercept = 1; 
 			    vmexit->u.dbg.tf_shadow_val =
-				svm_get_vcpu(svm_sc, vcpu)
-				    ->db_info.shadow_rflags_tf;
+				s_vcpu->db_info.shadow_rflags_tf;
 			    svm_paging_info(svm_get_vmcb(svm_sc, vcpu),
 				&vmexit->u.dbg.paging);
-			    svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next = 0;
+
+			    s_vcpu->db_info.pushf_next = 0;
 		    }
 
 		    reflect = 0;
@@ -1607,13 +1619,13 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
     vmexit->rip -= vmexit->inst_length;
     /* Disable PUSHF intercepts - avoid a loop*/
 		svm_set_intercept(
-		    svm_sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, 0);
+       svm_sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, 0);
     /* Trace restarted instruction */
-		vmcb_write(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T));
+    vmcb_write(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T));
 
-		svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next = 1;
-		handled = 1;
-		break;
+    svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next = 1;
+    handled = 1;
+    break;
   }
 	case VMCB_EXIT_POPF:{
 		uint64_t rflags;
@@ -2435,26 +2447,20 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		}
 
 		s_vcpu = svm_get_vcpu(sc, vcpu);
-		int pushf_intcp_val = val;
-		int popf_intcp_val = val;
+
 
 		if (val) {
-      if(s_vcpu->db_info.popf_next){
-	      popf_intcp_val = 0;
-      } else {
-	      s_vcpu->db_info.shadow_rflags_tf = !!(rflags & PSL_T);
+			/* Save current TF bit */
+			s_vcpu->db_info.shadow_rflags_tf = !!(rflags & PSL_T);
+
+			/* Trace next instruction */
+			if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS,
+				(rflags | PSL_T))) {
+				error = (EINVAL);
+				break;
       }
 
-      if (s_vcpu->db_info.pushf_next) {
-	      pushf_intcp_val = 0;
-      }
-
-      if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T))) {
-	      error = (EINVAL);
-	      break;
-      }
-
-		s_vcpu->caps |= (1 << VM_CAP_RFLAGS_SSTEP);
+      s_vcpu->caps |= (1 << VM_CAP_RFLAGS_SSTEP);
 		} else {
 			/*
        * Restore shadowed RFLAGS.TF only if vCPU was being
@@ -2476,10 +2482,8 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 			}
 		}
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
-		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF,
-		    popf_intcp_val);
-		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT,
-		    VMCB_INTCPT_PUSHF, pushf_intcp_val);
+		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
+		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, val);
 
 		break;
 	}

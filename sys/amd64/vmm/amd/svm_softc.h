@@ -42,9 +42,10 @@ struct asid {
 };
 
 struct svm_vcpu_debug_info {
-  bool popf_next;
-  bool pushf_next;
-  bool shadow_rflags_tf;
+	bool popf_next; /* flag for handling single-stepping over popf */
+	bool pushf_next;
+	bool shadow_rflags_tf; /* shadowed tf bit value; used for
+				  single-stepping */
 };
 
 /*
@@ -56,7 +57,7 @@ struct svm_vcpu {
 	struct svm_regctx swctx; /* software saved vcpu context */
 	uint64_t	vmcb_pa; /* VMCB physical address */
 	uint64_t	nextrip; /* next instruction to be executed by guest */
-        int		lastcpu; /* host cpu that the vcpu last ran on */
+	int lastcpu;		 /* host cpu that the vcpu last ran on */
 	uint32_t	dirty;	 /* state cache bits that must be cleared */
 	long		eptgen;	 /* pmap->pm_eptgen when the vcpu last ran */
 	struct asid	asid;

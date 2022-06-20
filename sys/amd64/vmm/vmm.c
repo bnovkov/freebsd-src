@@ -1636,9 +1636,9 @@ vm_handle_db(struct vm *vm, int vcpuid, struct vm_exit *vme, bool *retu)
 	struct vm_copyinfo copyinfo;
 
 	*retu = true;
-	if (!vme->u.dbg.pushf) {
+	if (!vme->u.dbg.pushf_intercept) {
 		return 0;
-  }
+	}
   printf("%s: writing back rflags after pushf\r\n", __func__);
 
   vm_get_register(vm, vcpuid, VM_REG_GUEST_RSP, &rsp);
@@ -1652,9 +1652,11 @@ vm_handle_db(struct vm *vm, int vcpuid, struct vm_exit *vme, bool *retu)
 
   /* Read pushed rflags value */
   vm_copyin(vm, vcpuid, &copyinfo, &rflags, sizeof(uint64_t));
+  printf("%s: rflags: 0x%8lx\r\n", __func__, rflags);
   /* Set TF bit to shadowed value*/
   rflags &= ~(PSL_T);
   rflags |= vme->u.dbg.tf_shadow_val;
+  printf("%s: updated rflags: 0x%8lx\r\n", __func__, rflags);
   /* Write updated value back to memory*/
   vm_copyout(vm, vcpuid, &rflags, &copyinfo, sizeof(uint64_t));
 
