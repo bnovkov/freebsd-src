@@ -1655,7 +1655,7 @@ vm_handle_db(struct vm *vm, int vcpuid, struct vm_exit *vme, bool *retu)
   printf("%s: rflags: 0x%8lx\r\n", __func__, rflags);
   /* Set TF bit to shadowed value*/
   rflags &= ~(PSL_T);
-  rflags |= vme->u.dbg.tf_shadow_val;
+  rflags |= (vme->u.dbg.tf_shadow_val ? PSL_T : 0);
   printf("%s: updated rflags: 0x%8lx\r\n", __func__, rflags);
   /* Write updated value back to memory*/
   vm_copyout(vm, vcpuid, &rflags, &copyinfo, sizeof(uint64_t));

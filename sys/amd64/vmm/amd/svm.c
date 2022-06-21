@@ -1436,10 +1436,13 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	     */
 
 	    struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
+	    uint64_t dr6;
+	    bool stepped;
 
-	    /* TODO: Check why guest DR6[BS] is not being set for TF vmexits */
-	    if (state->rip != ctrl->nrip &&
-		(s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
+	    vmcb_read(svm_sc, vcpu, VM_REG_GUEST_DR6, &dr6);
+	    stepped = !!(dr6 & DBREG_DR6_BS);
+
+	    if (stepped && (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 1;
 		    vmexit->u.dbg.pushf_intercept = 0;
@@ -1468,7 +1471,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			     * svm.c due
 			     * to the critical_enter() lock being held.
 			     */
-			    vmexit->u.dbg.pushf_intercept = 1; 
+			    vmexit->u.dbg.pushf_intercept = 1;
 			    vmexit->u.dbg.tf_shadow_val =
 				s_vcpu->db_info.shadow_rflags_tf;
 			    svm_paging_info(svm_get_vmcb(svm_sc, vcpu),
@@ -1612,7 +1615,10 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		break;
 	case VMCB_EXIT_PUSHF:{
     uint64_t rflags;
+    struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
     svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+    /* Update shadow TF to guard against unrelated intercepts */
+    s_vcpu->db_info.shadow_rflags_tf = !!(rflags & PSL_T);
 
     printf("%s: pushf stepped\r\n", __func__);
     /* Restart this instruction */
@@ -1623,7 +1629,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
     /* Trace restarted instruction */
     vmcb_write(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T));
 
-    svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next = 1;
+    s_vcpu->db_info.pushf_next = 1;
     handled = 1;
     break;
   }
@@ -2435,10 +2441,9 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 	case VM_CAP_BPT_EXIT:
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP), val);
 		break;
-	case VM_CAP_RFLAGS_SSTEP:{
-		/* TODO: dont overwrite intercept if VM_CAP_DB_EXIT is active */
-
+	case VM_CAP_RFLAGS_SSTEP: {
 		uint64_t rflags;
+		int db_inctpt_val = val;
 		struct svm_vcpu *s_vcpu;
 
 		if(svm_getreg(sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags)){
@@ -2447,7 +2452,6 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		}
 
 		s_vcpu = svm_get_vcpu(sc, vcpu);
-
 
 		if (val) {
 			/* Save current TF bit */
@@ -2480,26 +2484,30 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 				}
 				s_vcpu->caps &= ~(1 << VM_CAP_RFLAGS_SSTEP);
 			}
+			/* Dont disable intercept if VM_CAP_DB_EXIT is active */
+			db_inctpt_val = !(s_vcpu->caps & (1 << VM_CAP_DB_EXIT));
 		}
-		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
+
+		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_inctpt_val);
 		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
 		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, val);
 
 		break;
 	}
-	case VM_CAP_DB_EXIT:
-		/*
-		 * TODO: dont overwrite intercept if
-		 * VM_CAP_RFLAGS_SSTEP is active
-		 */
+	case VM_CAP_DB_EXIT:{
+		struct svm_vcpu *s_vcpu = svm_get_vcpu(sc, vcpu);
+
 		if (val) {
-			svm_get_vcpu(sc, vcpu)->caps |= (1 << VM_CAP_DB_EXIT);
+			s_vcpu->caps |= (1 << VM_CAP_DB_EXIT);
 		} else {
-			svm_get_vcpu(sc, vcpu)->caps &= ~(1 << VM_CAP_DB_EXIT);
+			s_vcpu->caps &= ~(1 << VM_CAP_DB_EXIT);
+			/* Dont disable intercept if VM_CAP_RFLAGS_SSTEP is
+			 * active */
+			val = !(s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP));
 		}
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
 		break;
-
+	}
 	default:
 		error = ENOENT;
 		break;
@@ -2529,20 +2537,16 @@ svm_getcap(void *arg, int vcpu, int type, int *retval)
 		*retval = 1;	/* unrestricted guest is always enabled */
 		break;
 	case VM_CAP_DB_EXIT:
-		*retval = (svm_get_vcpu(sc, vcpu)->caps &
-			      (1 << VM_CAP_DB_EXIT)) ?
-		    1 :
-		    0;
+		*retval = !!(svm_get_vcpu(sc, vcpu)->caps &
+               (1 << VM_CAP_DB_EXIT));
 		break;
 	case VM_CAP_BPT_EXIT:
 		*retval = svm_get_intercept(
 		    sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP));
 		break;
 	case VM_CAP_RFLAGS_SSTEP:
-		*retval = (svm_get_vcpu(sc, vcpu)->caps &
-			      (1 << VM_CAP_RFLAGS_SSTEP)) ?
-		    1 :
-		    0;
+		*retval = !!(
+		    svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_SSTEP));
 		break;
 
 	default:
@@ -2722,7 +2726,7 @@ svm_snapshot(void *arg, struct vm_snapshot_meta *meta)
 		SNAPSHOT_VAR_OR_LEAVE(vcpu->asid.gen, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(vcpu->asid.num, meta, ret, done);
 
-		/* Set all caches dirty */
+		/* Setcap all caches dirty */
 		if (meta->op == VM_SNAPSHOT_RESTORE) {
 			svm_set_dirty(sc, i, VMCB_CACHE_ASID);
 			svm_set_dirty(sc, i, VMCB_CACHE_IOPM);
