@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/socket.h>
 
 #include <machine/atomic.h>
+#include <machine/reg.h>
 #include <machine/specialreg.h>
 #include <machine/vmm.h>
 
@@ -74,6 +75,12 @@ __FBSDID("$FreeBSD$");
  */
 #define GDB_SIGNAL_TRAP 5
 
+
+#define GDB_WATCHPOINT_TYPE_WRITE 2
+#define GDB_WATCHPOINT_TYPE_READ 3
+#define GDB_WATCHPOINT_TYPE_ACCESS 4
+#define GDB_WATCHPOINT_MAX 4
+
 static void gdb_resume_vcpus(void);
 static void check_command(int fd);
 
@@ -104,6 +111,20 @@ struct breakpoint {
 	TAILQ_ENTRY(breakpoint) link;
 };
 
+struct watchpoint {
+	uint64_t gva;
+	uint8_t dr_num;
+	TAILQ_ENTRY(watchpoint) link;
+};
+
+struct vcpu_watchpoint_stats {
+	int dbregs_avail;
+};
+
+struct watchpoint_stats {
+	int no_active;
+	int available_dbregs_mask;
+};
 /*
  * When a vCPU stops to due to an event that should be reported to the
  * debugger, information about the event is stored in this structure.
@@ -134,6 +155,9 @@ static uint8_t cur_csum;
 static struct vmctx *ctx;
 static int cur_fd = -1;
 static TAILQ_HEAD(, breakpoint) breakpoints;
+static TAILQ_HEAD(, watchpoint) watchpoints;
+static struct watchpoint_stats watch_stats;
+static struct vcpu_watchpoint_stats *vcpu_watch_stats;
 static struct vcpu_state *vcpu_state;
 static int cur_vcpu, stopped_vcpu;
 static bool gdb_active = false;
@@ -1250,6 +1274,100 @@ remove_all_sw_breakpoints(void)
 	set_breakpoint_caps(false);
 }
 
+static bool
+set_dbexit_caps(bool enable)
+{
+	cpuset_t mask;
+	int vcpu;
+
+	mask = vcpus_active;
+	while (!CPU_EMPTY(&mask)) {
+		vcpu = CPU_FFS(&mask) - 1;
+		CPU_CLR(vcpu, &mask);
+		if (vm_set_capability(
+			ctx, vcpu, VM_CAP_DB_EXIT, enable ? 1 : 0) < 0)
+			return (false);
+		debug("$vCPU %d %sabled debug exits\n", vcpu,
+		    enable ? "en" : "dis");
+	}
+	return (true);
+}
+
+static bool
+set_dbreg_exit_caps(bool enable)
+{
+	cpuset_t mask;
+	int vcpu;
+
+	mask = vcpus_active;
+	while (!CPU_EMPTY(&mask)) {
+		vcpu = CPU_FFS(&mask) - 1;
+		CPU_CLR(vcpu, &mask);
+		if (vm_set_capability(
+			ctx, vcpu, VM_CAP_DR_MOV_EXIT, enable ? 1 : 0) < 0)
+			return (false);
+		debug("$vCPU %d %sabled debug register access exits\n", vcpu,
+		    enable ? "en" : "dis");
+	}
+	return (true);
+}
+
+static void
+handle_watchpoint(uint64_t gva, int type, int bytes, int insert)
+{
+	if (!insert && watch_stats.no_active == 0) {
+		send_error(EINVAL);
+		return;
+	}
+
+	if (watch_stats.no_active == GDB_WATCHPOINT_MAX ||
+	    watch_stats.available_dbregs_mask == 0) {
+		send_error(ENOSPC);
+		return;
+	}
+
+	/*
+	 * No watchpoints are active - fetch and update
+	 * watchpoint stats, enable dbreg and db exits.
+	 */
+	if (watch_stats.no_active == 0) {
+		cpuset_t mask;
+		int vcpu;
+		uint64_t dr7;
+		int vcpu_avail_dbreg_mask;
+
+		if (!set_dbexit_caps(true) || !set_dbreg_exit_caps(false)) {
+			send_error(EINVAL);
+			return;
+		}
+
+		watch_stats.available_dbregs_mask = 0xF;
+
+		mask = vcpus_active;
+		while (!CPU_EMPTY(&mask)) {
+			vcpu = CPU_FFS(&mask) - 1;
+			CPU_CLR(vcpu, &mask);
+
+			/* Construct bitmask of active dbregs */
+			vm_get_register(ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
+			vcpu_avail_dbreg_mask = (DBREG_DR7_ENABLED(dr7, 0) |
+			    (DBREG_DR7_ENABLED(dr7, 1) << 1) |
+			    (DBREG_DR7_ENABLED(dr7, 2) << 2) |
+			    (DBREG_DR7_ENABLED(dr7, 3) << 3));
+			/* Mark any currently enabled dbreg as unavailable */
+			watch_stats.available_dbregs_mask &= ~(
+			    vcpu_avail_dbreg_mask);
+		}
+
+		if (watch_stats.available_dbregs_mask == 0) {
+			send_error(ENOSPC);
+			set_dbexit_caps(false);
+			set_dbreg_exit_caps(false);
+			return;
+		}
+	}
+}
+
 static void
 update_sw_breakpoint(uint64_t gva, int kind, bool insert)
 {
@@ -1373,6 +1491,11 @@ parse_breakpoint(const uint8_t *data, size_t len)
 	case 0:
 		update_sw_breakpoint(gva, kind, insert);
 		break;
+  case 2:
+  case 3:
+  case 4:
+	  handle_watchpoint(gva, type, kind, insert);
+	  break;
 	default:
 		send_empty_response();
 		break;
@@ -1908,6 +2031,9 @@ init_gdb(struct vmctx *_ctx)
 		CPU_SET(0, &vcpus_suspended);
 		stopped_vcpu = 0;
 	}
+
+	vcpu_watch_stats = calloc(guest_ncpus, sizeof(*vcpu_watch_stats));
+	memset(&watch_stats, 0, sizeof(watch_stats));
 
 	flags = fcntl(s, F_GETFL);
 	if (fcntl(s, F_SETFL, flags | O_NONBLOCK) == -1)

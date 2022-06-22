@@ -487,6 +487,7 @@ enum vm_cap_type {
 	VM_CAP_RDTSCP,
 	VM_CAP_DB_EXIT,
 	VM_CAP_RFLAGS_SSTEP,
+	VM_CAP_DR_MOV_EXIT,
 	VM_CAP_MAX
 };
 
@@ -728,8 +729,8 @@ struct vm_exit {
 			int  trace_trap;
 			int drx_access;
 			int  watchpoints; /* bitmask */
-			bool pushf_intercept;
-			bool tf_shadow_val;
+			int pushf_intercept;
+			int tf_shadow_val;
 			struct vm_guest_paging paging;
 		} dbg;
 		struct {
