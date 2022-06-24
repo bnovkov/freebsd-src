@@ -45,6 +45,10 @@
 #define	VMCB_CTRL1_INTCPT	3
 #define	VMCB_CTRL2_INTCPT	4
 
+/* DR intercept helper macros */
+#define VMCB_INTCPT_DR_READ(n) (BIT((n)))
+#define VMCB_INTCPT_DR_WRITE(n) (BIT(((n) + 16)))
+
 /* intercept[VMCB_CTRL1_INTCPT] fields */
 #define	VMCB_INTCPT_INTR		BIT(0)
 #define	VMCB_INTCPT_NMI			BIT(1)
@@ -153,6 +157,12 @@
 #define	VMCB_EXIT_MWAIT			0x8B
 #define	VMCB_EXIT_NPF			0x400
 #define	VMCB_EXIT_INVALID		-1
+
+/*
+ * Helper macros to decode MOV DRx EXITINFO1.
+ * Section 15.8.1, MOV CRx/DRx Intercepts.
+ */
+#define VMCB_DR_INTCTP_GPR_NUM(x) ((x) & 0xF)
 
 /*
  * Nested page fault.

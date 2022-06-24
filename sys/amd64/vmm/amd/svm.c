@@ -1393,6 +1393,31 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	case VMCB_EXIT_NMI:	/* external NMI */
 		handled = 1;
 		break;
+	case 0x30 ... 0x33: { /* DR{0-3} write */
+		int dbreg_num = code - 0x30;
+		int dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+		int gpr = VM_REG_GUEST_RAX + VMCB_DR_INTCTP_GPR_NUM(info1);
+    uint64_t new_dbreg_val;
+		/* Emulate DR write */
+    error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
+    KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
+
+    error = svm_setreg(svm_sc, vcpu, dbreg, new_dbreg_val);
+    KASSERT(error == 0, ("%s: error %d updating DR%d", __func__, error, dbreg_num));
+
+    /*
+     * Bounce exit to userland - allow the
+     * gdb stub to adjust its watchpoint metadata
+     */
+    vmexit->exitcode = VM_EXITCODE_DB;
+    vmexit->u.dbg.trace_trap = 0;
+    vmexit->u.dbg.pushf_intercept = 0;
+    vmexit->u.dbg.drx_write = 1;
+    vmexit->u.dbg.watchpoints = (1 << dbreg_num);
+
+    handled = 0;
+    break;
+	}
 	case 0x40 ... 0x5F:
 		vmm_stat_incr(svm_sc->vm, vcpu, VMEXIT_EXCEPTION, 1);
 		reflect = 1;
@@ -2496,16 +2521,26 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 	}
 	case VM_CAP_DB_EXIT:{
 		struct svm_vcpu *s_vcpu = svm_get_vcpu(sc, vcpu);
-
+		int db_intcpt = val;
 		if (val) {
+			/* Require decode assist support for now */
+			if (!decode_assist()) {
+				error = (ENOTSUP);
+				break;
+      }
 			s_vcpu->caps |= (1 << VM_CAP_DB_EXIT);
 		} else {
 			s_vcpu->caps &= ~(1 << VM_CAP_DB_EXIT);
 			/* Dont disable intercept if VM_CAP_RFLAGS_SSTEP is
 			 * active */
-			val = !(s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP));
+			db_intcpt = !(
+			    s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP));
 		}
-		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
+
+		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_intcpt);
+		/* Intercept DR7 writes */
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
 		break;
 	}
 	default:

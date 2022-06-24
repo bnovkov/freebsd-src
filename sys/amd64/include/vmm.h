@@ -726,9 +726,9 @@ struct vm_exit {
 			int		inst_length;
 		} bpt;
 		struct {
-			int  trace_trap;
-			int drx_access;
-			int  watchpoints; /* bitmask */
+			int trace_trap;
+			int drx_write;
+			int watchpoints; /* bitmask */
 			int pushf_intercept;
 			int tf_shadow_val;
 			struct vm_guest_paging paging;

@@ -2662,7 +2662,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 		    (vmx->cap[vcpu].set & (1 << VM_CAP_DB_EXIT))) {
 			vmexit->exitcode = VM_EXITCODE_DB;
 			vmexit->u.dbg.trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
-			vmexit->u.dbg.drx_access = !!(qual & EXIT_QUAL_DBG_BD);
+			vmexit->u.dbg.drx_write = !!(qual & EXIT_QUAL_DBG_BD);
 			vmexit->u.dbg.watchpoints = qual & EXIT_QUAL_DBG_B_MASK;
 			break;
 		}
