@@ -1463,14 +1463,18 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	    struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
 	    uint64_t dr6;
 	    bool stepped;
+	    int watch_mask;
 
 	    vmcb_read(svm_sc, vcpu, VM_REG_GUEST_DR6, &dr6);
 	    stepped = !!(dr6 & DBREG_DR6_BS);
+	    watch_mask = (dr6 & DBREG_DR6_BMASK);
 
 	    if (stepped && (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 1;
 		    vmexit->u.dbg.pushf_intercept = 0;
+		    vmexit->u.dbg.drx_write = 0;
+		    vmexit->u.dbg.watchpoints = 0;
 
 		    if (s_vcpu->db_info.popf_next) {
 			    /* DB exit was caused by stepping over popf */
@@ -1486,7 +1490,9 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 				svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
 			    s_vcpu->db_info.shadow_rflags_tf = !!(
 				rflags & PSL_T);
-		    } else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next) {
+		    }
+		    else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next)
+		    {
 			    /* DB exit was caused by stepping over pushf */
 			    printf("%s: pushf trace trap\r\n", __func__);
 
@@ -1504,13 +1510,20 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 
 			    s_vcpu->db_info.pushf_next = 0;
 		    }
+		    reflect = 0;
+		    handled = 0;
+		    break;
+	    } else if (watch_mask && (s_vcpu->caps & (1 << VM_CAP_DB_EXIT))) {
+		    /* A hw watchpoint was triggered - bounce to userland */
+		    vmexit->exitcode = VM_EXITCODE_DB;
+		    vmexit->u.dbg.trace_trap = 0;
+		    vmexit->u.dbg.pushf_intercept = 0;
+		    vmexit->u.dbg.drx_write = 0;
+		    vmexit->u.dbg.watchpoints = watch_mask;
 
 		    reflect = 0;
 		    handled = 0;
 		    break;
-	    } else {
-		    /* TODO: check hw watchpoints*/
-		    /* fallthru */
 	    }
     }
     case IDT_BP:
@@ -2538,9 +2551,12 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		}
 
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_intcpt);
-		/* Intercept DR7 writes */
-		svm_set_intercept(
-		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
+		/* Intercept DR0-3 writes */
+		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(0), val);
+		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(1), val);
+		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(2), val);
+		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(3), val);
+
 		break;
 	}
 	default:
