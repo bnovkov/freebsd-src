@@ -407,6 +407,13 @@ vmcs_write(uint32_t encoding, uint64_t val)
 #define	EXIT_QUAL_DBG_BS		(1U << 14)
 
 /*
+ * Exit qualification for MOV DR
+ */
+#define	EXIT_QUAL_MOV_DR_REG(n)		((n) & 0x7)
+#define EXIT_QUAL_MOV_DR_RW(n) (!!((n) & 0x8))
+#define EXIT_QUAL_MOV_DR_GPR(n) (((n) & 0xf00) >> 8)
+
+/*
  * Exit qualification for EXIT_REASON_INVAL_VMCS
  */
 #define	EXIT_QUAL_NMI_WHILE_STI_BLOCKING	3

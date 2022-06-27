@@ -1393,17 +1393,13 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	case VMCB_EXIT_NMI:	/* external NMI */
 		handled = 1;
 		break;
-	case 0x30 ... 0x33: { /* DR{0-3} write */
-		int dbreg_num = code - 0x30;
-		int dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+	case 0x30 ... 0x33:  /* DR{0-4,7} write */
+  case 0x37:{
+    // TODO: handle and emulate DR7 writes
+    int dbreg_num = code - 0x30;
+		int dbreg;
 		int gpr = VM_REG_GUEST_RAX + VMCB_DR_INTCTP_GPR_NUM(info1);
     uint64_t new_dbreg_val;
-		/* Emulate DR write */
-    error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
-    KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
-
-    error = svm_setreg(svm_sc, vcpu, dbreg, new_dbreg_val);
-    KASSERT(error == 0, ("%s: error %d updating DR%d", __func__, error, dbreg_num));
 
     /*
      * Bounce exit to userland - allow the
@@ -1412,8 +1408,27 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
     vmexit->exitcode = VM_EXITCODE_DB;
     vmexit->u.dbg.trace_trap = 0;
     vmexit->u.dbg.pushf_intercept = 0;
-    vmexit->u.dbg.drx_write = 1;
-    vmexit->u.dbg.watchpoints = (1 << dbreg_num);
+    vmexit->u.dbg.drx_write = dbreg_num;
+
+		/* Emulate DR write */
+    error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
+    KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
+
+    if(dbreg_num == 7){
+      /*
+       * A DR7 write can change multiple watchpoints.
+       * Update vmexit info with a the new breakpoint mask from the gpr.
+       */
+      dbreg = VM_REG_GUEST_DR7;
+      // TODO: mask upper 32 bits?
+      vmexit->u.dbg.watchpoints = (int)(new_dbreg_val);
+    } else {
+      dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+      vmexit->u.dbg.drx_write = dbreg_num;
+    }
+
+    error = svm_setreg(svm_sc, vcpu, dbreg, new_dbreg_val);
+    KASSERT(error == 0, ("%s: error %d updating DR%d", __func__, error, dbreg_num));
 
     handled = 0;
     break;

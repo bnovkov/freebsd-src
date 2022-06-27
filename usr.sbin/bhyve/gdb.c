@@ -918,7 +918,7 @@ static int clear_watchpoint(int watchnum){
     CPU_CLR(vcpu, &mask);
 
     /* VMM has already filled dbreg with the intended address - no need to clear
-     * dbreg */
+     * dbreg */ // TODO: maybe move that here
     /* Disable watchpoint in DR7 */
     vm_get_register(ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
     dr7 &= ~DBREG_DR7_MASK(watchnum);
@@ -998,9 +998,11 @@ gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
 	} else if (vmexit->u.dbg.drx_write) {
 
 		pthread_mutex_lock(&gdb_lock);
-		int dbreg_num = __builtin_ffs(vmexit->u.dbg.watchpoints);
+		int dbreg_num = vmexit->u.dbg.drx_write;
 
-		if (watch_stats.watchpoints[dbreg_num].active) {
+    if(dbreg_num == 7){
+      /* A new DR7 was loaded, update watchpoint metadata */
+    } else if (watch_stats.watchpoints[dbreg_num].active) {
 			/* Guest started using an occupied DB reg, remove
 			 * watchpoint */
 			clear_watchpoint(dbreg_num);
@@ -1011,6 +1013,8 @@ gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
 	} else if (vmexit->u.dbg.watchpoints) {
 		/* A watchpoint was triggered */
 		handle_watchpoints(vcpu, vmexit->u.dbg.watchpoints);
+    // TODO: handle pending DB exceptions?
+		// TODO: clearing DR6?
 	}
 	/* else {
 		      gdb_cpu_suspend(vcpu);

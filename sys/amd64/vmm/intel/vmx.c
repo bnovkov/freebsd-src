@@ -30,6 +30,7 @@
  */
 
 #include <sys/cdefs.h>
+#include "vmcs.h"
 __FBSDID("$FreeBSD$");
 
 #include "opt_bhyve_snapshot.h"
@@ -2472,7 +2473,43 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 			break;
 		}
 		break;
-	case EXIT_REASON_RDMSR:
+
+  case EXIT_REASON_DR_ACCESS:{
+    int dbreg_num = EXIT_QUAL_MOV_DR_REG(qual);
+    int gpr = VM_REG_GUEST_RAX + EXIT_QUAL_MOV_DR_GPR(qual);
+    int write = EXIT_QUAL_MOV_DR_RW(qual);
+    uint64_t new_dbreg_val;
+
+    /*
+     * Bounce exit to userland - allow the
+     * gdb stub to adjust its watchpoint metadata
+     */
+    vmexit->exitcode = VM_EXITCODE_DB;
+    vmexit->u.dbg.trace_trap = 0;
+    vmexit->u.dbg.pushf_intercept = 0;
+    vmexit->u.dbg.drx_write = dbreg_num;
+
+    /* Emulate DR write */
+    error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
+    KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
+
+    if (dbreg_num == 7) {
+	    dbreg = VM_REG_GUEST_DR7;
+	    vmexit->u.dbg.watchpoints = (int)(new_dbreg_val);
+    } else {
+	    dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+	    vmexit->u.dbg.drx_write = dbreg_num;
+    }
+
+    error = svm_setreg(svm_sc, vcpu, dbreg, new_dbreg_val);
+    KASSERT(
+	error == 0, ("%s: error %d updating DR%d", __func__, error, dbreg_num));
+
+    handled = 0;
+
+    break;
+  }
+  case EXIT_REASON_RDMSR:
 		vmm_stat_incr(vmx->vm, vcpu, VMEXIT_RDMSR, 1);
 		retu = false;
 		ecx = vmxctx->guest_rcx;
@@ -3497,6 +3534,7 @@ vmx_getcap(void *arg, int vcpu, int type, int *retval)
 		break;
 	case VM_CAP_BPT_EXIT:
 	case VM_CAP_DB_EXIT:
+  case VM_CAP_DR_MOV_EXIT:
 		ret = 0;
 		break;
 	default:
@@ -3602,6 +3640,14 @@ vmx_setcap(void *arg, int vcpu, int type, int val)
 			flag = (1 << IDT_DB);
 			reg = VMCS_EXCEPTION_BITMAP;
 		}
+		break;
+  case VM_CAP_DR_MOV_EXIT:
+		retval = 0;
+
+    pptr = &vmx->cap[vcpu].proc_ctls;
+    baseval = *pptr;
+    flag = PROCBASED_MOV_DR_EXITING;
+    reg = VMCS_SEC_PROC_BASED_CTLS;
 		break;
 	default:
 		break;
