@@ -30,7 +30,6 @@
  */
 
 #include <sys/cdefs.h>
-#include "vmcs.h"
 __FBSDID("$FreeBSD$");
 
 #include "opt_bhyve_snapshot.h"
@@ -2475,10 +2474,16 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 		break;
 
   case EXIT_REASON_DR_ACCESS:{
+    int dbreg;
     int dbreg_num = EXIT_QUAL_MOV_DR_REG(qual);
     int gpr = VM_REG_GUEST_RAX + EXIT_QUAL_MOV_DR_GPR(qual);
     int write = EXIT_QUAL_MOV_DR_RW(qual);
     uint64_t new_dbreg_val;
+
+    if(!write){
+      handled = 1;
+      break;
+    }
 
     /*
      * Bounce exit to userland - allow the
@@ -2490,7 +2495,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
     vmexit->u.dbg.drx_write = dbreg_num;
 
     /* Emulate DR write */
-    error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
+    error = vmx_getreg(vmx, vcpu, gpr, &new_dbreg_val);
     KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
 
     if (dbreg_num == 7) {
@@ -2501,7 +2506,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 	    vmexit->u.dbg.drx_write = dbreg_num;
     }
 
-    error = svm_setreg(svm_sc, vcpu, dbreg, new_dbreg_val);
+    error = vmxctx_setreg(&vmx->ctx[vcpu], dbreg, new_dbreg_val);
     KASSERT(
 	error == 0, ("%s: error %d updating DR%d", __func__, error, dbreg_num));
 
