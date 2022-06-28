@@ -1493,93 +1493,99 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
 		return;
 	}
 
-  if(insert){
-	/*
-	 * No watchpoints are active - fetch and update
-	 * watchpoint stats, enable dbreg and db exits.
-	 */
-    if (watch_stats.no_active == 0) {
-      cpuset_t mask;
-      int vcpu;
-      uint64_t dr7;
-      int vcpu_used_dbreg_mask;
-      /* Activate debug exception and MOV DR* vmexits */
-      if (!set_dbexit_caps(true) || !set_dbreg_exit_caps(false)) {
-        send_error(EINVAL);
-        return;
-      }
+	if (insert) {
 
-      BIT_FILL(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs);
+		/*
+		 * No watchpoints are active - fetch and update
+		 * watchpoint stats, enable dbreg and db exits.
+		 */
+		if (watch_stats.no_active == 0) {
+			cpuset_t mask;
+			int vcpu;
+			uint64_t dr7;
+			/* Activate debug exception and MOV DR* vmexits */
+			if (!set_dbexit_caps(true) ||
+			    !set_dbreg_exit_caps(true)) {
+				send_error(EINVAL);
+				return;
+			}
 
-      mask = vcpus_active;
-      while (!CPU_EMPTY(&mask)) {
-        vcpu = CPU_FFS(&mask) - 1;
-        CPU_CLR(vcpu, &mask);
+			BIT_FILL(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs);
 
-        /* Construct bitmask of active dbregs */
-        vm_get_register(ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
-        vcpu_used_dbreg_mask = (DBREG_DR7_ENABLED(dr7, 0) |
-                                (DBREG_DR7_ENABLED(dr7, 1) << 1) |
-                                (DBREG_DR7_ENABLED(dr7, 2) << 2) |
-                                (DBREG_DR7_ENABLED(dr7, 3) << 3));
-        /* Mark any currently enabled dbreg as unavailable */
-        BIT_CLR(GDB_WATCHPOINT_MAX, vcpu_used_dbreg_mask, &watch_stats.avail_dbregs);
-      }
+			mask = vcpus_active;
+			while (!CPU_EMPTY(&mask)) {
+				int vcpu_used_dbreg_mask = 0;
 
-      if (BIT_EMPTY(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs)) {
-        send_error(ENOSPC);
-        set_dbexit_caps(false);
-        set_dbreg_exit_caps(false);
-        return;
-      }
-    }
+				vcpu = CPU_FFS(&mask) - 1;
+				CPU_CLR(vcpu, &mask);
 
-    if (watch_stats.no_active == GDB_WATCHPOINT_MAX ||
-        BIT_EMPTY(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs)) {
-      send_error(ENOSPC);
-      return;
-    }
+				/* Construct bitmask of active dbregs */
+				vm_get_register(
+				    ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
+				vcpu_used_dbreg_mask = (DBREG_DR7_ENABLED(
+							    dr7, 0) |
+				    (DBREG_DR7_ENABLED(dr7, 1) << 1) |
+				    (DBREG_DR7_ENABLED(dr7, 2) << 2) |
+				    (DBREG_DR7_ENABLED(dr7, 3) << 3));
+				/* Mark any currently enabled dbreg as
+				 * unavailable */
+				BIT_CLR(GDB_WATCHPOINT_MAX,
+				    vcpu_used_dbreg_mask,
+				    &watch_stats.avail_dbregs);
+			}
 
+			if (BIT_EMPTY(GDB_WATCHPOINT_MAX,
+				&watch_stats.avail_dbregs)) {
+				send_error(ENOSPC);
+				set_dbexit_caps(false);
+				set_dbreg_exit_caps(false);
+				return;
+			}
+		}
 
-    int dbreg_num = BIT_FFS(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs);
+		if (watch_stats.no_active == GDB_WATCHPOINT_MAX ||
+		    BIT_EMPTY(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs)) {
+			send_error(ENOSPC);
+			return;
+		}
 
-    // should not happen
-    if(dbreg_num > 3){
-      send_error(ENOSPC);
-      set_dbexit_caps(false);
-      set_dbreg_exit_caps(false);
-      return;
-    }
+		int dbreg_num = BIT_FFS(
+		    GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs);
 
-    int error = set_watchpoint(gva, type, bytes, dbreg_num);
-    if(error){
-      send_error(error);
-      return;
-    }
+		// should not happen
+		if (dbreg_num > 3) {
+			send_error(ENOSPC);
+			set_dbexit_caps(false);
+			set_dbreg_exit_caps(false);
+			return;
+		}
 
-  } else {
-    int watchnum = -1;
-    for(int i = 0; i< GDB_WATCHPOINT_MAX; i++){
-      if(! watch_stats.watchpoints[i].active){
-        continue;
-      }
+		int error = set_watchpoint(gva, type, bytes, dbreg_num);
+		if (error) {
+			send_error(error);
+			return;
+		}
 
-      if(watch_stats.watchpoints[i].gva == gva){
-        watchnum = i;
-        break;
-      }
-    }
+	} else {
+		int watchnum = -1;
+		for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
+			if (!watch_stats.watchpoints[i].active) {
+				continue;
+			}
 
-    if(watchnum == -1){
-      send_error(ENOENT);
-      return;
-    }
+			if (watch_stats.watchpoints[i].gva == gva) {
+				watchnum = i;
+				break;
+			}
+		}
 
-    clear_watchpoint(watchnum);
+		if (watchnum == -1) {
+			send_error(ENOENT);
+			return;
+		}
 
-
-  }
-
+		clear_watchpoint(watchnum);
+	}
 
 	send_ok();
 }
@@ -1884,7 +1890,7 @@ handle_command(const uint8_t *data, size_t len)
 		break;
 	case 'D':
 		send_ok();
-
+		// TODO: clear breakpoints/watchpoints on detach?
 		/* TODO: Resume any stopped CPUs. */
 		break;
 	case 'g': {

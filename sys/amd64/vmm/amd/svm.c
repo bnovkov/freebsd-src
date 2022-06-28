@@ -2566,14 +2566,22 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		}
 
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_intcpt);
-		/* Intercept DR0-3 writes */
-		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(0), val);
-		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(1), val);
-		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(2), val);
-		svm_set_intercept(sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(3), val);
 
 		break;
 	}
+  case VM_CAP_DR_MOV_EXIT:
+	  /* Intercept DR0-3,7 writes */
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(0), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(1), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(2), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(3), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
+	  break;
 	default:
 		error = ENOENT;
 		break;
