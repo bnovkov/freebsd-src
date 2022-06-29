@@ -176,6 +176,7 @@ const int gdb_regset[] = { VM_REG_GUEST_RAX, VM_REG_GUEST_RBX, VM_REG_GUEST_RCX,
 
 const int gdb_regsize[] = { 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
 	4, 4, 4, 4, 4, 4, 4 };
+#define GDB_LOG
 
 #ifdef GDB_LOG
 #include <stdarg.h>
@@ -672,8 +673,7 @@ report_stop(bool set_cur_vcpu)
     }else if (vs->hit_watch) {
 	    debug("$vCPU %d reporting watchpoint\n", stopped_vcpu);
 	    append_string("watch:");
-	    append_unsigned_native(
-		vs->hit_watch->gva, sizeof(vs->hit_watch->gva));
+	    append_unsigned_be(vs->hit_watch->gva, sizeof(vs->hit_watch->gva));
 	    append_char(';');
     }	else {
 			debug("$vCPU %d reporting ???\n", stopped_vcpu);
@@ -937,18 +937,38 @@ static int clear_watchpoint(int watchnum){
   return 0;
 }
 
+static struct watchpoint *find_watchpoint(uint64_t gla){
+  struct watchpoint *ret = NULL;
+
+  for(int i=0; i<GDB_WATCHPOINT_MAX; i++){
+	  struct watchpoint *cur = &watch_stats.watchpoints[i];
+    if (cur->active && (cur->gva == gla)){
+      ret = cur;
+      break;
+    }
+  }
+
+  return ret;
+}
+
 static void
 handle_watchpoints(int vcpu, int watch_mask)
 {
 	// TODO: handle multiple watchpoints?
-	int watchnum = __builtin_ffs(watch_mask);
-	// TODO: assert watchnum != 0
+	int watchnum = __builtin_ffs(watch_mask) - 1;
+	// TODO: assert watchnum > 0
+	int dbreg = VM_REG_GUEST_DR0 + watchnum;
 	struct vcpu_state *vs;
-	struct watchpoint *watch = &watch_stats.watchpoints[watchnum];
+	struct watchpoint *watch;
+
+	uint64_t gla;
+	vm_get_register(ctx, vcpu, dbreg, &gla);
 
 	pthread_mutex_lock(&gdb_lock);
 
-	if (watch->active) {
+	watch = find_watchpoint(gla);
+
+	if (watch) {
 		vs = &vcpu_state[vcpu];
 
 		assert(vs->stepping == false);
@@ -958,7 +978,7 @@ handle_watchpoints(int vcpu, int watch_mask)
 
 		vs->hit_watch = watch;
 		//	vm_set_register(ctx, vcpu, VM_REG_GUEST_RIP,
-		//vmexit->rip);
+		// vmexit->rip);
 		for (;;) {
 			if (stopped_vcpu == -1) {
 				stopped_vcpu = vcpu;

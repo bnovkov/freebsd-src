@@ -1527,9 +1527,11 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    }
 		    reflect = 0;
 		    handled = 0;
-		    break;
 	    } else if (watch_mask && (s_vcpu->caps & (1 << VM_CAP_DB_EXIT))) {
 		    /* A hw watchpoint was triggered - bounce to userland */
+		    printf("%s: watchpoint vmexit, mask: 0x%4x\r\n", __func__,
+			watch_mask);
+
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 0;
 		    vmexit->u.dbg.pushf_intercept = 0;
@@ -1538,8 +1540,8 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 
 		    reflect = 0;
 		    handled = 0;
-		    break;
 	    }
+	    break;
     }
     case IDT_BP:
 	    if (svm_get_intercept(svm_sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP)) == 1) {
