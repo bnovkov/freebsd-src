@@ -3658,7 +3658,7 @@ vmx_setcap(void *arg, int vcpu, int type, int val)
     pptr = &vmx->cap[vcpu].proc_ctls;
     baseval = *pptr;
     flag = PROCBASED_MOV_DR_EXITING;
-    reg = VMCS_SEC_PROC_BASED_CTLS;
+    reg = VMCS_PRI_PROC_BASED_CTLS;
 		break;
 	default:
 		break;
