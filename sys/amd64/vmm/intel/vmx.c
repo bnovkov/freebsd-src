@@ -2324,6 +2324,63 @@ emulate_rdmsr(struct vmx *vmx, int vcpuid, u_int num, bool *retu)
 	return (error);
 }
 
+/*
+ * Emulate MOV DR according to Intel SDM Vol. 2B 4-43.
+ */
+static int
+emulate_mov_dr(struct vmx *vmx, int vcpu, int dbreg_num, int gpr, int write){
+
+  int error;
+  int cpl, src, dst;
+  int dbreg; 
+  uint64_t regval;
+
+  cpl = vmx_cpl();
+
+  if(cpl != 0){
+    vm_inject_gp(vmx->vm, vcpu);
+    return 1;
+  }
+
+  error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_CR4, &regval);
+  KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
+
+  if((regval & CR4_DE) && (dbreg_num == 4 || dbreg_num == 5)){
+    vm_inject_ud(vmx->vm, vcpu);
+    return 1;
+  }
+
+  switch (dbreg_num){
+    /* XXX: figure out how to handle DR{4,5} */
+  case 0 ... 6:
+    dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+    break;
+  case 7:
+    dbreg = VM_REG_GUEST_DR7;
+    break;
+  default:
+    return -1;
+    break;
+  }
+
+  if(write){
+    dst = dbreg;
+    src = gpr;
+  } else {
+    dst = gpr;
+    src = dbreg;
+  }
+
+  error = vmx_getreg(vmx, vcpu, src, &regval);
+  KASSERT(error == 0, ("%s: error %d fetching register %d", __func__, error, gpr));
+
+  error = vmxctx_setreg(&vmx->ctx[vcpu], dst, regval);
+  KASSERT(error == 0, ("%s: error %d updating register %d", __func__, error, dbreg));
+
+
+  return error;
+}
+
 static int
 vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 {
@@ -2474,44 +2531,41 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 		break;
 
   case EXIT_REASON_DR_ACCESS:{
-    int dbreg;
     int dbreg_num = EXIT_QUAL_MOV_DR_REG(qual);
     int gpr = VM_REG_GUEST_RAX + EXIT_QUAL_MOV_DR_GPR(qual);
     int write = EXIT_QUAL_MOV_DR_RW(qual);
-    uint64_t new_dbreg_val;
 
-    if(!write){
+    handled = 1;
+
+    if(write){
+      uint64_t dr7;
+
+      handled = 0;
+      /*
+       * Bounce exit to userland - allow the
+       * gdb stub to adjust its watchpoint metadata
+       */
+      vmexit->exitcode = VM_EXITCODE_DB;
+      vmexit->u.dbg.trace_trap = 0;
+      vmexit->u.dbg.pushf_intercept = 0;
+      vmexit->u.dbg.drx_write = dbreg_num;
+
+
+      if (dbreg_num == 7) {
+        error = vmx_getreg(vmx, vcpu, gpr, &dr7);
+        KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
+
+        vmexit->u.dbg.watchpoints = (int)(dr7);
+      }
+    }
+
+    error = emulate_mov_dr(vmx, vcpu, dbreg_num, gpr, write);
+    KASSERT(error < 0, ("%s: emulate_mov_dr returned -1", __func__));
+
+    if(error){
+      vmexit->exitcode = VM_EXITCODE_BOGUS;
       handled = 1;
-      break;
-    }
-
-    /*
-     * Bounce exit to userland - allow the
-     * gdb stub to adjust its watchpoint metadata
-     */
-    vmexit->exitcode = VM_EXITCODE_DB;
-    vmexit->u.dbg.trace_trap = 0;
-    vmexit->u.dbg.pushf_intercept = 0;
-    vmexit->u.dbg.drx_write = dbreg_num;
-
-    /* Emulate DR write */
-    error = vmx_getreg(vmx, vcpu, gpr, &new_dbreg_val);
-    KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
-
-    if (dbreg_num == 7) {
-	    dbreg = VM_REG_GUEST_DR7;
-	    vmexit->u.dbg.watchpoints = (int)(new_dbreg_val);
-    } else {
-	    dbreg = VM_REG_GUEST_DR0 + dbreg_num;
-	    vmexit->u.dbg.drx_write = dbreg_num;
-    }
-
-    error = vmxctx_setreg(&vmx->ctx[vcpu], dbreg, new_dbreg_val);
-    KASSERT(
-	error == 0, ("%s: error %d updating DR%d", __func__, error, dbreg_num));
-
-    handled = 0;
-
+    } 
     break;
   }
   case EXIT_REASON_RDMSR:

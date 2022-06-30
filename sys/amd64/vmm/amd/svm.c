@@ -1395,7 +1395,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		break;
 	case 0x30 ... 0x33:  /* DR{0-4,7} write */
   case 0x37:{
-    // TODO: handle and emulate DR7 writes
+
     int dbreg_num = code - 0x30;
 		int dbreg;
 		int gpr = VM_REG_GUEST_RAX + VMCB_DR_INTCTP_GPR_NUM(info1);
@@ -1410,7 +1410,13 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
     vmexit->u.dbg.pushf_intercept = 0;
     vmexit->u.dbg.drx_write = dbreg_num;
 
-		/* Emulate DR write */
+		/*
+     * Emulate DR write.
+     * No checks are needed since all other
+     * exceptions take precedence over the intercept.
+     * (AMD APM v2, page 498)
+     */
+
     error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
     KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
 
