@@ -38,10 +38,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/socket.h>
 
-#define _WANT_FREEBSD_BITSET
-#include <sys/_bitset.h>
-#include <sys/bitset.h>
-
 #include <machine/atomic.h>
 #include <machine/reg.h>
 #include <machine/specialreg.h>
@@ -79,19 +75,25 @@ __FBSDID("$FreeBSD$");
  */
 #define GDB_SIGNAL_TRAP 5
 
-
 #define GDB_SOFTWARE_BPT 0
 #define GDB_WATCHPOINT_TYPE_WRITE 2
 #define GDB_WATCHPOINT_TYPE_READ 3
 #define GDB_WATCHPOINT_TYPE_ACCESS 4
+
 #define GDB_WATCHPOINT_MAX 4
+#define GDB_WATCHPOINT_MASK ((1 << GDB_WATCHPOINT_MAX) - 1)
 
-#define GDB_WATCHPOINT_INIT() BIT_FILL(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs)
-#define GDB_FETCH_WATCHPOINT() (BIT_FFS(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs) - 1)
+#define GDB_WATCHPOINT_INIT() watch_stats.avail_dbregs = (-1 & GDB_WATCHPOINT_MASK)
+#define GDB_FIND_WATCHPOINT() (__builtin_ffs(watch_stats.avail_dbregs & GDB_WATCHPOINT_MASK) - 1)
+#define GDB_ALLOC_WATCHPOINT(num) \
+	watch_stats.avail_dbregs &= ~(1 << (num & GDB_WATCHPOINT_MASK))
+#define GDB_FREE_WATCHPOINT(num) \
+	watch_stats.avail_dbregs |= (1 << (num & GDB_WATCHPOINT_MASK))
 
-BITSET_DEFINE(_dbregs, GDB_WATCHPOINT_MAX);
-typedef struct _dbregs dbregs_t;
-
+#define GDB_VCPU_FREE_DBREG(vcpu, num)                             \
+	vcpu_state[(vcpu)].avail_dbregs |= (1 << ((num) & GDB_WATCHPOINT_MASK))
+#define GDB_VCPU_ALLOC_DBREG(vcpu, num) \
+	vcpu_state[(vcpu)].avail_dbregs &= ~(1 << ((num)&GDB_WATCHPOINT_MASK))
 
 static void gdb_resume_vcpus(void);
 static void check_command(int fd);
@@ -125,7 +127,7 @@ struct breakpoint {
 
 struct watchpoint_stats {
 	int no_active;
-  dbregs_t avail_dbregs; /* Tracks DR regs used by the guest */
+  int avail_dbregs; /* Tracks DR regs used by the guest */
 
  struct watchpoint {
     bool active;
@@ -158,7 +160,7 @@ struct vcpu_state {
 	bool hit_swbreak;
 
 	struct watchpoint *hit_watch;
-  dbregs_t avail_dbregs;
+  int avail_dbregs;
 };
 
 static struct io_buffer cur_comm, cur_resp;
@@ -933,6 +935,8 @@ static int clear_watchpoint(int watchnum){
   int vcpu;
   uint64_t dr7;
 
+  debug("%s: watchnum: %d\n", __func__, watchnum);
+
   mask = vcpus_active;
   while (!CPU_EMPTY(&mask)) {
 
@@ -945,17 +949,21 @@ static int clear_watchpoint(int watchnum){
     vm_get_register(ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
     dr7 &= ~DBREG_DR7_MASK(watchnum);
     vm_set_register(ctx, vcpu, VM_REG_GUEST_DR7, dr7);
+
+    /* Mark dbreg as unused on vcpu */
+    GDB_VCPU_FREE_DBREG(vcpu, watchnum);
   }
 
   watch_stats.watchpoints[watchnum].active = false;
   watch_stats.no_active--;
 
-  // TODO: adjust vcpu metadata
+  GDB_FREE_WATCHPOINT(watchnum);
 
   /* If the last watchpoint was removed, disable db and dbreg vmexits */
-  if (watch_stats.no_active == 0) {
-    set_dbexit_caps(false);
-    set_dbreg_exit_caps(false);
+  if (watch_stats.no_active == 0)
+  {
+	  set_dbexit_caps(false);
+	  set_dbreg_exit_caps(false);
   }
 
   return 0;
@@ -978,18 +986,19 @@ static void
 handle_watchpoint_hit(int vcpu, int watch_mask)
 {
 	int watchnum = __builtin_ffs(watch_mask) - 1;
-	// TODO: assert watchnum > 0
 	int dbreg = VM_REG_GUEST_DR0 + watchnum;
 	struct vcpu_state *vs;
 	struct watchpoint *watch;
 
 	uint64_t gla;
+
+	assert(watchnum > 0);
+
 	vm_get_register(ctx, vcpu, dbreg, &gla);
 
 	pthread_mutex_lock(&gdb_lock);
 
 	watch = find_watchpoint(gla);
-
 	if (watch) {
 		vs = &vcpu_state[vcpu];
 
@@ -1016,7 +1025,8 @@ handle_watchpoint_hit(int vcpu, int watch_mask)
 		}
 		gdb_cpu_resume(vcpu);
   } else {
-	  // TODO: inject db exception back into the guest
+	  /* Reflect the DB exception back into the guest */
+	  vm_inject_exception(ctx, vcpu, IDT_DB, 0, 0, 0);
   }
 
 	pthread_mutex_unlock(&gdb_lock);
@@ -1042,10 +1052,12 @@ gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
 
     if(dbreg_num == 7){
       /* A new DR7 was loaded, update watchpoint metadata */
+      // TODO
     } else if (watch_stats.watchpoints[dbreg_num].active) {
 			/* Guest started using an occupied DB reg, remove
 			 * watchpoint */
 			clear_watchpoint(dbreg_num);
+			GDB_VCPU_ALLOC_DBREG(vcpu, dbreg_num);
 			// TODO: figure out how to notify remote gdb about this
 		}
 
@@ -1053,7 +1065,6 @@ gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
 	} else if (vmexit->u.dbg.watchpoints) {
 		/* A watchpoint was triggered */
 		handle_watchpoint_hit(vcpu, vmexit->u.dbg.watchpoints);
-    // TODO: handle pending DB exceptions?
 	}
 }
 
@@ -1475,6 +1486,9 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum){
   int access, len;
   struct watchpoint *wp;
 
+  debug("%s: gva: 0x%08lx, type: %d, watchnum: %d\n", __func__, gva, type,
+      watchnum);
+
   cpuset_t mask;
   int vcpu;
   uint64_t dr7;
@@ -1529,6 +1543,8 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum){
   wp->active = true;
   wp->gva = gva;
   wp->type = type;
+
+  GDB_ALLOC_WATCHPOINT(watchnum);
   watch_stats.no_active++;
 
   return 0;
@@ -1555,6 +1571,7 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
 			cpuset_t mask;
 			int vcpu;
 			uint64_t dr7;
+      struct vcpu_state *vs;
 			/* Activate debug exception and MOV DR* vmexits */
 			if (!set_dbexit_caps(true) ||
 			    !set_dbreg_exit_caps(true)) {
@@ -1570,6 +1587,7 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
 
 				vcpu = CPU_FFS(&mask) - 1;
 				CPU_CLR(vcpu, &mask);
+				vs = &vcpu_state[vcpu];
 
 				/* Construct bitmask of active dbregs */
 				vm_get_register(
@@ -1579,25 +1597,26 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
 				    (DBREG_DR7_ENABLED(dr7, 1) << 1) |
 				    (DBREG_DR7_ENABLED(dr7, 2) << 2) |
 				    (DBREG_DR7_ENABLED(dr7, 3) << 3));
-				/* Mark any currently enabled dbreg as
-				 * unavailable */
-				BIT_CLR(GDB_WATCHPOINT_MAX,
-				    vcpu_used_dbreg_mask,
-				    &watch_stats.avail_dbregs);
+
+        vs->avail_dbregs = ~vcpu_used_dbreg_mask;
+
+        /* Mark any currently enabled dbreg as
+         * unavailable */
+        watch_stats.avail_dbregs &= ~vcpu_used_dbreg_mask;
 			}
 		}
 
-		if (watch_stats.no_active == GDB_WATCHPOINT_MAX ||
-		    BIT_EMPTY(GDB_WATCHPOINT_MAX, &watch_stats.avail_dbregs)) {
+		if (watch_stats.no_active == GDB_WATCHPOINT_MAX) {
 			  error = (ENOSPC);
         goto err;
 		}
 
     wp = find_watchpoint(gva);
     if(!wp){
-      int dbreg_num = GDB_FETCH_WATCHPOINT();
-      // TODO: assert dbreg_num > 0
+      int dbreg_num = GDB_FIND_WATCHPOINT();
+      assert(dbreg_num > 0);
 
+      debug("Allocated watchpoint %d\n", dbreg_num);
       error = set_watchpoint(gva, type, bytes, dbreg_num);
       if (error) {
         send_error(error);
@@ -1608,6 +1627,7 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
     wp = find_watchpoint(gva);
     if(wp){
       int watchnum = (wp - &watch_stats.watchpoints[0]) / sizeof(*wp);
+      debug("Removing watchpoint %d\n", watchnum);
       clear_watchpoint(watchnum);
     }
 	}
@@ -1924,7 +1944,6 @@ handle_command(const uint8_t *data, size_t len)
 		break;
 	case 'D':
 		send_ok();
-		// TODO: clear breakpoints/watchpoints on detach?
 		/* TODO: Resume any stopped CPUs. */
 		break;
 	case 'g': {
