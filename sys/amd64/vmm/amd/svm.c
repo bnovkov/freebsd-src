@@ -1494,7 +1494,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 1;
 		    vmexit->u.dbg.pushf_intercept = 0;
-		    vmexit->u.dbg.drx_write = 0;
+		    vmexit->u.dbg.drx_write = -1;
 		    vmexit->u.dbg.watchpoints = 0;
 
 		    if (s_vcpu->db_info.popf_next) {
@@ -1541,7 +1541,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 0;
 		    vmexit->u.dbg.pushf_intercept = 0;
-		    vmexit->u.dbg.drx_write = 0;
+		    vmexit->u.dbg.drx_write = -1;
 		    vmexit->u.dbg.watchpoints = watch_mask;
 
 		    reflect = 0;

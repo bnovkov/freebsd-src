@@ -2760,7 +2760,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 			vmexit->exitcode = VM_EXITCODE_DB;
 			vmexit->u.dbg.pushf_intercept = 0;
 			vmexit->u.dbg.trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
-			vmexit->u.dbg.drx_write = !!(qual & EXIT_QUAL_DBG_BD);
+			vmexit->u.dbg.drx_write = -1;
 			vmexit->u.dbg.watchpoints = qual & EXIT_QUAL_DBG_B_MASK;
 
 			printf("%s: watchpoint vmexit, mask: 0x%04x\r\n",
