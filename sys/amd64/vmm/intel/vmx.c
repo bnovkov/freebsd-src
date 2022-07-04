@@ -2532,7 +2532,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 
   case EXIT_REASON_DR_ACCESS:{
     int dbreg_num = EXIT_QUAL_MOV_DR_REG(qual);
-    int gpr = VM_REG_GUEST_RAX + EXIT_QUAL_MOV_DR_GPR(qual);
+    int gpr = vcpu_gpr_num_to_reg(EXIT_QUAL_MOV_DR_GPR(qual));
     int write = EXIT_QUAL_MOV_DR_RW(qual);
 
     handled = 1;

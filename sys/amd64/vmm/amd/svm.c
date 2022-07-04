@@ -1325,6 +1325,27 @@ nrip_valid(uint64_t exitcode)
 	}
 }
 
+static void
+dump_dbregs(struct svm_softc *svm_sc, int vcpu)
+{
+	uint64_t dr0;
+	uint64_t dr1;
+	uint64_t dr2;
+	uint64_t dr3;
+
+	uint64_t dr7;
+
+	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR0, &dr0);
+	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR1, &dr1);
+	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR2, &dr2);
+	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR3, &dr3);
+	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR7, &dr7);
+
+	printf(
+	    "%s: dr0: 0x%08lx, dr1: 0x%08lx, dr2: 0x%08lx, dr3: 0x%08lx, dr7: 0x%08lx, \r\n",
+	    __func__, dr0, dr1, dr2, dr3, dr7);
+}
+
 static int
 svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 {
@@ -1393,13 +1414,19 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	case VMCB_EXIT_NMI:	/* external NMI */
 		handled = 1;
 		break;
-	case 0x30 ... 0x33:  /* DR{0-4,7} write */
-  case 0x37:{
+	case 0x30 ... 0x33: /* DR{0-3,7} write */
+	case 0x37: {
 
-    int dbreg_num = code - 0x30;
+		int dbreg_num = code - 0x30;
 		int dbreg;
-		int gpr = VM_REG_GUEST_RAX + VMCB_DR_INTCTP_GPR_NUM(info1);
+		int gpr = vcpu_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
     uint64_t new_dbreg_val;
+
+    KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
+
+    printf(
+	"%s: DRx write vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
+	__func__, vcpu, code, (int)VMCB_DR_INTCTP_GPR_NUM(info1), dbreg_num);
 
     /*
      * Bounce exit to userland - allow the
@@ -1418,7 +1445,8 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
      */
 
     error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
-    KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
+    KASSERT(
+	error == 0, ("%s: error %d fetching GPR %d\r\n", __func__, error, gpr));
 
     if(dbreg_num == 7){
       /*
@@ -1430,11 +1458,16 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
       vmexit->u.dbg.watchpoints = (int)(new_dbreg_val);
     } else {
       dbreg = VM_REG_GUEST_DR0 + dbreg_num;
-      vmexit->u.dbg.drx_write = dbreg_num;
     }
 
     error = svm_setreg(svm_sc, vcpu, dbreg, new_dbreg_val);
-    KASSERT(error == 0, ("%s: error %d updating DR%d", __func__, error, dbreg_num));
+    KASSERT(error == 0,
+	("%s: error %d updating DR%d\r\n", __func__, error, dbreg_num));
+
+    printf("%s: DRx write vmexit: updated dbreg %d to 0x%08lx\n", __func__,
+	dbreg_num, new_dbreg_val);
+
+    dump_dbregs(svm_sc, vcpu);
 
     handled = 0;
     break;
@@ -1482,13 +1515,19 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	     */
 
 	    struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
-	    uint64_t dr6;
-	    bool stepped;
-	    int watch_mask;
+	    uint64_t dr6 = 0;
+	    bool stepped = 0;
+	    uint64_t watch_mask = 0;
+
+	    errcode_valid = 0;
+	    info1 = 0;
 
 	    vmcb_read(svm_sc, vcpu, VM_REG_GUEST_DR6, &dr6);
 	    stepped = !!(dr6 & DBREG_DR6_BS);
 	    watch_mask = (dr6 & DBREG_DR6_BMASK);
+
+	    printf("%s: IDT_DB vmexit, stepped: %d, watch_mask: 0x%08lx\r\n",
+		__func__, stepped, watch_mask);
 
 	    if (stepped && (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
 		    vmexit->exitcode = VM_EXITCODE_DB;
@@ -1511,9 +1550,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 				svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
 			    s_vcpu->db_info.shadow_rflags_tf = !!(
 				rflags & PSL_T);
-		    }
-		    else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next)
-		    {
+		    } else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next) {
 			    /* DB exit was caused by stepping over pushf */
 			    printf("%s: pushf trace trap\r\n", __func__);
 
@@ -1533,20 +1570,24 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    }
 		    reflect = 0;
 		    handled = 0;
-	    } else if (watch_mask && (s_vcpu->caps & (1 << VM_CAP_DB_EXIT))) {
+	    } else if ((watch_mask != 0) &&
+		(s_vcpu->caps & (1 << VM_CAP_DB_EXIT))) {
 		    /* A hw watchpoint was triggered - bounce to userland */
-		    printf("%s: watchpoint vmexit, mask: 0x%4x\r\n", __func__,
+		    printf("%s: watchpoint vmexit, mask: 0x%08lx\r\n", __func__,
 			watch_mask);
 
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 0;
 		    vmexit->u.dbg.pushf_intercept = 0;
 		    vmexit->u.dbg.drx_write = -1;
-		    vmexit->u.dbg.watchpoints = watch_mask;
+		    vmexit->u.dbg.watchpoints = (int)watch_mask;
 
 		    reflect = 0;
 		    handled = 0;
 	    }
+	    printf("%s: IDT_DB vmexit: %s reflecting DB exception\r\n",
+		__func__, (reflect ? "" : "not"));
+	    dump_dbregs(svm_sc, vcpu);
 	    break;
     }
     case IDT_BP:
@@ -2577,8 +2618,15 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 
 		break;
 	}
-  case VM_CAP_DR_MOV_EXIT:
+  case VM_CAP_DR_MOV_EXIT:{
+	  struct svm_vcpu *s_vcpu = svm_get_vcpu(sc, vcpu);
+    if(val){
+	    s_vcpu->caps |= (1 << VM_CAP_DR_MOV_EXIT);
+    }else{
+	    s_vcpu->caps &= ~(1 << VM_CAP_DR_MOV_EXIT);
+    }
 	  /* Intercept DR0-3,7 writes */
+
 	  svm_set_intercept(
 	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(0), val);
 	  svm_set_intercept(
@@ -2589,7 +2637,9 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(3), val);
 	  svm_set_intercept(
 	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
-	  break;
+
+    break;
+  }
 	default:
 		error = ENOENT;
 		break;
