@@ -1027,9 +1027,14 @@ handle_watchpoint_hit(int vcpu, int watch_mask)
 
 	assert(watchnum >= 0);
 
-	vm_get_register(ctx, vcpu, dbreg, &gla);
-
 	pthread_mutex_lock(&gdb_lock);
+
+	if (!watch_stats.no_active) {
+		pthread_mutex_unlock(&gdb_lock);
+		return;
+	}
+
+	vm_get_register(ctx, vcpu, dbreg, &gla);
 
 	watch = find_watchpoint(gla);
 	if (watch) {
@@ -1070,6 +1075,11 @@ static void
 handle_drx_write(int vcpu, struct vm_exit *vmexit)
 {
 	pthread_mutex_lock(&gdb_lock);
+
+  if(!watch_stats.no_active){
+	  pthread_mutex_unlock(&gdb_lock);
+	  return;
+  }
 
 	int dbreg_num = vmexit->u.dbg.drx_write;
 
