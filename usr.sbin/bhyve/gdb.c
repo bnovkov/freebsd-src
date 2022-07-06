@@ -125,13 +125,18 @@ struct breakpoint {
 
 struct watchpoint_stats {
 	int no_active;
-  int avail_dbregs; /* Tracks DR regs used by the guest */
+	int no_evicted;
+	int avail_dbregs; /* Tracks DR regs used by the guest */
 
- struct watchpoint {
-    bool active;
-    uint64_t gva;
-    int type;
-    int bytes;
+	struct watchpoint {
+		enum watchpoint_state {
+			WATCH_INACTIVE = 0,
+			WATCH_ACTIVE,
+			WATCH_EVICTED,
+		} state;
+		uint64_t gva;
+		int type;
+		int bytes;
   } watchpoints[GDB_WATCHPOINT_MAX];
 };
 /*
@@ -989,7 +994,7 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum){
 
   wp = &watch_stats.watchpoints[watchnum];
 
-  wp->active = true;
+  wp->state = WATCH_ACTIVE;
   wp->gva = gva;
   wp->type = type;
   wp->bytes = bytes;
@@ -1007,7 +1012,7 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum){
  * write to avoid thrashing the new value).
  */
 static int
-clear_watchpoint(int watchnum, int skip_vcpu)
+clear_watchpoint(int watchnum, int skip_vcpu, bool clear_dbreg)
 {
 	cpuset_t mask;
 	int vcpu;
@@ -1020,30 +1025,26 @@ clear_watchpoint(int watchnum, int skip_vcpu)
 
     vcpu = CPU_FFS(&mask) - 1;
     CPU_CLR(vcpu, &mask);
-
+    if (clear_dbreg) {
+	    vm_set_register(ctx, vcpu, VM_REG_GUEST_DR0 + watchnum, 0);
+    }
     if(vcpu == skip_vcpu){
 	    continue;
     }
-    /* VMM has already filled dbreg with the intended address - no
-     * need to clear dbreg */
+
     /* Disable watchpoint in DR7 */
     vm_get_register(ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
     dr7 &= ~DBREG_DR7_MASK(watchnum);
     vm_set_register(ctx, vcpu, VM_REG_GUEST_DR7, dr7);
   }
 
-  watch_stats.watchpoints[watchnum].active = false;
-	/* Refrain from clearing other fields - this avoids unnecessary copies
-	 * if migrate_watchpoint is called afterward */
-	watch_stats.no_active--;
+  watch_stats.watchpoints[watchnum].state = WATCH_INACTIVE;
+  /* Refrain from clearing other fields - this avoids unnecessary copies
+   * if migrate_watchpoint is called afterward */
+  watch_stats.no_active--;
 
-	GDB_FREE_WATCHPOINT(watchnum);
+  GDB_FREE_WATCHPOINT(watchnum);
 
-	/* If the last watchpoint was removed, disable db and dbreg vmexits */
-	if (watch_stats.no_active == 0) {
-		set_dbexit_caps(false);
-		set_dbreg_exit_caps(false);
-	}
 
 	return 0;
 }
@@ -1053,9 +1054,9 @@ static struct watchpoint *find_watchpoint(uint64_t gla){
 
   for(int i=0; i<GDB_WATCHPOINT_MAX; i++){
 	  wp = &watch_stats.watchpoints[i];
-    if (wp->active && (wp->gva == gla)){
-      return wp;
-    }
+	  if (wp->state == WATCH_ACTIVE && (wp->gva == gla)) {
+		  return wp;
+	  }
   }
 
   return (NULL);
@@ -1067,11 +1068,13 @@ static struct watchpoint *find_watchpoint(uint64_t gla){
 static int
 migrate_watchpoint(struct watchpoint *wp)
 {
+  int error;
+
   if(!GDB_HAS_AVAIL_WATCHPOINT()){
     return -1;
   }
 
-  if(watch_stats.no_active == 0){
+  if (watch_stats.no_active == 0 && watch_stats.no_evicted == 0) {
 	  if (!set_dbexit_caps(true) || !set_dbreg_exit_caps(true)) {
 		  return -1;
 	  }
@@ -1080,11 +1083,18 @@ migrate_watchpoint(struct watchpoint *wp)
   int watchnum = GDB_FIND_WATCHPOINT();
   assert(watchnum >= 0);
 
-  return set_watchpoint(wp->gva, wp->type, wp->bytes, watchnum);
+  error = set_watchpoint(wp->gva, wp->type, wp->bytes, watchnum);
+  if(error == 0){
+	  watch_stats.no_evicted--;
+	  /* check if the watchpoint was migrated to the same slot */
+	  if (wp->state != WATCH_ACTIVE)
+		  wp->state = WATCH_INACTIVE;
+  }
+  return error;
 }
 
 static void
-gdb_rebuild_avail_watchpoints(void)
+rebuild_avail_watchpoints(void)
 {
 	cpuset_t mask;
 	int vcpu;
@@ -1111,6 +1121,11 @@ gdb_rebuild_avail_watchpoints(void)
 		watch_stats.avail_dbregs &= ~vcpu_used_dbreg_mask;
 	}
 
+  for(int i=0; i<GDB_WATCHPOINT_MAX; i++){
+    if (watch_stats.watchpoints[i].state == WATCH_ACTIVE){
+	    GDB_ALLOC_WATCHPOINT(i);
+    }
+  }
 
 }
 
@@ -1156,7 +1171,7 @@ handle_watchpoint_hit(int vcpu, int watch_mask)
 				/* Watchpoint reported. */
 				break;
 			}
-			if (!watch->active) {
+			if (watch->state == WATCH_INACTIVE) {
 				/* Watchpoint removed. */
 				break;
 			}
@@ -1175,15 +1190,11 @@ static void
 handle_drx_write(int vcpu, struct vm_exit *vmexit)
 {
 	int error;
-  struct watchpoint *wp;
+	struct watchpoint *wp;
 
-  pthread_mutex_lock(&gdb_lock);
+	pthread_mutex_lock(&gdb_lock);
 
-	if (!watch_stats.no_active) {
-		pthread_mutex_unlock(&gdb_lock);
-		return;
-  }
-
+  uint64_t dbreg_val;
 	int dbreg_num = vmexit->u.dbg.drx_write;
 	wp = &watch_stats.watchpoints[dbreg_num];
 
@@ -1192,55 +1203,63 @@ handle_drx_write(int vcpu, struct vm_exit *vmexit)
 	if (dbreg_num == 7) {
 		/* A new DR7 was loaded, update watchpoint metadata */
 		int dr7 = vmexit->u.dbg.watchpoints;
-		int watch_evicted[GDB_WATCHPOINT_MAX] = {0};
+		debug("%s:  0x%04x\n", __func__, dr7);
 
-    /* Clear any watchpoints the guest started using */
+		/* Clear any watchpoints the guest started using */
 		for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
 			bool dbreg_enabled = DBREG_DR7_ENABLED(dr7, i);
 			bool watchpoint_active =
-			    watch_stats.watchpoints[i].active;
+			    watch_stats.watchpoints[i].state == WATCH_ACTIVE;
 
 			if (dbreg_enabled && watchpoint_active) {
 				debug(
-				    "%s: dr7 write: disabling active watchpoint %d\n",
+				    "%s: dr7 write: evicting active watchpoint %d\n",
 				    __func__, i);
-				clear_watchpoint(i, vcpu);
-				watch_evicted[i] = 1;
+				clear_watchpoint(i, vcpu, true);
+				watch_stats.watchpoints[i].state =
+				    WATCH_EVICTED;
+ 			watch_stats.no_evicted++;
 			}
     }
+    rebuild_avail_watchpoints();
 
-    /* Try to migrate any evicted watchpoints */
-    for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
-      if(watch_evicted[i]){
-        error = migrate_watchpoint(&watch_stats.watchpoints[i]);
-        debug("%s: %s migrating watchpoint %d\n", __func__,
-              (error != -1 ? "succeeded" : "failed"), i);
-        if(error){
-          /* No watchpoints left */
-          break;
-        }
-      }
-	  }
-	} else if (wp->active) {
-		/* Guest started using an occupied DB reg, remove
-		 * watchpoint */
-		debug("%s: evicting active watchpoint %d\n", __func__, dbreg_num);
-		clear_watchpoint(dbreg_num, GDB_WATCHPOINT_CLEAR_NOSKIP);
-		/* Mark watchpoint as in-use */
-		GDB_ALLOC_WATCHPOINT(dbreg_num);
+  }else if (wp->state == WATCH_ACTIVE) {
+	  vm_get_register(ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
 
-		/* Try to migrate the evicted watchpoint */
-		error = migrate_watchpoint(wp);
-		debug("%s: %s migrating watchpoint %d\n", __func__,
-		    (error != -1 ? "succeeded" : "failed"), dbreg_num);
-		// TODO: figure out how to notify remote gdb if a watchpoint
-		// cannot be migrated
-	} else {
-		/* Mark watchpoint as in-use */
-		GDB_ALLOC_WATCHPOINT(dbreg_num);
-	}
+	  /* Guest started using an occupied DB reg, remove
+	   * watchpoint */
+    if(dbreg_val != 0){
+      debug("%s: evicting active watchpoint %d\n", __func__, dbreg_num);
+      clear_watchpoint(dbreg_num, GDB_WATCHPOINT_CLEAR_NOSKIP, false);
+      wp->state = WATCH_EVICTED;
+      watch_stats.no_evicted++;
+      /* Mark watchpoint as in-use */
+      GDB_ALLOC_WATCHPOINT(dbreg_num);
+    }
+	  // TODO: figure out how to notify remote gdb if a watchpoint
+	  // cannot be migrated
+   }else{
+	   vm_get_register(ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
+	   if (dbreg_val != 0) {
 
-  pthread_mutex_unlock(&gdb_lock);
+		   /* Mark watchpoint as in-use */
+		   GDB_ALLOC_WATCHPOINT(dbreg_num);
+	   }
+   }
+   /* Try to migrate any evicted watchpoints */
+  for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
+	    if (watch_stats.watchpoints[i].state == WATCH_EVICTED) {
+		    error = migrate_watchpoint(&watch_stats.watchpoints[i]);
+		    debug("%s: %s migrating watchpoint %d\n", __func__,
+			(error != -1 ? "succeeded" : "failed"), i);
+		    if (error) {
+
+			    break;
+		    }
+	    }
+  }
+
+   pthread_mutex_unlock(&gdb_lock);
 };
 
 /*
@@ -1670,10 +1689,13 @@ remove_all_sw_breakpoints(void)
 static void remove_all_hw_watchpoints(void){
 
   for(int i=0; i<GDB_WATCHPOINT_MAX; i++){
-    if(watch_stats.watchpoints[i].active){
-	    clear_watchpoint(i, GDB_WATCHPOINT_CLEAR_NOSKIP);
+    if(watch_stats.watchpoints[i].state == WATCH_ACTIVE){
+	    clear_watchpoint(i, GDB_WATCHPOINT_CLEAR_NOSKIP, true);
     }
   }
+
+  set_dbexit_caps(false);
+  set_dbreg_exit_caps(false);
 }
 
 static void
@@ -1693,15 +1715,41 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
 		 * No watchpoints are active - fetch and update
 		 * watchpoint stats, enable dbreg and db exits.
 		 */
-		if (watch_stats.no_active == 0) {
-      /* Activate debug exception and MOV DR* vmexits */
+		if (watch_stats.no_active == 0 && watch_stats.no_evicted == 0) {
+			/* Activate debug exception vmexits */
 			if (!set_dbexit_caps(true) ||
 			    !set_dbreg_exit_caps(true)) {
 				send_error(EINVAL);
 				return;
 			}
 
-			gdb_rebuild_avail_watchpoints();
+			cpuset_t mask;
+			int vcpu;
+			uint64_t dr7;
+
+			GDB_WATCHPOINT_INIT();
+
+			mask = vcpus_active;
+			while (!CPU_EMPTY(&mask)) {
+				int vcpu_used_dbreg_mask = 0;
+
+				vcpu = CPU_FFS(&mask) - 1;
+				CPU_CLR(vcpu, &mask);
+
+				/* Construct bitmask of active dbregs */
+				vm_get_register(
+				    ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
+				vcpu_used_dbreg_mask = (DBREG_DR7_ENABLED(
+							    dr7, 0) |
+				    (DBREG_DR7_ENABLED(dr7, 1) << 1) |
+				    (DBREG_DR7_ENABLED(dr7, 2) << 2) |
+				    (DBREG_DR7_ENABLED(dr7, 3) << 3));
+
+				/* Mark any currently enabled dbreg as
+				 * unavailable */
+				watch_stats.avail_dbregs &=
+				    ~vcpu_used_dbreg_mask;
+			}
 		}
 
 		if (watch_stats.no_active == GDB_WATCHPOINT_MAX ||
@@ -1726,7 +1774,13 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
     if(wp){
       int watchnum = (wp - &watch_stats.watchpoints[0]) / sizeof(*wp);
       debug("Removing watchpoint %d\n", watchnum);
-      clear_watchpoint(watchnum, GDB_WATCHPOINT_CLEAR_NOSKIP);
+      clear_watchpoint(watchnum, GDB_WATCHPOINT_CLEAR_NOSKIP, true);
+      /* If the last watchpoint was removed and none are evicted, disable db and
+       * dbreg vmexits */
+      if (watch_stats.no_active == 0 && watch_stats.no_evicted == 0) {
+	      set_dbexit_caps(false);
+	      set_dbreg_exit_caps(false);
+      }
     }
 	}
 
@@ -1734,7 +1788,7 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
   return;
 
  err:
-	 if (watch_stats.no_active == 0) {
+	 if (watch_stats.no_active == 0 && watch_stats.no_evicted == 0) {
 		 set_dbexit_caps(false);
 		 set_dbreg_exit_caps(false);
 	 }
