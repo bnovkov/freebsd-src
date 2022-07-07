@@ -2825,8 +2825,6 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 				    "%s: reflecting trace-trap, updated DR6: 0x%08lx\r\n",
 				    __func__, dr6);
 			}
-
-			break;
 		}
 
 		if (intr_vec == IDT_PF) {
