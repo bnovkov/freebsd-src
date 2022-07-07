@@ -1596,8 +1596,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			     */
 			    vmcb_read(
 				svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
-			    s_vcpu->db_info.shadow_rflags_tf = !!(
-				rflags & PSL_T);
+			    s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
 		    } else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next) {
 			    /* DB exit was caused by stepping over pushf */
 			    printf("%s: pushf trace trap\r\n", __func__);
@@ -1774,7 +1773,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
     struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
     svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
     /* Update shadow TF to guard against unrelated intercepts */
-    s_vcpu->db_info.shadow_rflags_tf = !!(rflags & PSL_T);
+    s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
 
     printf("%s: pushf stepped\r\n", __func__);
     /* Restart this instruction */
@@ -2611,7 +2610,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 
 		if (val) {
 			/* Save current TF bit */
-			s_vcpu->db_info.shadow_rflags_tf = !!(rflags & PSL_T);
+			s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
 
 			/* Trace next instruction */
 			if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS,
@@ -2627,10 +2626,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 			 * stepped
        */
 			if (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
-
-				rflags |= (s_vcpu->db_info.shadow_rflags_tf ?
-					PSL_T :
-					0);
+				rflags |= s_vcpu->db_info.shadow_rflags_tf;
 				s_vcpu->db_info.shadow_rflags_tf = 0;
 
 				if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS,
@@ -2641,8 +2637,8 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 				s_vcpu->caps &= ~(1 << VM_CAP_RFLAGS_SSTEP);
 			}
 			/* Dont disable intercept if VM_CAP_DB_EXIT is active */
-			db_inctpt_val = !(s_vcpu->caps & (1 << VM_CAP_DB_EXIT));
-		}
+			db_inctpt_val = (s_vcpu->caps & (1 << VM_CAP_DB_EXIT));
+	  }
 
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_inctpt_val);
 		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
@@ -2652,7 +2648,6 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 	}
 	case VM_CAP_DB_EXIT:{
 		struct svm_vcpu *s_vcpu = svm_get_vcpu(sc, vcpu);
-		int db_intcpt = val;
 		if (val) {
 			/* Require decode assist support for now */
 			if (!decode_assist()) {
@@ -2664,8 +2659,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 			s_vcpu->caps &= ~(1 << VM_CAP_DB_EXIT);
 			/* Dont disable intercept if VM_CAP_RFLAGS_SSTEP is
 			 * active */
-			db_intcpt = !(
-			    s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP));
+			val = (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP));
 		}
 
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_intcpt);
