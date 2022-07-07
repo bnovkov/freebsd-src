@@ -410,8 +410,8 @@ vmcs_write(uint32_t encoding, uint64_t val)
  * Exit qualification for MOV DR
  */
 #define	EXIT_QUAL_MOV_DR_REG(n)		((n) & 0x7)
-#define EXIT_QUAL_MOV_DR_RW(n) (!!((n) & 0x8))
-#define EXIT_QUAL_MOV_DR_GPR(n) ((n) & 0xf00) >> 8)
+#define EXIT_QUAL_MOV_DR_RW(n) (!!((n) & 0x10))
+#define EXIT_QUAL_MOV_DR_GPR(n) (((n) & 0xf00) >> 8)
 
 /*
  * Exit qualification for EXIT_REASON_INVAL_VMCS
@@ -433,7 +433,7 @@ vmcs_write(uint32_t encoding, uint64_t val)
 /*
  * Exit qualification for APIC-access VM exit
  */
-#define	APIC_ACCESS_OFFSET(qual)	((qual) & 0xFFF)
+#define APIC_ACCESS_OFFSET(qual) ((qual) & 0xFFF)
 #define	APIC_ACCESS_TYPE(qual)		(((qual) >> 12) & 0xF)
 
 /*

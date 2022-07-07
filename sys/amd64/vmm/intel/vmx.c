@@ -2353,9 +2353,12 @@ emulate_mov_dr(struct vmx *vmx, int vcpu, int dbreg_num, int gpr, int write){
 
   switch (dbreg_num){
     /* XXX: figure out how to handle DR{4,5} */
-  case 0 ... 6:
+  case 0 ... 3:
     dbreg = VM_REG_GUEST_DR0 + dbreg_num;
     break;
+  case 6:
+	  dbreg = VM_REG_GUEST_DR6;
+	  break;
   case 7:
     dbreg = VM_REG_GUEST_DR7;
     break;
@@ -2373,10 +2376,11 @@ emulate_mov_dr(struct vmx *vmx, int vcpu, int dbreg_num, int gpr, int write){
   }
 
   error = vmx_getreg(vmx, vcpu, src, &regval);
-  KASSERT(error == 0, ("%s: error %d fetching register %d", __func__, error, gpr));
+  KASSERT(
+      error == 0, ("%s: error %d fetching register %d", __func__, error, src));
 
   error = vmxctx_setreg(&vmx->ctx[vcpu], dst, regval);
-  KASSERT(error == 0, ("%s: error %d updating register %d", __func__, error, dbreg));
+  KASSERT(error == 0, ("%s: error %d updating register %d", __func__, error, dst));
 
 
   return error;
@@ -2793,9 +2797,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 			    __func__, (int)(qual & EXIT_QUAL_DBG_B_MASK),
 			    trace_trap);
 
-			if (!trace_trap) { /* Don't bounce out trace trap exits
-					    */
-				// TODO: remember to update DR7/DR6
+			if (!trace_trap) { 
 				vmexit->exitcode = VM_EXITCODE_DB;
 				vmexit->u.dbg.pushf_intercept = 0;
 				vmexit->u.dbg.trace_trap = 0;
@@ -2803,8 +2805,8 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 				vmexit->u.dbg.watchpoints = qual &
 				    EXIT_QUAL_DBG_B_MASK;
 				break;
-			} else {
-				// TODO: update DR6 if reflecting exception
+			} else { /* Don't bounce out trace trap exits */
+				// TODO: update DR6 if reflecting watchpoint hit
 				uint64_t dr6;
 
 				error = vmx_getreg(
