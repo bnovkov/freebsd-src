@@ -2324,6 +2324,7 @@ emulate_rdmsr(struct vmx *vmx, int vcpuid, u_int num, bool *retu)
 	return (error);
 }
 
+
 /*
  * Emulate MOV DR according to Intel SDM Vol. 2B 4-43.
  */
@@ -2379,6 +2380,35 @@ emulate_mov_dr(struct vmx *vmx, int vcpu, int dbreg_num, int gpr, int write){
 
 
   return error;
+}
+
+static __inline int
+mov_dr_gpr_num_to_reg(int gpr)
+{
+	switch (gpr) {
+	case 0:
+		return VM_REG_GUEST_RAX;
+	case 1:
+		return VM_REG_GUEST_RCX;
+	case 2:
+		return VM_REG_GUEST_RDX;
+	case 3:
+		return VM_REG_GUEST_RBX;
+	case 4:
+		return VM_REG_GUEST_RSP;
+	case 5:
+		return VM_REG_GUEST_RBP;
+	case 6:
+		return VM_REG_GUEST_RSI;
+	case 7:
+		return VM_REG_GUEST_RDI;
+	case 8 ... 15:
+		return VM_REG_GUEST_R8 + (gpr - 8);
+	default:
+		break;
+	};
+
+	return -1;
 }
 
 static int
@@ -2532,8 +2562,8 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 
   case EXIT_REASON_DR_ACCESS:{
     int dbreg_num = EXIT_QUAL_MOV_DR_REG(qual);
-    int gpr = vcpu_gpr_num_to_reg(EXIT_QUAL_MOV_DR_GPR(qual));
-    int write = EXIT_QUAL_MOV_DR_RW(qual);
+    int gpr = mov_dr_gpr_num_to_reg((EXIT_QUAL_MOV_DR_GPR(qual));
+    int write = (EXIT_QUAL_MOV_DR_RW(qual) == 0);
 
     handled = 1;
 
@@ -2560,7 +2590,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
     }
 
     error = emulate_mov_dr(vmx, vcpu, dbreg_num, gpr, write);
-    KASSERT(error < 0, ("%s: emulate_mov_dr returned -1", __func__));
+    KASSERT(error >= 0, ("%s: emulate_mov_dr returned -1", __func__));
 
     if(error){
       vmexit->exitcode = VM_EXITCODE_BOGUS;
@@ -2757,14 +2787,42 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 		if (intr_type == VMCS_INTR_T_HWEXCEPTION && intr_vec == IDT_DB &&
 		    (vmx->cap[vcpu].set & (1 << VM_CAP_DB_EXIT))) {
 
-			vmexit->exitcode = VM_EXITCODE_DB;
-			vmexit->u.dbg.pushf_intercept = 0;
-			vmexit->u.dbg.trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
-			vmexit->u.dbg.drx_write = -1;
-			vmexit->u.dbg.watchpoints = qual & EXIT_QUAL_DBG_B_MASK;
+			int trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
+			printf(
+			    "%s: watchpoint vmexit, mask: 0x%04x, trace_trap: %d\r\n",
+			    __func__, (int)(qual & EXIT_QUAL_DBG_B_MASK),
+			    trace_trap);
 
-			printf("%s: watchpoint vmexit, mask: 0x%04x\r\n",
-			    __func__, vmexit->u.dbg.watchpoints);
+			if (!trace_trap) { /* Don't bounce out trace trap exits
+					    */
+				// TODO: remember to update DR7/DR6
+				vmexit->exitcode = VM_EXITCODE_DB;
+				vmexit->u.dbg.pushf_intercept = 0;
+				vmexit->u.dbg.trace_trap = 0;
+				vmexit->u.dbg.drx_write = -1;
+				vmexit->u.dbg.watchpoints = qual &
+				    EXIT_QUAL_DBG_B_MASK;
+				break;
+			} else {
+				// TODO: update DR6 if reflecting exception
+				uint64_t dr6;
+
+				error = vmx_getreg(
+				    vmx, vcpu, VM_REG_GUEST_DR6, &dr6);
+				KASSERT(error == 0,
+				    ("%s: error %d fetching DR6", __func__,
+					error));
+				dr6 |= DBREG_DR6_BS;
+				error = vmxctx_setreg(
+				    &vmx->ctx[vcpu], VM_REG_GUEST_DR6, dr6);
+				KASSERT(error == 0,
+				    ("%s: error %d updating DR6", __func__,
+					error));
+
+				printf(
+				    "%s: reflecting trace-trap, updated DR6: 0x%08lx\r\n",
+				    __func__, dr6);
+			}
 
 			break;
 		}

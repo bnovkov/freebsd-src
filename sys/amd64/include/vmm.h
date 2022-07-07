@@ -332,29 +332,6 @@ vcpu_reqidle(struct vm_eventinfo *info)
 	return (*info->iptr);
 }
 
-static __inline int
-vcpu_gpr_num_to_reg(int gpr)
-{
-  switch (gpr){
-  case 0 ... 3:
-	  return VM_REG_GUEST_RAX + gpr;
-  case 4:
-	  return VM_REG_GUEST_RDI;
-  case 5:
-	  return VM_REG_GUEST_RSI;
-  case 6:
-	  return VM_REG_GUEST_RBP;
-  case 7:
-    return VM_REG_GUEST_RSP;
-  case 8 ... 15:
-	  return VM_REG_GUEST_R8 + (gpr - 8);
-  default:
-    break;
-  };
-
-  return -1;
-}
-
 int vcpu_debugged(struct vm *vm, int vcpuid);
 
 /*

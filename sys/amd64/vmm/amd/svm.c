@@ -1346,6 +1346,29 @@ dump_dbregs(struct svm_softc *svm_sc, int vcpu)
 	    __func__, dr0, dr1, dr2, dr3, dr7);
 }
 
+static __inline int
+mov_dr_gpr_num_to_reg(int gpr)
+{
+	switch (gpr) {
+	case 0 ... 3:
+		return VM_REG_GUEST_RAX + gpr;
+	case 4:
+		return VM_REG_GUEST_RDI;
+	case 5:
+		return VM_REG_GUEST_RSI;
+	case 6:
+		return VM_REG_GUEST_RBP;
+	case 7:
+		return VM_REG_GUEST_RSP;
+	case 8 ... 15:
+		return VM_REG_GUEST_R8 + (gpr - 8);
+	default:
+		break;
+	};
+
+	return -1;
+}
+
 static int
 svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 {
@@ -1419,23 +1442,24 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 
 		int dbreg_num = code - 0x30;
 		int dbreg;
-		int gpr = vcpu_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
-    uint64_t new_dbreg_val;
+		int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
+		uint64_t new_dbreg_val;
 
-    KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
+		KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
 
-    printf(
-	"%s: DRx write vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
-	__func__, vcpu, code, (int)VMCB_DR_INTCTP_GPR_NUM(info1), dbreg_num);
+		printf(
+		    "%s: DRx write vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
+		    __func__, vcpu, code, (int)VMCB_DR_INTCTP_GPR_NUM(info1),
+		    dbreg_num);
 
-    /*
-     * Bounce exit to userland - allow the
-     * gdb stub to adjust its watchpoint metadata
-     */
-    vmexit->exitcode = VM_EXITCODE_DB;
-    vmexit->u.dbg.trace_trap = 0;
-    vmexit->u.dbg.pushf_intercept = 0;
-    vmexit->u.dbg.drx_write = dbreg_num;
+		/*
+		 * Bounce exit to userland - allow the
+		 * gdb stub to adjust its watchpoint metadata
+		 */
+		vmexit->exitcode = VM_EXITCODE_DB;
+		vmexit->u.dbg.trace_trap = 0;
+		vmexit->u.dbg.pushf_intercept = 0;
+		vmexit->u.dbg.drx_write = dbreg_num;
 
 		/*
      * Emulate DR write.
