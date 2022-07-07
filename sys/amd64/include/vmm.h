@@ -728,8 +728,8 @@ struct vm_exit {
 			int  trace_trap;
 			int drx_access;
 			int  watchpoints; /* bitmask */
-			bool pushf_intercept;
-			bool tf_shadow_val;
+			int pushf_intercept;
+			int tf_shadow_val;
 			struct vm_guest_paging paging;
 		} dbg;
 		struct {
