@@ -404,7 +404,7 @@ vmcs_write(uint32_t encoding, uint64_t val)
 #define	EXIT_QUAL_DBG_B3		(1U << 3)
 #define	EXIT_QUAL_DBG_B_MASK		(0xf)
 #define	EXIT_QUAL_DBG_BD		(1U << 13)
-#define	EXIT_QUAL_DBG_BS		(1U << 14)
+#define EXIT_QUAL_DBG_BS    (1U << 14)
 
 /*
  * Exit qualification for MOV DR

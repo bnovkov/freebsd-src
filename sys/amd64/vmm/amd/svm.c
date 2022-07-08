@@ -1437,6 +1437,61 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	case VMCB_EXIT_NMI:	/* external NMI */
 		handled = 1;
 		break;
+	case 0x20 ... 0x23: /* DR{0-3,7} read */
+	case 0x27: {
+    int dbreg_num = code - 0x20;
+		int dbreg;
+		int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
+		uint64_t new_gpr_val;
+
+		KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
+
+		printf(
+		    "%s: DRx read vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
+		    __func__, vcpu, code, (int)VMCB_DR_INTCTP_GPR_NUM(info1),
+		    dbreg_num);
+
+		/*
+		 * Bounce exit to userland - allow the
+		 * gdb stub to adjust its watchpoint metadata
+		 */
+		vmexit->exitcode = VM_EXITCODE_DB;
+		vmexit->u.dbg.trace_trap = 0;
+		vmexit->u.dbg.pushf_intercept = 0;
+		vmexit->u.dbg.drx_write = -1;
+		vmexit->u.dbg.drx_read = dbreg_num;
+		vmexit->u.dbg.gpr = gpr;
+
+		/*
+		 * Emulate DR read.
+		 * No checks are needed since all other
+		 * exceptions take precedence over the intercept.
+		 * (AMD APM v2, page 498)
+		 */
+
+
+		if (dbreg_num == 7) {
+  		dbreg = VM_REG_GUEST_DR7;
+    } else {
+      dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+    }
+
+    error = svm_getreg(svm_sc, vcpu, dbreg, &new_gpr_val);
+    KASSERT(
+	error == 0, ("%s: error %d fetching dbreg %d\r\n", __func__, error, dbreg_num));
+
+    error = svm_setreg(svm_sc, vcpu, gpr, new_gpr_val);
+    KASSERT(error == 0,
+	("%s: error %d updating gpr %d\r\n", __func__, error, gpr));
+
+    printf("%s: DRx read vmexit: updated gpr %d to 0x%08lx\n", __func__, gpr,
+	new_gpr_val);
+
+    dump_dbregs(svm_sc, vcpu);
+
+    handled = 0;
+    break;
+  }
 	case 0x30 ... 0x33: /* DR{0-3,7} write */
 	case 0x37: {
 
@@ -1462,24 +1517,25 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		vmexit->u.dbg.drx_write = dbreg_num;
 
 		/*
-     * Emulate DR write.
-     * No checks are needed since all other
-     * exceptions take precedence over the intercept.
-     * (AMD APM v2, page 498)
-     */
+		 * Emulate DR write.
+		 * No checks are needed since all other
+		 * exceptions take precedence over the intercept.
+		 * (AMD APM v2, page 498)
+		 */
 
-    error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
-    KASSERT(
-	error == 0, ("%s: error %d fetching GPR %d\r\n", __func__, error, gpr));
+		error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
+		KASSERT(error == 0,
+		    ("%s: error %d fetching GPR %d\r\n", __func__, error, gpr));
 
-    if(dbreg_num == 7){
-      /*
-       * A DR7 write can change multiple watchpoints.
-       * Update vmexit info with a the new breakpoint mask from the gpr.
-       */
-      dbreg = VM_REG_GUEST_DR7;
-      // TODO: mask upper 32 bits?
-      vmexit->u.dbg.watchpoints = (int)(new_dbreg_val);
+		if (dbreg_num == 7) {
+			/*
+			 * A DR7 write can change multiple watchpoints.
+			 * Update vmexit info with a the new breakpoint mask
+			 * from the gpr.
+			 */
+			dbreg = VM_REG_GUEST_DR7;
+			// TODO: mask upper 32 bits?
+			vmexit->u.dbg.watchpoints = (int)(new_dbreg_val);
     } else {
       dbreg = VM_REG_GUEST_DR0 + dbreg_num;
     }
@@ -1558,6 +1614,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->u.dbg.trace_trap = 1;
 		    vmexit->u.dbg.pushf_intercept = 0;
 		    vmexit->u.dbg.drx_write = -1;
+		    vmexit->u.dbg.drx_read = -1;
 		    vmexit->u.dbg.watchpoints = 0;
 
 		    if (s_vcpu->db_info.popf_next) {
@@ -1604,6 +1661,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->u.dbg.trace_trap = 0;
 		    vmexit->u.dbg.pushf_intercept = 0;
 		    vmexit->u.dbg.drx_write = -1;
+		    vmexit->u.dbg.drx_read = -1;
 		    vmexit->u.dbg.watchpoints = (int)watch_mask;
 
 		    reflect = 0;
@@ -1794,31 +1852,32 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	default:
 		vmm_stat_incr(svm_sc->vm, vcpu, VMEXIT_UNKNOWN, 1);
 		break;
-		}
-
-	VCPU_CTR4(svm_sc->vm, vcpu, "%s %s vmexit at %#lx/%d",
-	    handled ? "handled" : "unhandled", exit_reason_to_str(code),
-	    vmexit->rip, vmexit->inst_length);
-
-	if (handled) {
-		vmexit->rip += vmexit->inst_length;
-		vmexit->inst_length = 0;
-		state->rip = vmexit->rip;
-	} else {
-		if (vmexit->exitcode == VM_EXITCODE_BOGUS) {
-			/*
-			 * If this VM exit was not claimed by anybody then
-			 * treat it as a generic SVM exit.
-			 */
-			vm_exit_svm(vmexit, code, info1, info2);
-		} else {
-			/*
-			 * The exitcode and collateral have been populated.
-			 * The VM exit will be processed further in userland.
-			 */
-		}
 	}
-	return (handled);
+
+		VCPU_CTR4(svm_sc->vm, vcpu, "%s %s vmexit at %#lx/%d",
+		    handled ? "handled" : "unhandled", exit_reason_to_str(code),
+		    vmexit->rip, vmexit->inst_length);
+
+		if (handled) {
+			vmexit->rip += vmexit->inst_length;
+			vmexit->inst_length = 0;
+			state->rip = vmexit->rip;
+		} else {
+			if (vmexit->exitcode == VM_EXITCODE_BOGUS) {
+				/*
+				 * If this VM exit was not claimed by anybody
+				 * then treat it as a generic SVM exit.
+				 */
+				vm_exit_svm(vmexit, code, info1, info2);
+			} else {
+				/*
+				 * The exitcode and collateral have been
+				 * populated. The VM exit will be processed
+				 * further in userland.
+				 */
+			}
+		}
+		return (handled);
 }
 
 static void
@@ -2662,7 +2721,18 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 	  svm_set_intercept(
 	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
 
-    break;
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(0), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(1), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(2), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(3), val);
+	  svm_set_intercept(
+	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(7), val);
+
+	  break;
   }
 	default:
 		error = ENOENT;
