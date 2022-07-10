@@ -1277,24 +1277,31 @@ handle_drx_write(int vcpu, struct vm_exit *vmexit)
                     ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
 		/* Guest started using an occupied DB reg,
 		 * remove watchpoint */
-		debug(
-          "%s: evicting active watchpoint %d\n", __func__, dbreg_num);
-		clear_watchpoint(dbreg_num,
-                     dbreg_val == 0 ? GDB_WATCHPOINT_CLEAR_NOSKIP : vcpu, false);
-		wp->state = WATCH_EVICTED;
-		watch_stats.no_evicted++;
-		/* Mark watchpoint as in-use */
-		GDB_ALLOC_WATCHPOINT(dbreg_num);
-		// TODO: figure out how to notify remote gdb if a
-		// watchpoint cannot be migrated
-	} else {
-		vm_get_register(
-                    ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
 		if (dbreg_val != 0) {
+
+			debug("%s: evicting active watchpoint %d\n", __func__,
+            dbreg_num);
+			clear_watchpoint(
+			    dbreg_num, GDB_WATCHPOINT_CLEAR_NOSKIP, false);
+			wp->state = WATCH_EVICTED;
+			watch_stats.no_evicted++;
 			/* Mark watchpoint as in-use */
 			GDB_ALLOC_WATCHPOINT(dbreg_num);
+    } else {
+	    debug("%s: dr7 write: reactivating active watchpoint %d\n",
+		__func__, dbreg_num);
+	    set_watchpoint(wp->gva, wp->type, wp->bytes, dbreg_num);
+    }
+			// TODO: figure out how to notify remote gdb if a
+			// watchpoint cannot be migrated
+		} else {
+			vm_get_register(ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num,
+			    &dbreg_val);
+			if (dbreg_val != 0) {
+				/* Mark watchpoint as in-use */
+				GDB_ALLOC_WATCHPOINT(dbreg_num);
+			}
 		}
-	}
 	/* Try to migrate any evicted watchpoints */
 	for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
 		if (watch_stats.watchpoints[i].state == WATCH_EVICTED) {
@@ -1819,14 +1826,14 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
 	} else {
     wp = find_watchpoint(gva);
     if(wp){
-      int watchnum = (wp - &watch_stats.watchpoints[0]) / sizeof(*wp);
-      debug("Removing watchpoint %d\n", watchnum);
-      clear_watchpoint(watchnum, GDB_WATCHPOINT_CLEAR_NOSKIP, true);
-      /* If the last watchpoint was removed and none are evicted, disable db and
-       * dbreg vmexits */
-      if (watch_stats.no_active == 0 && watch_stats.no_evicted == 0) {
-	      set_dbexit_caps(false);
-	      set_dbreg_exit_caps(false);
+	    int watchnum = wp - &watch_stats.watchpoints[0];
+	    debug("Removing watchpoint %d\n", watchnum);
+	    clear_watchpoint(watchnum, GDB_WATCHPOINT_CLEAR_NOSKIP, true);
+	    /* If the last watchpoint was removed and none are evicted, disable
+	     * db and dbreg vmexits */
+	    if (watch_stats.no_active == 0 && watch_stats.no_evicted == 0) {
+		    set_dbexit_caps(false);
+		    set_dbreg_exit_caps(false);
       }
     }
 	}
