@@ -1370,6 +1370,82 @@ mov_dr_gpr_num_to_reg(int gpr)
 }
 
 static int
+emulate_mov_dr(struct svm_softc *svm_sc, struct vm_exit *vmexit, int vcpu,
+    uint64_t code, uint64_t info1)
+{
+	int write, error;
+  int src, dst;
+  int dbreg_num, dbreg;
+  int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
+  uint64_t new_dst_val;
+
+  KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
+
+
+  if (code >= 0x20 && code <= 0x27) {
+	  dbreg_num = code - 0x20;
+	  write = 0;
+	} else if (code >= 0x30 && code <= 0x37) {
+		dbreg_num = code - 0x30;
+		write = 1;
+	} else {
+		// should not happen
+		return -1;
+	}
+
+	/*
+	 * Bounce exit to userland - allow the
+	 * gdb stub to adjust its watchpoint metadata
+	 */
+	vmexit->exitcode = VM_EXITCODE_DB;
+	vmexit->u.dbg.trace_trap = 0;
+	vmexit->u.dbg.pushf_intercept = 0;
+	vmexit->u.dbg.drx_access = dbreg_num;
+	vmexit->u.dbg.gpr = -1;
+
+	printf(
+	    "%s: DRx %s vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
+	    __func__, (write ? "write" : "read"), vcpu, code,
+	    (int)VMCB_DR_INTCTP_GPR_NUM(info1), dbreg_num);
+
+	/*
+	 * Emulate MOV DR.
+	 * No checks are needed since all other
+	 * exceptions take precedence over the intercept.
+	 * (AMD APM v2, page 498)
+	 */
+	if (dbreg_num == 7) {
+		dbreg = VM_REG_GUEST_DR7;
+  } else {
+    dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+  }
+
+  if (write) {
+	  src = gpr;
+	  dst = dbreg;
+  } else {
+	  vmexit->u.dbg.gpr = gpr;
+
+	  src = dbreg;
+	  dst = gpr;
+  }
+
+  error = svm_getreg(svm_sc, vcpu, src, &new_dst_val);
+  KASSERT(
+          error == 0, ("%s: error %d fetching reg %d\r\n", __func__, error, src));
+
+  if (write && dbreg_num == 7) {
+	  vmexit->u.dbg.watchpoints = (int)new_dst_val;
+  }
+
+  error = svm_setreg(svm_sc, vcpu, dst, new_dst_val);
+  KASSERT(
+      error == 0, ("%s: error %d updating reg %d\r\n", __func__, error, dst));
+
+  return error;
+}
+
+static int
 svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 {
 	struct vmcb *vmcb;
@@ -1438,120 +1514,14 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		handled = 1;
 		break;
 	case 0x20 ... 0x23: /* DR{0-3,7} read */
-	case 0x27: {
-    int dbreg_num = code - 0x20;
-		int dbreg;
-		int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
-		uint64_t new_gpr_val;
-
-		KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
-
-		printf(
-		    "%s: DRx read vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
-		    __func__, vcpu, code, (int)VMCB_DR_INTCTP_GPR_NUM(info1),
-		    dbreg_num);
-
-		/*
-		 * Bounce exit to userland - allow the
-		 * gdb stub to adjust its watchpoint metadata
-		 */
-		vmexit->exitcode = VM_EXITCODE_DB;
-		vmexit->u.dbg.trace_trap = 0;
-		vmexit->u.dbg.pushf_intercept = 0;
-		vmexit->u.dbg.drx_write = -1;
-		vmexit->u.dbg.drx_read = dbreg_num;
-		vmexit->u.dbg.gpr = gpr;
-
-		/*
-		 * Emulate DR read.
-		 * No checks are needed since all other
-		 * exceptions take precedence over the intercept.
-		 * (AMD APM v2, page 498)
-		 */
-
-
-		if (dbreg_num == 7) {
-  		dbreg = VM_REG_GUEST_DR7;
-    } else {
-      dbreg = VM_REG_GUEST_DR0 + dbreg_num;
-    }
-
-    error = svm_getreg(svm_sc, vcpu, dbreg, &new_gpr_val);
-    KASSERT(
-	error == 0, ("%s: error %d fetching dbreg %d\r\n", __func__, error, dbreg_num));
-
-    error = svm_setreg(svm_sc, vcpu, gpr, new_gpr_val);
-    KASSERT(error == 0,
-	("%s: error %d updating gpr %d\r\n", __func__, error, gpr));
-
-    printf("%s: DRx read vmexit: updated gpr %d to 0x%08lx\n", __func__, gpr,
-	new_gpr_val);
-
-    dump_dbregs(svm_sc, vcpu);
-
-    handled = 0;
-    break;
-  }
+	case 0x27: 
 	case 0x30 ... 0x33: /* DR{0-3,7} write */
-	case 0x37: {
-
-		int dbreg_num = code - 0x30;
-		int dbreg;
-		int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
-		uint64_t new_dbreg_val;
-
-		KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
-
-		printf(
-		    "%s: DRx write vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
-		    __func__, vcpu, code, (int)VMCB_DR_INTCTP_GPR_NUM(info1),
-		    dbreg_num);
-
-		/*
-		 * Bounce exit to userland - allow the
-		 * gdb stub to adjust its watchpoint metadata
-		 */
-		vmexit->exitcode = VM_EXITCODE_DB;
-		vmexit->u.dbg.trace_trap = 0;
-		vmexit->u.dbg.pushf_intercept = 0;
-		vmexit->u.dbg.drx_write = dbreg_num;
-
-		/*
-		 * Emulate DR write.
-		 * No checks are needed since all other
-		 * exceptions take precedence over the intercept.
-		 * (AMD APM v2, page 498)
-		 */
-
-		error = svm_getreg(svm_sc, vcpu, gpr, &new_dbreg_val);
+	case 0x37:
+		error = emulate_mov_dr(svm_sc, vmexit, vcpu, code, info1);
 		KASSERT(error == 0,
-		    ("%s: error %d fetching GPR %d\r\n", __func__, error, gpr));
-
-		if (dbreg_num == 7) {
-			/*
-			 * A DR7 write can change multiple watchpoints.
-			 * Update vmexit info with a the new breakpoint mask
-			 * from the gpr.
-			 */
-			dbreg = VM_REG_GUEST_DR7;
-			// TODO: mask upper 32 bits?
-			vmexit->u.dbg.watchpoints = (int)(new_dbreg_val);
-    } else {
-      dbreg = VM_REG_GUEST_DR0 + dbreg_num;
-    }
-
-    error = svm_setreg(svm_sc, vcpu, dbreg, new_dbreg_val);
-    KASSERT(error == 0,
-	("%s: error %d updating DR%d\r\n", __func__, error, dbreg_num));
-
-    printf("%s: DRx write vmexit: updated dbreg %d to 0x%08lx\n", __func__,
-	dbreg_num, new_dbreg_val);
-
-    dump_dbregs(svm_sc, vcpu);
-
-    handled = 0;
-    break;
-	}
+		    ("%s: error %d emulating MOV DR", __func__, error));
+		handled = 0;
+		break;
 	case 0x40 ... 0x5F:
 		vmm_stat_incr(svm_sc->vm, vcpu, VMEXIT_EXCEPTION, 1);
 		reflect = 1;
@@ -1613,8 +1583,8 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 1;
 		    vmexit->u.dbg.pushf_intercept = 0;
-		    vmexit->u.dbg.drx_write = -1;
-		    vmexit->u.dbg.drx_read = -1;
+		    vmexit->u.dbg.drx_access = -1;
+		    vmexit->u.dbg.gpr = -1;
 		    vmexit->u.dbg.watchpoints = 0;
 
 		    if (s_vcpu->db_info.popf_next) {
@@ -1660,8 +1630,8 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->exitcode = VM_EXITCODE_DB;
 		    vmexit->u.dbg.trace_trap = 0;
 		    vmexit->u.dbg.pushf_intercept = 0;
-		    vmexit->u.dbg.drx_write = -1;
-		    vmexit->u.dbg.drx_read = -1;
+		    vmexit->u.dbg.drx_access = -1;
+		    vmexit->u.dbg.gpr = -1;
 		    vmexit->u.dbg.watchpoints = (int)watch_mask;
 
 		    reflect = 0;

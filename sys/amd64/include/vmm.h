@@ -727,7 +727,8 @@ struct vm_exit {
 		} bpt;
 		struct {
 			int trace_trap;
-			int drx_write;
+			int drx_access;
+			int gpr;
 			int watchpoints; /* bitmask */
 			int pushf_intercept;
 			int tf_shadow_val;

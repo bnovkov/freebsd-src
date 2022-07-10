@@ -993,14 +993,16 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum){
   }
 
   wp = &watch_stats.watchpoints[watchnum];
-
+  /* An already active watchpoint can be passed; dont increment overall active*/
+  if(wp->state != WATCH_ACTIVE){
+	  watch_stats.no_active++;
+  }
   wp->state = WATCH_ACTIVE;
   wp->gva = gva;
   wp->type = type;
   wp->bytes = bytes;
 
   GDB_ALLOC_WATCHPOINT(watchnum);
-  watch_stats.no_active++;
 
   return 0;
 }
@@ -1185,89 +1187,135 @@ handle_watchpoint_hit(int vcpu, int watch_mask)
 	pthread_mutex_unlock(&gdb_lock);
 }
 
+static void
+handle_drx_read(int vcpu, struct vm_exit *vmexit)
+{
+	struct watchpoint *wp;
+	int dbreg_num = vmexit->u.dbg.drx_access;
+	uint64_t gpr_val;
+	int gpr = vmexit->u.dbg.gpr;
+
+	if (dbreg_num >= 4 && dbreg_num <= 6) {
+		return;
+	}
+
+	pthread_mutex_lock(&gdb_lock);
+	wp = &watch_stats.watchpoints[dbreg_num];
+
+	debug("%s: drx_read %d\n", __func__, dbreg_num);
+
+  if(dbreg_num == 7){
+	  vm_get_register(ctx, vcpu, gpr, &gpr_val);
+
+    for(int i=0; i<GDB_WATCHPOINT_MAX; i++){
+	    /* Clear newly read dr7 mask for gdbstub watchpoints */
+	    if (watch_stats.watchpoints[i].state == WATCH_ACTIVE) {
+		    gpr_val &= ~DBREG_DR7_MASK(i);
+		    debug("%s: cleared watch %d from gpr\n", __func__, i);
+      }
+    }
+
+    vm_set_register(ctx, vcpu, gpr, gpr_val);
+  }
+	/* If the guest attempts to read from a gdbstub-active dbreg, set the
+	 * gpr register to 0 */
+	if (wp->state == WATCH_ACTIVE) {
+		debug("%s: setting gpr %d to 0\n", __func__, vmexit->u.dbg.gpr);
+		vm_set_register(ctx, vcpu, vmexit->u.dbg.gpr, 0);
+  }
+
+	pthread_mutex_unlock(&gdb_lock);
+}
 
 static void
 handle_drx_write(int vcpu, struct vm_exit *vmexit)
 {
 	int error;
 	struct watchpoint *wp;
+	uint64_t dbreg_val;
+	int dbreg_num = vmexit->u.dbg.drx_access;
 
-	pthread_mutex_lock(&gdb_lock);
-
-  uint64_t dbreg_val;
-	int dbreg_num = vmexit->u.dbg.drx_write;
-	wp = &watch_stats.watchpoints[dbreg_num];
-
-	debug("%s: drx_write %d\n", __func__, dbreg_num);
-
-	if (dbreg_num == 7) {
-		/* A new DR7 was loaded, update watchpoint metadata */
-		int dr7 = vmexit->u.dbg.watchpoints;
-		debug("%s:  0x%04x\n", __func__, dr7);
-
-		/* Clear any watchpoints the guest started using */
-		for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
-			bool dbreg_enabled = DBREG_DR7_ENABLED(dr7, i);
-			bool watchpoint_active =
-			    watch_stats.watchpoints[i].state == WATCH_ACTIVE;
-
-			if (dbreg_enabled && watchpoint_active) {
-				debug(
-				    "%s: dr7 write: evicting active watchpoint %d\n",
-				    __func__, i);
-				clear_watchpoint(i, vcpu, true);
-				watch_stats.watchpoints[i].state =
-				    WATCH_EVICTED;
- 			watch_stats.no_evicted++;
-			}
-    }
-    rebuild_avail_watchpoints();
-
-  }else if (wp->state == WATCH_ACTIVE) {
-	  vm_get_register(ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
-
-	  /* Guest started using an occupied DB reg, remove
-	   * watchpoint */
-    if(dbreg_val != 0){
-      debug("%s: evicting active watchpoint %d\n", __func__, dbreg_num);
-      clear_watchpoint(dbreg_num, GDB_WATCHPOINT_CLEAR_NOSKIP, false);
-      wp->state = WATCH_EVICTED;
-      watch_stats.no_evicted++;
-      /* Mark watchpoint as in-use */
-      GDB_ALLOC_WATCHPOINT(dbreg_num);
-    }
-	  // TODO: figure out how to notify remote gdb if a watchpoint
-	  // cannot be migrated
-   }else{
-	   vm_get_register(ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
-	   if (dbreg_val != 0) {
-
-		   /* Mark watchpoint as in-use */
-		   GDB_ALLOC_WATCHPOINT(dbreg_num);
-	   }
-   }
-   /* Try to migrate any evicted watchpoints */
-  for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
-	    if (watch_stats.watchpoints[i].state == WATCH_EVICTED) {
-		    error = migrate_watchpoint(&watch_stats.watchpoints[i]);
-		    debug("%s: %s migrating watchpoint %d\n", __func__,
-			(error != -1 ? "succeeded" : "failed"), i);
-		    if (error) {
-
-			    break;
-		    }
-	    }
+  if(dbreg_num >=4 && dbreg_num <=6){
+	  return;
   }
 
-   pthread_mutex_unlock(&gdb_lock);
+  pthread_mutex_lock(&gdb_lock);
+  wp = &watch_stats.watchpoints[dbreg_num];
+
+  debug("%s: drx_write %d\n", __func__, dbreg_num);
+
+  if (dbreg_num == 7) {
+	  /* A new DR7 was loaded, update watchpoint metadata */
+	  int dr7 = vmexit->u.dbg.watchpoints;
+	  debug("%s:  0x%04x\n", __func__, dr7);
+
+	  /* Clear any watchpoints the guest started using */
+	  for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
+		  wp = &watch_stats.watchpoints[i];
+		  bool dbreg_enabled = DBREG_DR7_ENABLED(dr7, i);
+		  bool watchpoint_active = wp->state == WATCH_ACTIVE;
+
+		  if (dbreg_enabled && watchpoint_active) {
+			  /* Evict active watchpoint */
+			  debug(
+			      "%s: dr7 write: evicting active watchpoint %d\n",
+			      __func__, i);
+			  clear_watchpoint(i, vcpu, true);
+			  wp->state = WATCH_EVICTED;
+			  watch_stats.no_evicted++;
+		  } else if (!dbreg_enabled && watchpoint_active) {
+			  debug(
+			      "%s: dr7 write: reactivating active watchpoint %d\n",
+			      __func__, i);
+			  set_watchpoint(wp->gva, wp->type, wp->bytes, i);
+		  }
+	  }
+	  rebuild_avail_watchpoints();
+
+	} else if (wp->state == WATCH_ACTIVE) {
+		vm_get_register(
+                    ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
+		/* Guest started using an occupied DB reg,
+		 * remove watchpoint */
+		debug(
+          "%s: evicting active watchpoint %d\n", __func__, dbreg_num);
+		clear_watchpoint(dbreg_num,
+                     dbreg_val == 0 ? GDB_WATCHPOINT_CLEAR_NOSKIP : vcpu, false);
+		wp->state = WATCH_EVICTED;
+		watch_stats.no_evicted++;
+		/* Mark watchpoint as in-use */
+		GDB_ALLOC_WATCHPOINT(dbreg_num);
+		// TODO: figure out how to notify remote gdb if a
+		// watchpoint cannot be migrated
+	} else {
+		vm_get_register(
+                    ctx, vcpu, VM_REG_GUEST_DR0 + dbreg_num, &dbreg_val);
+		if (dbreg_val != 0) {
+			/* Mark watchpoint as in-use */
+			GDB_ALLOC_WATCHPOINT(dbreg_num);
+		}
+	}
+	/* Try to migrate any evicted watchpoints */
+	for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
+		if (watch_stats.watchpoints[i].state == WATCH_EVICTED) {
+			error = migrate_watchpoint(&watch_stats.watchpoints[i]);
+			debug("%s: %s migrating watchpoint %d\n", __func__,
+            (error != -1 ? "succeeded" : "failed"), i);
+			if (error) {
+
+				break;
+			}
+		}
+	}
+
+	pthread_mutex_unlock(&gdb_lock);
 };
 
 /*
  * A general handler for VM_EXITCODE_DB.
- * Handles RFLAGS.TF exits on AMD hosts and HW watchpoints (WIP).
+ * Handles RFLAGS.TF exits on AMD hosts and HW watchpoints.
  */
-void
-gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
+void gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
 {
 	if (!gdb_active)
 		return;
@@ -1275,7 +1323,9 @@ gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
 	/* RFLAGS.TF exit? */
 	if (vmexit->u.dbg.trace_trap) {
 		_gdb_cpu_step(vcpu);
-	} else if (vmexit->u.dbg.drx_write != -1) {
+	} else if (vmexit->u.dbg.drx_access != -1 && vmexit->u.dbg.gpr != -1) {
+		handle_drx_read(vcpu, vmexit);
+	} else if (vmexit->u.dbg.drx_access != -1) {
 		handle_drx_write(vcpu, vmexit);
 	} else if (vmexit->u.dbg.watchpoints) {
 		/* A watchpoint was triggered */
@@ -1288,106 +1338,103 @@ gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
  * has been suspended due to an event on different vCPU or in response
  * to a guest-wide suspend such as Ctrl-C or the stop on attach.
  */
-void
-gdb_cpu_suspend(int vcpu)
+void gdb_cpu_suspend(int vcpu)
 {
-	pthread_mutex_lock(&gdb_lock);
-	_gdb_cpu_suspend(vcpu, true);
-	gdb_cpu_resume(vcpu);
-	pthread_mutex_unlock(&gdb_lock);
+  pthread_mutex_lock(&gdb_lock);
+  _gdb_cpu_suspend(vcpu, true);
+  gdb_cpu_resume(vcpu);
+  pthread_mutex_unlock(&gdb_lock);
 }
 
 /*
  * Handler for VM_EXITCODE_MTRAP reported when a vCPU single-steps via
  * the VT-x-specific MTRAP exit.
  */
-void
-gdb_cpu_mtrap(int vcpu)
+void gdb_cpu_mtrap(int vcpu)
 {
-	if (!gdb_active)
-		return;
+  if (!gdb_active)
+    return;
 
-	_gdb_cpu_step(vcpu);
+  _gdb_cpu_step(vcpu);
 }
 
-static struct breakpoint *
-find_breakpoint(uint64_t gpa)
+static struct breakpoint *find_breakpoint(uint64_t gpa)
 {
-	struct breakpoint *bp;
+  struct breakpoint *bp;
 
-	TAILQ_FOREACH (bp, &breakpoints, link) {
-		if (bp->gpa == gpa)
-			return (bp);
-	}
-	return (NULL);
+  TAILQ_FOREACH (bp, &breakpoints, link) {
+    if (bp->gpa == gpa)
+      return (bp);
+  }
+  return (NULL);
 }
 
-void
-gdb_cpu_breakpoint(int vcpu, struct vm_exit *vmexit)
+void gdb_cpu_breakpoint(int vcpu, struct vm_exit *vmexit)
 {
-	struct breakpoint *bp;
-	struct vcpu_state *vs;
-	uint64_t gpa;
-	int error;
+  struct breakpoint *bp;
+  struct vcpu_state *vs;
+  uint64_t gpa;
+  int error;
 
-	if (!gdb_active) {
-		fprintf(stderr, "vm_loop: unexpected VMEXIT_DEBUG\n");
-		exit(4);
-	}
-	pthread_mutex_lock(&gdb_lock);
-	error = guest_vaddr2paddr(vcpu, vmexit->rip, &gpa);
-	assert(error == 1);
-	bp = find_breakpoint(gpa);
-	if (bp != NULL) {
-		vs = &vcpu_state[vcpu];
-		assert(vs->stepping == false);
-		assert(vs->stepped == false);
-		assert(vs->hit_swbreak == false);
-		assert(vs->hit_watch == false);
-		vs->hit_swbreak = true;
-		vm_set_register(ctx, vcpu, VM_REG_GUEST_RIP, vmexit->rip);
-		for (;;) {
-			if (stopped_vcpu == -1) {
-				debug(
-				    "$vCPU %d reporting breakpoint at rip %#lx\n",
-				    vcpu, vmexit->rip);
-				stopped_vcpu = vcpu;
-				gdb_suspend_vcpus();
-			}
-			_gdb_cpu_suspend(vcpu, true);
-			if (!vs->hit_swbreak) {
-				/* Breakpoint reported. */
-				break;
-			}
-			bp = find_breakpoint(gpa);
-			if (bp == NULL) {
-				/* Breakpoint was removed. */
-				vs->hit_swbreak = false;
-				break;
-			}
-		}
-		gdb_cpu_resume(vcpu);
-	} else {
-		debug("$vCPU %d injecting breakpoint at rip %#lx\n", vcpu,
-		    vmexit->rip);
-		error = vm_set_register(ctx, vcpu,
-		    VM_REG_GUEST_ENTRY_INST_LENGTH, vmexit->u.bpt.inst_length);
-		assert(error == 0);
-		error = vm_inject_exception(ctx, vcpu, IDT_BP, 0, 0, 0);
-		assert(error == 0);
-	}
-	pthread_mutex_unlock(&gdb_lock);
+  if (!gdb_active) {
+    fprintf(stderr, "vm_loop: unexpected VMEXIT_DEBUG\n");
+    exit(4);
+  }
+  pthread_mutex_lock(&gdb_lock);
+  error = guest_vaddr2paddr(vcpu, vmexit->rip, &gpa);
+  assert(error == 1);
+  bp = find_breakpoint(gpa);
+  if (bp != NULL) {
+    vs = &vcpu_state[vcpu];
+    assert(vs->stepping == false);
+    assert(vs->stepped == false);
+    assert(vs->hit_swbreak == false);
+    assert(vs->hit_watch == false);
+    vs->hit_swbreak = true;
+    vm_set_register(
+                    ctx, vcpu, VM_REG_GUEST_RIP, vmexit->rip);
+    for (;;) {
+      if (stopped_vcpu == -1) {
+        debug(
+					    "$vCPU %d reporting breakpoint at rip %#lx\n",
+					    vcpu, vmexit->rip);
+        stopped_vcpu = vcpu;
+        gdb_suspend_vcpus();
+      }
+      _gdb_cpu_suspend(vcpu, true);
+      if (!vs->hit_swbreak) {
+        /* Breakpoint reported. */
+        break;
+      }
+      bp = find_breakpoint(gpa);
+      if (bp == NULL) {
+        /* Breakpoint was removed. */
+        vs->hit_swbreak = false;
+        break;
+      }
+    }
+    gdb_cpu_resume(vcpu);
+  } else {
+    debug("$vCPU %d injecting breakpoint at rip %#lx\n",
+			    vcpu, vmexit->rip);
+    error = vm_set_register(ctx, vcpu,
+                            VM_REG_GUEST_ENTRY_INST_LENGTH,
+                            vmexit->u.bpt.inst_length);
+    assert(error == 0);
+    error = vm_inject_exception(ctx, vcpu, IDT_BP, 0, 0, 0);
+    assert(error == 0);
+  }
+  pthread_mutex_unlock(&gdb_lock);
 }
 
-static bool
-gdb_step_vcpu(int vcpu)
+static bool gdb_step_vcpu(int vcpu)
 {
-	int error;
+  int error;
 
-	debug("$vCPU %d step\n", vcpu);
-	error = _gdb_check_step(vcpu);
-	if (error < 0) {
-			return (false);
+  debug("$vCPU %d step\n", vcpu);
+  error = _gdb_check_step(vcpu);
+  if (error < 0) {
+    return (false);
 	}
 
 	discard_stop();
