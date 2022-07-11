@@ -1140,6 +1140,7 @@ handle_watchpoint_hit(int vcpu, int watch_mask)
 	struct watchpoint *watch;
 
 	uint64_t gla;
+  uint64_t dr6;
 
 	assert(watchnum >= 0);
 
@@ -1178,6 +1179,11 @@ handle_watchpoint_hit(int vcpu, int watch_mask)
 				break;
 			}
 		}
+
+		vm_get_register(ctx, vcpu, VM_REG_GUEST_DR6, &dr6);
+		dr6 &= DBREG_DR6_RESERVED1;
+		vm_set_register(ctx, vcpu, VM_REG_GUEST_DR6, dr6);
+
 		gdb_cpu_resume(vcpu);
   } else {
 	  /* Reflect the DB exception back into the guest */

@@ -306,6 +306,7 @@ SDT_PROBE_DEFINE4(vmm, vmx, exit, return,
 
 static int vmx_getdesc(void *arg, int vcpu, int reg, struct seg_desc *desc);
 static int vmx_getreg(void *arg, int vcpu, int reg, uint64_t *retval);
+static int vmx_setreg(void *arg, int vcpu, int reg, uint64_t val);
 static int vmxctx_setreg(struct vmxctx *vmxctx, int reg, uint64_t val);
 static void vmx_inject_pir(struct vlapic *vlapic);
 #ifdef BHYVE_SNAPSHOT
@@ -2427,7 +2428,7 @@ emulate_mov_dr(struct vmx *vmx, struct vm_exit *vmexit, int vcpu, uint64_t qual)
 		  vmexit->u.dbg.watchpoints = (int)(regval);
   }
 
-  error = vmxctx_setreg(&vmx->ctx[vcpu], dst, regval);
+  error = vmx_setreg(vmx, vcpu, dst, regval);
   KASSERT(error == 0, ("%s: error %d updating register %d", __func__, error, dst));
 
 
@@ -2784,52 +2785,71 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 		if (intr_type == VMCS_INTR_T_HWEXCEPTION && intr_vec == IDT_DB &&
 		    (vmx->cap[vcpu].set & (1 << VM_CAP_DB_EXIT))) {
 
-			/*
-			 * A debug exception VMEXIT does not update the DR{6,7}
-			 * registers (SDM Vol. 3C 27-1). It is therefore
-			 * necessary to emulate these writes here.
-			 *
-			 * We reflect everything except watchpoint hits. Since
-			 * it is up to the userland to reinject a debug
-			 * exception when a guest watchpoint is hit, the
-			 * register must be updated here so that the guest may
-			 * properly register the watchpoint hit.
-			 */
-			int trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
+      int reflect = 0;
+      /*
+       * A debug exception VMEXIT does not update the DR{6,7}
+       * registers (SDM Vol. 3C 27-1). It is therefore
+       * necessary to emulate these writes here.
+       *
+       * We reflect everything except watchpoint hits. Since
+       * it is up to the userland to reinject a debug
+       * exception when a guest watchpoint is hit, the
+       * register must be updated here so that the guest may
+       * properly register the watchpoint hit.
+       */
+      int trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
       int debug_detect = !!(qual & EXIT_QUAL_DBG_BD);
       int watch_mask = qual & EXIT_QUAL_DBG_B_MASK;
 
       printf("%s: watchpoint vmexit, mask: 0x%04x, trace_trap: %d\r\n",
-	  __func__, (int)(qual & EXIT_QUAL_DBG_B_MASK), trace_trap);
-
+             __func__, (int)(qual & EXIT_QUAL_DBG_B_MASK), trace_trap);
 
       uint64_t dr6;
       error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_DR6, &dr6);
       KASSERT(error == 0, ("%s: error %d fetching DR6", __func__, error));
 
-      dr6 |= watch_mask;
-      dr6 |= debug_detect ? DBREG_DR6_BD : 0;
-      dr6 |= trace_trap ? DBREG_DR6_BS : 0;
+      uint64_t regval;
+      error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_RFLAGS, &regval);
+      KASSERT(error == 0, ("%s: error %d fetching DR6", __func__, error));
 
-      error = vmxctx_setreg(&vmx->ctx[vcpu], VM_REG_GUEST_DR6, dr6);
-      KASSERT(error == 0, ("%s: error %d updating DR6", __func__, error));
+
+      dr6 &= DBREG_DR6_RESERVED1;
+      dr6 |= (1 << 16);
 
       if (watch_mask) {
-	      vmexit->exitcode = VM_EXITCODE_DB;
-	      vmexit->u.dbg.pushf_intercept = 0;
-	      vmexit->u.dbg.trace_trap = 0;
-	      vmexit->u.dbg.drx_access = -1;
-	      vmexit->u.dbg.watchpoints = watch_mask;
+        vmexit->exitcode = VM_EXITCODE_DB;
+        vmexit->u.dbg.pushf_intercept = 0;
+        vmexit->u.dbg.trace_trap = 0;
+        vmexit->u.dbg.drx_access = -1;
+        vmexit->u.dbg.watchpoints = watch_mask;
+        vmexit->u.dbg.drx_access = -1;
+        vmexit->u.dbg.watchpoints = watch_mask;
 
-	      printf(
-		  "%s: watchpoint hit, mask: 0x%04x\r\n", __func__, watch_mask);
-
-	      /* Bounce to userland */
-	      break;
+        dr6 |= watch_mask;
+        printf(
+               "%s: watchpoint hit, mask: 0x%04x\r\n", __func__, watch_mask);
+        /* Bounce to userland */
+        reflect = 0;
       } else {
+	      dr6 |= debug_detect ? DBREG_DR6_BD : 0;
+	      dr6 |= (trace_trap) ? DBREG_DR6_BS : 0;
+	      regval &= ~(PSL_T);
+
 	      /* Reflect back into guest */
+	      reflect = 1;
+
 	      printf("%s: reflecting db exception, updated DR6: 0x%08lx\r\n",
 		  __func__, dr6);
+      }
+      error = vmx_setreg(vmx, vcpu, VM_REG_GUEST_DR6, dr6);
+      KASSERT(error == 0, ("%s: error %d updating DR6", __func__, error));
+      printf("%s: dr6 setreg error: %d\n", __func__, error);
+
+      error = vmx_setreg(vmx, vcpu, VM_REG_GUEST_RFLAGS, regval);
+      KASSERT(error == 0, ("%s: error %d fetching DR6", __func__, error));
+
+      if(!reflect){
+	      break;
       }
 		}
 

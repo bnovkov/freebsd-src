@@ -1332,18 +1332,21 @@ dump_dbregs(struct svm_softc *svm_sc, int vcpu)
 	uint64_t dr1;
 	uint64_t dr2;
 	uint64_t dr3;
-
+	uint64_t dr6;
 	uint64_t dr7;
+	uint64_t rf;
 
 	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR0, &dr0);
 	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR1, &dr1);
 	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR2, &dr2);
 	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR3, &dr3);
+	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR6, &dr6);
 	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR7, &dr7);
+	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rf);
 
 	printf(
-	    "%s: dr0: 0x%08lx, dr1: 0x%08lx, dr2: 0x%08lx, dr3: 0x%08lx, dr7: 0x%08lx, \r\n",
-	    __func__, dr0, dr1, dr2, dr3, dr7);
+	    "%s: dr0: 0x%08lx, dr1: 0x%08lx, dr2: 0x%08lx, dr3: 0x%08lx, dr6: 0x%08lx, dr7: 0x%08lx, rflags: 0x%08lx\r\n",
+	    __func__, dr0, dr1, dr2, dr3, dr6, dr7, rf);
 }
 
 static __inline int
@@ -1633,6 +1636,9 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->u.dbg.drx_access = -1;
 		    vmexit->u.dbg.gpr = -1;
 		    vmexit->u.dbg.watchpoints = (int)watch_mask;
+
+		    dr6 &= ~DBREG_DR6_BS;
+		    vmcb_write(svm_sc, vcpu, VM_REG_GUEST_DR6, dr6);
 
 		    reflect = 0;
 		    handled = 0;
