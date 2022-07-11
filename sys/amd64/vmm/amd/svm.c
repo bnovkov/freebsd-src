@@ -1382,8 +1382,7 @@ emulate_mov_dr(struct svm_softc *svm_sc, struct vm_exit *vmexit, int vcpu,
   int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
   uint64_t new_dst_val;
 
-  KASSERT(gpr > 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
-
+  KASSERT(gpr >= 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
 
   if (code >= 0x20 && code <= 0x27) {
 	  dbreg_num = code - 0x20;
@@ -1638,7 +1637,9 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		    vmexit->u.dbg.watchpoints = (int)watch_mask;
 
 		    dr6 &= ~DBREG_DR6_BS;
-		    vmcb_write(svm_sc, vcpu, VM_REG_GUEST_DR6, dr6);
+		    error = vmcb_write(svm_sc, vcpu, VM_REG_GUEST_DR6, dr6);
+		    KASSERT(error == 0,
+			("%s: error %d updating DR6\r\n", __func__, error));
 
 		    reflect = 0;
 		    handled = 0;
