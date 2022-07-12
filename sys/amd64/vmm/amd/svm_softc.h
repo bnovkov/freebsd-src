@@ -44,7 +44,7 @@ struct asid {
 struct svm_vcpu_debug_info {
 	bool popf_next; /* flag for handling single-stepping over popf */
 	bool pushf_next;
-	bool shadow_rflags_tf; /* shadowed tf bit value; used for
+	int shadow_rflags_tf; /* shadowed tf bit value; used for
 				  single-stepping */
 };
 
