@@ -179,23 +179,66 @@ static struct vcpu_state *vcpu_state;
 static int cur_vcpu, stopped_vcpu;
 static bool gdb_active = false;
 
-const int gdb_regset[] = { VM_REG_GUEST_RAX, VM_REG_GUEST_RBX, VM_REG_GUEST_RCX,
-	VM_REG_GUEST_RDX, VM_REG_GUEST_RSI, VM_REG_GUEST_RDI, VM_REG_GUEST_RBP,
-	VM_REG_GUEST_RSP, VM_REG_GUEST_R8, VM_REG_GUEST_R9, VM_REG_GUEST_R10,
-	VM_REG_GUEST_R11, VM_REG_GUEST_R12, VM_REG_GUEST_R13, VM_REG_GUEST_R14,
-	VM_REG_GUEST_R15, VM_REG_GUEST_RIP, VM_REG_GUEST_RFLAGS,
-	VM_REG_GUEST_CS, VM_REG_GUEST_SS, VM_REG_GUEST_DS, VM_REG_GUEST_ES,
-	VM_REG_GUEST_FS, VM_REG_GUEST_GS };
+const int gdb_regset[] = {
+	VM_REG_GUEST_RAX,
+	VM_REG_GUEST_RBX,
+	VM_REG_GUEST_RCX,
+	VM_REG_GUEST_RDX,
+	VM_REG_GUEST_RSI,
+	VM_REG_GUEST_RDI,
+	VM_REG_GUEST_RBP,
+	VM_REG_GUEST_RSP,
+	VM_REG_GUEST_R8,
+	VM_REG_GUEST_R9,
+	VM_REG_GUEST_R10,
+	VM_REG_GUEST_R11,
+	VM_REG_GUEST_R12,
+	VM_REG_GUEST_R13,
+	VM_REG_GUEST_R14,
+	VM_REG_GUEST_R15,
+	VM_REG_GUEST_RIP,
+	VM_REG_GUEST_RFLAGS,
+	VM_REG_GUEST_CS,
+	VM_REG_GUEST_SS,
+	VM_REG_GUEST_DS,
+	VM_REG_GUEST_ES,
+	VM_REG_GUEST_FS,
+	VM_REG_GUEST_GS
+};
 
-const int gdb_regsize[] = { 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	4, 4, 4, 4, 4, 4, 4 };
-#define GDB_LOG
+const int gdb_regsize[] = {
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	8,
+	4,
+	4,
+	4,
+	4,
+	4,
+	4,
+	4
+};
 
 #ifdef GDB_LOG
 #include <stdarg.h>
 #include <stdio.h>
 
-static void __printflike(1, 2) debug(const char *fmt, ...)
+static void __printflike(1, 2)
+debug(const char *fmt, ...)
 {
 	static FILE *logfile;
 	va_list ap;
@@ -221,15 +264,19 @@ static void __printflike(1, 2) debug(const char *fmt, ...)
 #define debug(...)
 #endif
 
-static void remove_all_sw_breakpoints(void);
-static void remove_all_hw_watchpoints(void);
+static void	remove_all_sw_breakpoints(void);
+static void	remove_all_hw_watchpoints(void);
 
 static int
 guest_paging_info(int vcpu, struct vm_guest_paging *paging)
 {
 	uint64_t regs[4];
-	const int regset[4] = { VM_REG_GUEST_CR0, VM_REG_GUEST_CR3,
-		VM_REG_GUEST_CR4, VM_REG_GUEST_EFER };
+	const int regset[4] = {
+		VM_REG_GUEST_CR0,
+		VM_REG_GUEST_CR3,
+		VM_REG_GUEST_CR4,
+		VM_REG_GUEST_EFER
+	};
 
 	if (vm_get_register_set(ctx, vcpu, nitems(regset), regset, regs) == -1)
 		return (-1);
@@ -253,8 +300,7 @@ guest_paging_info(int vcpu, struct vm_guest_paging *paging)
 		paging->paging_mode = PAGING_MODE_32;
 	else if (regs[3] & EFER_LME)
 		paging->paging_mode = (regs[2] & CR4_LA57) ?
-		    PAGING_MODE_64_LA57 :
-		    PAGING_MODE_64;
+		    PAGING_MODE_64_LA57 :  PAGING_MODE_64;
 	else
 		paging->paging_mode = PAGING_MODE_PAE;
 	return (0);
@@ -279,8 +325,8 @@ guest_vaddr2paddr(int vcpu, uint64_t vaddr, uint64_t *paddr)
 	 * Always use PROT_READ.  We really care if the VA is
 	 * accessible, not if the current vCPU can write.
 	 */
-	if (vm_gla2gpa_nofault(
-		ctx, vcpu, &paging, vaddr, PROT_READ, paddr, &fault) == -1)
+	if (vm_gla2gpa_nofault(ctx, vcpu, &paging, vaddr, PROT_READ, paddr,
+	    &fault) == -1)
 		return (-1);
 	if (fault)
 		return (0);
@@ -1475,8 +1521,8 @@ gdb_read_regs(void)
 	uint64_t regvals[nitems(gdb_regset)];
 	int i;
 
-	if (vm_get_register_set(
-		ctx, cur_vcpu, nitems(gdb_regset), gdb_regset, regvals) == -1) {
+	if (vm_get_register_set(ctx, cur_vcpu, nitems(gdb_regset),
+	    gdb_regset, regvals) == -1) {
 		send_error(errno);
 		return;
 	}
@@ -1566,8 +1612,8 @@ gdb_read_mem(const uint8_t *data, size_t len)
 					bytes = 2;
 				else
 					bytes = 4;
-				error = read_mem(
-				    ctx, cur_vcpu, gpa, &val, bytes);
+				error = read_mem(ctx, cur_vcpu, gpa, &val,
+				    bytes);
 				if (error == 0) {
 					if (!started) {
 						start_packet();
@@ -1686,8 +1732,8 @@ gdb_write_mem(const uint8_t *data, size_t len)
 					bytes = 4;
 					val = be32toh(parse_integer(data, 8));
 				}
-				error = write_mem(
-				    ctx, cur_vcpu, gpa, val, bytes);
+				error = write_mem(ctx, cur_vcpu, gpa, val,
+				    bytes);
 				if (error == 0) {
 					gpa += bytes;
 					gva += bytes;
@@ -1717,8 +1763,8 @@ set_breakpoint_caps(bool enable)
 	while (!CPU_EMPTY(&mask)) {
 		vcpu = CPU_FFS(&mask) - 1;
 		CPU_CLR(vcpu, &mask);
-		if (vm_set_capability(
-			ctx, vcpu, VM_CAP_BPT_EXIT, enable ? 1 : 0) < 0)
+		if (vm_set_capability(ctx, vcpu, VM_CAP_BPT_EXIT,
+		    enable ? 1 : 0) < 0)
 			return (false);
 		debug("$vCPU %d %sabled breakpoint exits\n", vcpu,
 		    enable ? "en" : "dis");
@@ -1735,7 +1781,7 @@ remove_all_sw_breakpoints(void)
 	if (TAILQ_EMPTY(&breakpoints))
 		return;
 
-	TAILQ_FOREACH_SAFE (bp, &breakpoints, link, nbp) {
+	TAILQ_FOREACH_SAFE(bp, &breakpoints, link, nbp) {
 		debug("remove breakpoint at %#lx\n", bp->gpa);
 		cp = paddr_guest2host(ctx, bp->gpa, 1);
 		*cp = bp->shadow_inst;
@@ -1904,7 +1950,7 @@ update_sw_breakpoint(uint64_t gva, int kind, bool insert)
 			bp = malloc(sizeof(*bp));
 			bp->gpa = gpa;
 			bp->shadow_inst = *cp;
-			*cp = 0xcc; /* INT 3 */
+			*cp = 0xcc;	/* INT 3 */
 			TAILQ_INSERT_TAIL(&breakpoints, bp, link);
 			debug("new breakpoint at %#lx\n", gpa);
 		}
@@ -2138,8 +2184,8 @@ handle_command(const uint8_t *data, size_t len)
 {
 
 	/* Reject packets with a sequence-id. */
-	if (len >= 3 && data[0] >= '0' && data[0] <= '9' && data[0] >= '0' &&
-	    data[0] <= '9' && data[2] == ':') {
+	if (len >= 3 && data[0] >= '0' && data[0] <= '9' &&
+	    data[0] >= '0' && data[0] <= '9' && data[2] == ':') {
 		send_empty_response();
 		return;
 	}
@@ -2156,6 +2202,7 @@ handle_command(const uint8_t *data, size_t len)
 		break;
 	case 'D':
 		send_ok();
+
 		/* TODO: Resume any stopped CPUs. */
 		break;
 	case 'g': {
@@ -2292,7 +2339,7 @@ check_command(int fd)
 
 			if (response_pending()) {
 				warnx("New GDB command while response in "
-				      "progress");
+				    "progress");
 				io_buffer_reset(&cur_resp);
 			}
 
@@ -2472,8 +2519,8 @@ init_gdb(struct vmctx *_ctx)
 		saddr = "localhost";
 	}
 
-	debug("==> starting on %s:%s, %swaiting\n", saddr, sport,
-	    wait ? "" : "not ");
+	debug("==> starting on %s:%s, %swaiting\n",
+	    saddr, sport, wait ? "" : "not ");
 
 	error = pthread_mutex_init(&gdb_lock, NULL);
 	if (error != 0)
