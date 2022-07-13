@@ -2385,7 +2385,7 @@ emulate_mov_dr(struct vmx *vmx, struct vm_exit *vmexit, int vcpu, uint64_t qual)
   }
 
   switch (dbreg_num){
-    /* XXX: figure out how to handle DR{4,5} */
+	  /* TODO: figure out how to handle DR{4,5} */
   case 0 ... 3:
     dbreg = VM_REG_GUEST_DR0 + dbreg_num;
     break;

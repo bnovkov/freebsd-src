@@ -27,19 +27,18 @@
  */
 
 #include <sys/cdefs.h>
-#include <x86/psl.h>
 __FBSDID("$FreeBSD$");
 
 #include "opt_bhyve_snapshot.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/smp.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/reg.h>
-#include <sys/smp.h>
 #include <sys/smr.h>
 #include <sys/sysctl.h>
 
@@ -47,10 +46,10 @@ __FBSDID("$FreeBSD$");
 #include <vm/pmap.h>
 
 #include <machine/cpufunc.h>
-#include <machine/md_var.h>
 #include <machine/psl.h>
-#include <machine/smp.h>
+#include <machine/md_var.h>
 #include <machine/specialreg.h>
+#include <machine/smp.h>
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
 #include <machine/vmm_instruction_emul.h>
@@ -88,7 +87,7 @@ SYSCTL_NODE(_hw_vmm, OID_AUTO, svm, CTLFLAG_RW | CTLFLAG_MPSAFE, NULL,
 #define AMD_CPUID_SVM_DECODE_ASSIST	BIT(7)  /* Decode assist */
 #define AMD_CPUID_SVM_PAUSE_INC		BIT(10) /* Pause intercept filter. */
 #define AMD_CPUID_SVM_PAUSE_FTH		BIT(12) /* Pause filter threshold */
-#define AMD_CPUID_SVM_AVIC BIT(13)		/* AVIC present */
+#define	AMD_CPUID_SVM_AVIC		BIT(13)	/* AVIC present */
 
 #define	VMCB_CACHE_DEFAULT	(VMCB_CACHE_ASID 	|	\
 				VMCB_CACHE_IOPM		|	\
@@ -623,8 +622,6 @@ svm_init(struct vm *vm, pmap_t pmap)
 		vmcb_init(svm_sc, i, iopm_pa, msrpm_pa, pml4_pa);
 		svm_msr_guest_init(svm_sc, i);
 	}
-
-
 	return (svm_sc);
 }
 
@@ -852,9 +849,8 @@ svm_npf_emul_fault(uint64_t exitinfo1)
 		return (false);
 	}
 
-	return (true);
+	return (true);	
 }
-
 
 static void
 svm_handle_inst_emul(struct vmcb *vmcb, uint64_t gpa, struct vm_exit *vmexit)
@@ -894,7 +890,7 @@ svm_handle_inst_emul(struct vmcb *vmcb, uint64_t gpa, struct vm_exit *vmexit)
 	default:
 		vmexit->u.inst_emul.cs_base = 0;
 		vmexit->u.inst_emul.cs_d = 0;
-		break;
+		break;	
 	}
 
 	/*
@@ -1213,10 +1209,9 @@ gpf:
 	return (0);
 }
 
-
 static int
-emulate_wrmsr(
-    struct svm_softc *sc, int vcpu, u_int num, uint64_t val, bool *retu)
+emulate_wrmsr(struct svm_softc *sc, int vcpu, u_int num, uint64_t val,
+    bool *retu)
 {
 	int error;
 
@@ -1829,32 +1824,31 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	default:
 		vmm_stat_incr(svm_sc->vm, vcpu, VMEXIT_UNKNOWN, 1);
 		break;
-	}
+	}	
 
-		VCPU_CTR4(svm_sc->vm, vcpu, "%s %s vmexit at %#lx/%d",
-		    handled ? "handled" : "unhandled", exit_reason_to_str(code),
-		    vmexit->rip, vmexit->inst_length);
+	VCPU_CTR4(svm_sc->vm, vcpu, "%s %s vmexit at %#lx/%d",
+	    handled ? "handled" : "unhandled", exit_reason_to_str(code),
+	    vmexit->rip, vmexit->inst_length);
 
-		if (handled) {
-			vmexit->rip += vmexit->inst_length;
-			vmexit->inst_length = 0;
-			state->rip = vmexit->rip;
+	if (handled) {
+		vmexit->rip += vmexit->inst_length;
+		vmexit->inst_length = 0;
+		state->rip = vmexit->rip;
+	} else {
+		if (vmexit->exitcode == VM_EXITCODE_BOGUS) {
+			/*
+			 * If this VM exit was not claimed by anybody then
+			 * treat it as a generic SVM exit.
+			 */
+			vm_exit_svm(vmexit, code, info1, info2);
 		} else {
-			if (vmexit->exitcode == VM_EXITCODE_BOGUS) {
-				/*
-				 * If this VM exit was not claimed by anybody
-				 * then treat it as a generic SVM exit.
-				 */
-				vm_exit_svm(vmexit, code, info1, info2);
-			} else {
-				/*
-				 * The exitcode and collateral have been
-				 * populated. The VM exit will be processed
-				 * further in userland.
-				 */
-			}
+			/*
+			 * The exitcode and collateral have been populated.
+			 * The VM exit will be processed further in userland.
+			 */
 		}
-		return (handled);
+	}
+	return (handled);
 }
 
 static void
@@ -2256,7 +2250,7 @@ svm_dr_leave_guest(struct svm_regctx *gctx)
 	load_dr7(gctx->host_dr7);
 }
 
- /*
+/*
  * Start vcpu with specified RIP.
  */
 static int
@@ -2929,7 +2923,7 @@ svm_snapshot(void *arg, struct vm_snapshot_meta *meta)
 		SNAPSHOT_VAR_OR_LEAVE(vcpu->asid.gen, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(vcpu->asid.num, meta, ret, done);
 
-		/* Setcap all caches dirty */
+		/* Set all caches dirty */
 		if (meta->op == VM_SNAPSHOT_RESTORE) {
 			svm_set_dirty(sc, i, VMCB_CACHE_ASID);
 			svm_set_dirty(sc, i, VMCB_CACHE_IOPM);
