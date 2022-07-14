@@ -1460,7 +1460,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			    vmcb_read(
 				svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
 			    s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
-		    } else if (svm_get_vcpu(svm_sc, vcpu)->db_info.pushf_next) {
+		    } else if (s_vcpu->db_info.pushf_next) {
 			    /* DB exit was caused by stepping over pushf */
 			    printf("%s: pushf trace trap\r\n", __func__);
 
@@ -1490,6 +1490,8 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
     case IDT_BP:
 	    if (svm_get_intercept(svm_sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP)) == 1) {
 		    vmexit->exitcode = VM_EXITCODE_BPT;
+                    vmexit->u.bpt.inst_length = vmexit->inst_length;
+                    vmexit->inst_length = 0;
 
 		    reflect = 0;
 		    handled = 0;
@@ -1516,11 +1518,12 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			info1 = 0;
 			break;
 		}
+
+		if (reflect) {
 		KASSERT(vmexit->inst_length == 0, ("invalid inst_length (%d) "
 		    "when reflecting exception %d into guest",
 		    vmexit->inst_length, idtvec));
 
-		if (reflect) {
 			/* Reflect the exception back into the guest */
 			VCPU_CTR2(svm_sc->vm, vcpu, "Reflecting exception "
 			    "%d/%#x into the guest", idtvec, (int)info1);
@@ -2439,12 +2442,13 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		break;
 	case VM_CAP_BPT_EXIT:
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP), val);
+		printf("%s: BPT_EXIT %s\r\n", __func__, val ? "ON" : "OFF");
 		break;
 	case VM_CAP_RFLAGS_SSTEP: {
 		uint64_t rflags;
 		int db_inctpt_val = val;
 		struct svm_vcpu *s_vcpu;
-
+		printf("%s: RFLAGS_SSTEP %s\r\n", __func__, val ? "ON" : "OFF");
 		if(svm_getreg(sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags)){
 			error = (EINVAL);
 			break;
