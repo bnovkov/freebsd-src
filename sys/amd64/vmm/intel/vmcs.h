@@ -105,7 +105,8 @@ vmcs_write(uint32_t encoding, uint64_t val)
 #define	vmcs_idt_vectoring_info()	vmcs_read(VMCS_IDT_VECTORING_INFO)
 #define	vmcs_idt_vectoring_err()	vmcs_read(VMCS_IDT_VECTORING_ERROR)
 /* XXX: mask? */
-#define	vmcs_pending_dbg_exceptions()	vmcs_read(VMCS_GUEST_PENDING_DBG_EXCEPTIONS)
+#define vmcs_pending_dbg_exceptions() \
+	vmcs_read(VMCS_GUEST_PENDING_DBG_EXCEPTIONS)
 
 #endif	/* _KERNEL */
 
@@ -398,20 +399,20 @@ vmcs_write(uint32_t encoding, uint64_t val)
 /*
  * Exit qualification for debug exception
  */
-#define	EXIT_QUAL_DBG_B0		(1U << 0)
-#define	EXIT_QUAL_DBG_B1		(1U << 1)
-#define	EXIT_QUAL_DBG_B2		(1U << 2)
-#define	EXIT_QUAL_DBG_B3		(1U << 3)
-#define	EXIT_QUAL_DBG_B_MASK		(0xf)
-#define	EXIT_QUAL_DBG_BD		(1U << 13)
-#define EXIT_QUAL_DBG_BS    (1U << 14)
+#define EXIT_QUAL_DBG_B0 (1U << 0)
+#define EXIT_QUAL_DBG_B1 (1U << 1)
+#define EXIT_QUAL_DBG_B2 (1U << 2)
+#define EXIT_QUAL_DBG_B3 (1U << 3)
+#define EXIT_QUAL_DBG_B_MASK (0xf)
+#define EXIT_QUAL_DBG_BD (1U << 13)
+#define EXIT_QUAL_DBG_BS (1U << 14)
 
 /*
  * Exit qualification for MOV DR
  */
-#define	EXIT_QUAL_MOV_DR_REG(n)		((n) & 0x7)
-#define EXIT_QUAL_MOV_DR_RW(n) (!!((n) & 0x10))
-#define EXIT_QUAL_MOV_DR_GPR(n) (((n) & 0xf00) >> 8)
+#define EXIT_QUAL_MOV_DR_REG(n) ((n)&0x7)
+#define EXIT_QUAL_MOV_DR_RW(n) (!!((n)&0x10))
+#define EXIT_QUAL_MOV_DR_GPR(n) (((n)&0xf00) >> 8)
 
 /*
  * Exit qualification for EXIT_REASON_INVAL_VMCS

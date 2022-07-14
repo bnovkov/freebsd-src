@@ -1372,16 +1372,16 @@ emulate_mov_dr(struct svm_softc *svm_sc, struct vm_exit *vmexit, int vcpu,
     uint64_t code, uint64_t info1)
 {
 	int write, error;
-  int src, dst;
-  int dbreg_num, dbreg;
-  int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
-  uint64_t new_dst_val;
+	int src, dst;
+	int dbreg_num, dbreg;
+	int gpr = mov_dr_gpr_num_to_reg(VMCB_DR_INTCTP_GPR_NUM(info1));
+	uint64_t new_dst_val;
 
-  KASSERT(gpr >= 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
+	KASSERT(gpr >= 0, ("%s: invalid GPR num %d\r\n", __func__, gpr));
 
-  if (code >= 0x20 && code <= 0x27) {
-	  dbreg_num = code - 0x20;
-	  write = 0;
+	if (code >= 0x20 && code <= 0x27) {
+		dbreg_num = code - 0x20;
+		write = 0;
 	} else if (code >= 0x30 && code <= 0x37) {
 		dbreg_num = code - 0x30;
 		write = 1;
@@ -1413,33 +1413,33 @@ emulate_mov_dr(struct svm_softc *svm_sc, struct vm_exit *vmexit, int vcpu,
 	 */
 	if (dbreg_num == 7) {
 		dbreg = VM_REG_GUEST_DR7;
-  } else {
-    dbreg = VM_REG_GUEST_DR0 + dbreg_num;
-  }
+	} else {
+		dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+	}
 
-  if (write) {
-	  src = gpr;
-	  dst = dbreg;
-  } else {
-	  vmexit->u.dbg.gpr = gpr;
+	if (write) {
+		src = gpr;
+		dst = dbreg;
+	} else {
+		vmexit->u.dbg.gpr = gpr;
 
-	  src = dbreg;
-	  dst = gpr;
-  }
+		src = dbreg;
+		dst = gpr;
+	}
 
-  error = svm_getreg(svm_sc, vcpu, src, &new_dst_val);
-  KASSERT(
-          error == 0, ("%s: error %d fetching reg %d\r\n", __func__, error, src));
+	error = svm_getreg(svm_sc, vcpu, src, &new_dst_val);
+	KASSERT(error == 0,
+	    ("%s: error %d fetching reg %d\r\n", __func__, error, src));
 
-  if (write && dbreg_num == 7) {
-	  vmexit->u.dbg.watchpoints = (int)new_dst_val;
-  }
+	if (write && dbreg_num == 7) {
+		vmexit->u.dbg.watchpoints = (int)new_dst_val;
+	}
 
-  error = svm_setreg(svm_sc, vcpu, dst, new_dst_val);
-  KASSERT(
-      error == 0, ("%s: error %d updating reg %d\r\n", __func__, error, dst));
+	error = svm_setreg(svm_sc, vcpu, dst, new_dst_val);
+	KASSERT(error == 0,
+	    ("%s: error %d updating reg %d\r\n", __func__, error, dst));
 
-  return error;
+	return error;
 }
 
 static int
@@ -1511,7 +1511,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		handled = 1;
 		break;
 	case 0x20 ... 0x23: /* DR{0-3,7} read */
-	case 0x27: 
+	case 0x27:
 	case 0x30 ... 0x33: /* DR{0-3,7} write */
 	case 0x37:
 		error = emulate_mov_dr(svm_sc, vmexit, vcpu, code, info1);
@@ -1554,105 +1554,120 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			info1 = 0;
 			break;
 
-    case IDT_DB:{
-	    /*
-	     * Check if we are being stepped (RFLAGS.TF)
-	     * or if a gdb-related watchpoint has been triggered
-	     * and bounce vmexit to userland.
-	     */
+		case IDT_DB: {
+			/*
+			 * Check if we are being stepped (RFLAGS.TF)
+			 * or if a gdb-related watchpoint has been triggered
+			 * and bounce vmexit to userland.
+			 */
 
-	    struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
-	    uint64_t dr6 = 0;
-	    bool stepped = 0;
-	    uint64_t watch_mask = 0;
+			struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
+			uint64_t dr6 = 0;
+			bool stepped = 0;
+			uint64_t watch_mask = 0;
 
-	    errcode_valid = 0;
-	    info1 = 0;
+			errcode_valid = 0;
+			info1 = 0;
 
-	    vmcb_read(svm_sc, vcpu, VM_REG_GUEST_DR6, &dr6);
-	    stepped = !!(dr6 & DBREG_DR6_BS);
-	    watch_mask = (dr6 & DBREG_DR6_BMASK);
+			vmcb_read(svm_sc, vcpu, VM_REG_GUEST_DR6, &dr6);
+			stepped = !!(dr6 & DBREG_DR6_BS);
+			watch_mask = (dr6 & DBREG_DR6_BMASK);
 
-	    printf("%s: IDT_DB vmexit, stepped: %d, watch_mask: 0x%08lx\r\n",
-		__func__, stepped, watch_mask);
+			printf(
+			    "%s: IDT_DB vmexit, stepped: %d, watch_mask: 0x%08lx\r\n",
+			    __func__, stepped, watch_mask);
 
-	    if (stepped && (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
-		    vmexit->exitcode = VM_EXITCODE_DB;
-		    vmexit->u.dbg.trace_trap = 1;
-		    vmexit->u.dbg.pushf_intercept = 0;
-		    vmexit->u.dbg.drx_access = -1;
-		    vmexit->u.dbg.gpr = -1;
-		    vmexit->u.dbg.watchpoints = 0;
+			if (stepped &&
+			    (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
+				vmexit->exitcode = VM_EXITCODE_DB;
+				vmexit->u.dbg.trace_trap = 1;
+				vmexit->u.dbg.pushf_intercept = 0;
+				vmexit->u.dbg.drx_access = -1;
+				vmexit->u.dbg.gpr = -1;
+				vmexit->u.dbg.watchpoints = 0;
 
-		    if (s_vcpu->db_info.popf_next) {
-			    /* DB exit was caused by stepping over popf */
-			    uint64_t rflags;
-			    printf("%s: popf trace trap\r\n", __func__);
+				if (s_vcpu->db_info.popf_next) {
+					/* DB exit was caused by stepping over
+					 * popf */
+					uint64_t rflags;
+					printf("%s: popf trace trap\r\n",
+					    __func__);
 
-			    s_vcpu->db_info.popf_next = 0;
-			    /*
-			     * Update shadowed TF bit so the next setcap(...,
-			     * RFLAGS_SSTEP, 0) restores the correct value
-			     */
-			    vmcb_read(
-				svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
-			    s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
-		    } else if (s_vcpu->db_info.pushf_next) {
-			    /* DB exit was caused by stepping over pushf */
-			    printf("%s: pushf trace trap\r\n", __func__);
+					s_vcpu->db_info.popf_next = 0;
+					/*
+					 * Update shadowed TF bit so the next
+					 * setcap(..., RFLAGS_SSTEP, 0) restores
+					 * the correct value
+					 */
+					vmcb_read(svm_sc, vcpu,
+					    VM_REG_GUEST_RFLAGS, &rflags);
+					s_vcpu->db_info.shadow_rflags_tf =
+					    rflags & PSL_T;
+				} else if (s_vcpu->db_info.pushf_next) {
+					/* DB exit was caused by stepping over
+					 * pushf */
+					printf("%s: pushf trace trap\r\n",
+					    __func__);
 
-			    /*
-			     * Adjusting the pushed rflags after a restarted
-			     * pushf instruction must be handled outside of
-			     * svm.c due
-			     * to the critical_enter() lock being held.
-			     */
-			    vmexit->u.dbg.pushf_intercept = 1;
-			    vmexit->u.dbg.tf_shadow_val =
-				s_vcpu->db_info.shadow_rflags_tf;
-			    svm_paging_info(svm_get_vmcb(svm_sc, vcpu),
-				&vmexit->u.dbg.paging);
+					/*
+					 * Adjusting the pushed rflags after a
+					 * restarted pushf instruction must be
+					 * handled outside of svm.c due to the
+					 * critical_enter() lock being held.
+					 */
+					vmexit->u.dbg.pushf_intercept = 1;
+					vmexit->u.dbg.tf_shadow_val =
+					    s_vcpu->db_info.shadow_rflags_tf;
+					svm_paging_info(
+					    svm_get_vmcb(svm_sc, vcpu),
+					    &vmexit->u.dbg.paging);
 
-			    s_vcpu->db_info.pushf_next = 0;
-		    }
-		    reflect = 0;
-		    handled = 0;
-	    } else if ((watch_mask != 0) &&
-		(s_vcpu->caps & (1 << VM_CAP_DB_EXIT))) {
-		    /* A hw watchpoint was triggered - bounce to userland */
-		    printf("%s: watchpoint vmexit, mask: 0x%08lx\r\n", __func__,
-			watch_mask);
+					s_vcpu->db_info.pushf_next = 0;
+				}
+				reflect = 0;
+				handled = 0;
+			} else if ((watch_mask != 0) &&
+			    (s_vcpu->caps & (1 << VM_CAP_DB_EXIT))) {
+				/* A hw watchpoint was triggered - bounce to
+				 * userland */
+				printf(
+				    "%s: watchpoint vmexit, mask: 0x%08lx\r\n",
+				    __func__, watch_mask);
 
-		    vmexit->exitcode = VM_EXITCODE_DB;
-		    vmexit->u.dbg.trace_trap = 0;
-		    vmexit->u.dbg.pushf_intercept = 0;
-		    vmexit->u.dbg.drx_access = -1;
-		    vmexit->u.dbg.gpr = -1;
-		    vmexit->u.dbg.watchpoints = (int)watch_mask;
+				vmexit->exitcode = VM_EXITCODE_DB;
+				vmexit->u.dbg.trace_trap = 0;
+				vmexit->u.dbg.pushf_intercept = 0;
+				vmexit->u.dbg.drx_access = -1;
+				vmexit->u.dbg.gpr = -1;
+				vmexit->u.dbg.watchpoints = (int)watch_mask;
 
-		    dr6 &= ~DBREG_DR6_BS;
-		    error = vmcb_write(svm_sc, vcpu, VM_REG_GUEST_DR6, dr6);
-		    KASSERT(error == 0,
-			("%s: error %d updating DR6\r\n", __func__, error));
+				dr6 &= ~DBREG_DR6_BS;
+				error = vmcb_write(
+				    svm_sc, vcpu, VM_REG_GUEST_DR6, dr6);
+				KASSERT(error == 0,
+				    ("%s: error %d updating DR6\r\n", __func__,
+					error));
 
-		    reflect = 0;
-		    handled = 0;
-	    }
-	    printf("%s: IDT_DB vmexit: %s reflecting DB exception\r\n",
-		__func__, (reflect ? "" : "not"));
-	    dump_dbregs(svm_sc, vcpu);
-	    break;
-    }
-    case IDT_BP:
-	    if (svm_get_intercept(svm_sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP)) == 1) {
-		    vmexit->exitcode = VM_EXITCODE_BPT;
-                    vmexit->u.bpt.inst_length = vmexit->inst_length;
-                    vmexit->inst_length = 0;
+				reflect = 0;
+				handled = 0;
+			}
+			printf(
+			    "%s: IDT_DB vmexit: %s reflecting DB exception\r\n",
+			    __func__, (reflect ? "" : "not"));
+			dump_dbregs(svm_sc, vcpu);
+			break;
+		}
+		case IDT_BP:
+			if (svm_get_intercept(svm_sc, vcpu, VMCB_EXC_INTCPT,
+				BIT(IDT_BP)) == 1) {
+				vmexit->exitcode = VM_EXITCODE_BPT;
+				vmexit->u.bpt.inst_length = vmexit->inst_length;
+				vmexit->inst_length = 0;
 
-		    reflect = 0;
-		    handled = 0;
-		    break;
-	    }
+				reflect = 0;
+				handled = 0;
+				break;
+			}
 		case IDT_OF:
 		case IDT_BR:
 			/*
@@ -1676,9 +1691,10 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		}
 
 		if (reflect) {
-		KASSERT(vmexit->inst_length == 0, ("invalid inst_length (%d) "
-		    "when reflecting exception %d into guest",
-		    vmexit->inst_length, idtvec));
+			KASSERT(vmexit->inst_length == 0,
+			    ("invalid inst_length (%d) "
+			     "when reflecting exception %d into guest",
+				vmexit->inst_length, idtvec));
 
 			/* Reflect the exception back into the guest */
 			VCPU_CTR2(svm_sc->vm, vcpu, "Reflecting exception "
@@ -1688,7 +1704,7 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			KASSERT(error == 0, ("%s: vm_inject_exception error %d",
 			    __func__, error));
 		}
-    //		handled = 1;
+		//		handled = 1;
 		break;
 	case VMCB_EXIT_MSR:	/* MSR access. */
 		eax = state->rax;
@@ -1771,27 +1787,27 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 	case VMCB_EXIT_MWAIT:
 		vmexit->exitcode = VM_EXITCODE_MWAIT;
 		break;
-	case VMCB_EXIT_PUSHF:{
-    uint64_t rflags;
-    struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
-    svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
-    /* Update shadow TF to guard against unrelated intercepts */
-    s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
+	case VMCB_EXIT_PUSHF: {
+		uint64_t rflags;
+		struct svm_vcpu *s_vcpu = svm_get_vcpu(svm_sc, vcpu);
+		svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+		/* Update shadow TF to guard against unrelated intercepts */
+		s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
 
-    printf("%s: pushf stepped\r\n", __func__);
-    /* Restart this instruction */
-    vmexit->rip -= vmexit->inst_length;
-    /* Disable PUSHF intercepts - avoid a loop*/
+		printf("%s: pushf stepped\r\n", __func__);
+		/* Restart this instruction */
+		vmexit->rip -= vmexit->inst_length;
+		/* Disable PUSHF intercepts - avoid a loop*/
 		svm_set_intercept(
-       svm_sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, 0);
-    /* Trace restarted instruction */
-    vmcb_write(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T));
+		    svm_sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, 0);
+		/* Trace restarted instruction */
+		vmcb_write(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T));
 
-    s_vcpu->db_info.pushf_next = 1;
-    handled = 1;
-    break;
-  }
-	case VMCB_EXIT_POPF:{
+		s_vcpu->db_info.pushf_next = 1;
+		handled = 1;
+		break;
+	}
+	case VMCB_EXIT_POPF: {
 		uint64_t rflags;
 		svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
 
@@ -2605,7 +2621,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		int db_inctpt_val = val;
 		struct svm_vcpu *s_vcpu;
 		printf("%s: RFLAGS_SSTEP %s\r\n", __func__, val ? "ON" : "OFF");
-		if(svm_getreg(sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags)){
+		if (svm_getreg(sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags)) {
 			error = (EINVAL);
 			break;
 		}
@@ -2621,14 +2637,14 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 				(rflags | PSL_T))) {
 				error = (EINVAL);
 				break;
-      }
+			}
 
-      s_vcpu->caps |= (1 << VM_CAP_RFLAGS_SSTEP);
+			s_vcpu->caps |= (1 << VM_CAP_RFLAGS_SSTEP);
 		} else {
 			/*
-       * Restore shadowed RFLAGS.TF only if vCPU was being
+			 * Restore shadowed RFLAGS.TF only if vCPU was being
 			 * stepped
-       */
+			 */
 			if (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
 				rflags |= s_vcpu->db_info.shadow_rflags_tf;
 				s_vcpu->db_info.shadow_rflags_tf = 0;
@@ -2642,22 +2658,25 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 			}
 			/* Dont disable intercept if VM_CAP_DB_EXIT is active */
 			db_inctpt_val = (s_vcpu->caps & (1 << VM_CAP_DB_EXIT));
-	  }
+		}
 
-		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_inctpt_val);
-		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
-		svm_set_intercept(sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_inctpt_val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, val);
 
 		break;
 	}
-	case VM_CAP_DB_EXIT:{
+	case VM_CAP_DB_EXIT: {
 		struct svm_vcpu *s_vcpu = svm_get_vcpu(sc, vcpu);
 		if (val) {
 			/* Require decode assist support for now */
 			if (!decode_assist()) {
 				error = (ENOTSUP);
 				break;
-      }
+			}
 			s_vcpu->caps |= (1 << VM_CAP_DB_EXIT);
 		} else {
 			s_vcpu->caps &= ~(1 << VM_CAP_DB_EXIT);
@@ -2670,39 +2689,39 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 
 		break;
 	}
-  case VM_CAP_DR_MOV_EXIT:{
-	  struct svm_vcpu *s_vcpu = svm_get_vcpu(sc, vcpu);
-    if(val){
-	    s_vcpu->caps |= (1 << VM_CAP_DR_MOV_EXIT);
-    }else{
-	    s_vcpu->caps &= ~(1 << VM_CAP_DR_MOV_EXIT);
-    }
-	  /* Intercept DR0-3,7 writes */
+	case VM_CAP_DR_MOV_EXIT: {
+		struct svm_vcpu *s_vcpu = svm_get_vcpu(sc, vcpu);
+		if (val) {
+			s_vcpu->caps |= (1 << VM_CAP_DR_MOV_EXIT);
+		} else {
+			s_vcpu->caps &= ~(1 << VM_CAP_DR_MOV_EXIT);
+		}
+		/* Intercept DR0-3,7 writes */
 
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(0), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(1), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(2), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(3), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(0), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(1), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(2), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(3), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
 
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(0), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(1), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(2), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(3), val);
-	  svm_set_intercept(
-	      sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(7), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(0), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(1), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(2), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(3), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(7), val);
 
-	  break;
-  }
+		break;
+	}
 	default:
 		error = ENOENT;
 		break;
@@ -2732,8 +2751,8 @@ svm_getcap(void *arg, int vcpu, int type, int *retval)
 		*retval = 1;	/* unrestricted guest is always enabled */
 		break;
 	case VM_CAP_DB_EXIT:
-		*retval = !!(svm_get_vcpu(sc, vcpu)->caps &
-               (1 << VM_CAP_DB_EXIT));
+		*retval = !!(
+		    svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_DB_EXIT));
 		break;
 	case VM_CAP_BPT_EXIT:
 		*retval = svm_get_intercept(

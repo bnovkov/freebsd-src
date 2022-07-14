@@ -162,7 +162,7 @@
  * Helper macros to decode MOV DRx EXITINFO1.
  * Section 15.8.1, MOV CRx/DRx Intercepts.
  */
-#define VMCB_DR_INTCTP_GPR_NUM(x) ((x) & 0xF)
+#define VMCB_DR_INTCTP_GPR_NUM(x) ((x)&0xF)
 
 /*
  * Nested page fault.

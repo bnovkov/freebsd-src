@@ -61,8 +61,8 @@ struct svm_vcpu {
 	uint32_t	dirty;	 /* state cache bits that must be cleared */
 	long		eptgen;	 /* pmap->pm_eptgen when the vcpu last ran */
 	struct asid	asid;
-  int caps; /* optional vm capabilities */
-  struct svm_vcpu_debug_info db_info;
+	int caps; /* optional vm capabilities */
+	struct svm_vcpu_debug_info db_info;
 } __aligned(PAGE_SIZE);
 
 /*

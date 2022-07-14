@@ -2374,65 +2374,66 @@ emulate_mov_dr(struct vmx *vmx, struct vm_exit *vmexit, int vcpu, uint64_t qual)
 	if (cpl != 0) {
 		vm_inject_gp(vmx->vm, vcpu);
 		return 1;
-  }
+	}
 
-  error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_CR4, &regval);
-  KASSERT(error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
+	error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_CR4, &regval);
+	KASSERT(
+	    error == 0, ("%s: error %d fetching GPR %d", __func__, error, gpr));
 
-  if((regval & CR4_DE) && (dbreg_num == 4 || dbreg_num == 5)){
-    vm_inject_ud(vmx->vm, vcpu);
-    return 1;
-  }
+	if ((regval & CR4_DE) && (dbreg_num == 4 || dbreg_num == 5)) {
+		vm_inject_ud(vmx->vm, vcpu);
+		return 1;
+	}
 
-  switch (dbreg_num){
-	  /* TODO: figure out how to handle DR{4,5} */
-  case 0 ... 3:
-    dbreg = VM_REG_GUEST_DR0 + dbreg_num;
-    break;
-  case 6:
-	  dbreg = VM_REG_GUEST_DR6;
-	  break;
-  case 7:
-    dbreg = VM_REG_GUEST_DR7;
-    break;
-  default:
-    return -1;
-    break;
-  }
+	switch (dbreg_num) {
+		/* TODO: figure out how to handle DR{4,5} */
+	case 0 ... 3:
+		dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+		break;
+	case 6:
+		dbreg = VM_REG_GUEST_DR6;
+		break;
+	case 7:
+		dbreg = VM_REG_GUEST_DR7;
+		break;
+	default:
+		return -1;
+		break;
+	}
 
-  /*
-   * Bounce exit to userland - allow the
-   * gdb stub to adjust its watchpoint metadata
-   */
-  vmexit->exitcode = VM_EXITCODE_DB;
-  vmexit->u.dbg.trace_trap = 0;
-  vmexit->u.dbg.pushf_intercept = 0;
-  vmexit->u.dbg.drx_access = dbreg_num;
-  vmexit->u.dbg.gpr = -1;
+	/*
+	 * Bounce exit to userland - allow the
+	 * gdb stub to adjust its watchpoint metadata
+	 */
+	vmexit->exitcode = VM_EXITCODE_DB;
+	vmexit->u.dbg.trace_trap = 0;
+	vmexit->u.dbg.pushf_intercept = 0;
+	vmexit->u.dbg.drx_access = dbreg_num;
+	vmexit->u.dbg.gpr = -1;
 
-  if(write){
-    dst = dbreg;
-    src = gpr;
-  } else {
-    dst = gpr;
-    src = dbreg;
+	if (write) {
+		dst = dbreg;
+		src = gpr;
+	} else {
+		dst = gpr;
+		src = dbreg;
 
-    vmexit->u.dbg.gpr = gpr;
-  }
+		vmexit->u.dbg.gpr = gpr;
+	}
 
-  error = vmx_getreg(vmx, vcpu, src, &regval);
-  KASSERT(
-      error == 0, ("%s: error %d fetching register %d", __func__, error, src));
+	error = vmx_getreg(vmx, vcpu, src, &regval);
+	KASSERT(error == 0,
+	    ("%s: error %d fetching register %d", __func__, error, src));
 
-  if (write && dbreg_num == 7) {
-		  vmexit->u.dbg.watchpoints = (int)(regval);
-  }
+	if (write && dbreg_num == 7) {
+		vmexit->u.dbg.watchpoints = (int)(regval);
+	}
 
-  error = vmx_setreg(vmx, vcpu, dst, regval);
-  KASSERT(error == 0, ("%s: error %d updating register %d", __func__, error, dst));
+	error = vmx_setreg(vmx, vcpu, dst, regval);
+	KASSERT(error == 0,
+	    ("%s: error %d updating register %d", __func__, error, dst));
 
-
-  return error;
+	return error;
 }
 
 static int
@@ -2584,19 +2585,20 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 		}
 		break;
 
-  case EXIT_REASON_DR_ACCESS:
-	  handled = 0;
+	case EXIT_REASON_DR_ACCESS:
+		handled = 0;
 
-	  error = emulate_mov_dr(vmx, vmexit, vcpu, qual);
-	  KASSERT(error >= 0, ("%s: emulate_mov_dr returned -1", __func__));
+		error = emulate_mov_dr(vmx, vmexit, vcpu, qual);
+		KASSERT(
+		    error >= 0, ("%s: emulate_mov_dr returned -1", __func__));
 
-	  if (error == 1) {
-		  /* Fault was injected into guest */
-		  vmexit->exitcode = VM_EXITCODE_BOGUS;
-		  handled = 1;
-    }
-    break;
-  case EXIT_REASON_RDMSR:
+		if (error == 1) {
+			/* Fault was injected into guest */
+			vmexit->exitcode = VM_EXITCODE_BOGUS;
+			handled = 1;
+		}
+		break;
+	case EXIT_REASON_RDMSR:
 		vmm_stat_incr(vmx->vm, vcpu, VMEXIT_RDMSR, 1);
 		retu = false;
 		ecx = vmxctx->guest_rcx;
@@ -2782,75 +2784,84 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 			vmexit->inst_length = 0;
 			break;
 		}
-		if (intr_type == VMCS_INTR_T_HWEXCEPTION && intr_vec == IDT_DB &&
+		if (intr_type == VMCS_INTR_T_HWEXCEPTION &&
+		    intr_vec == IDT_DB &&
 		    (vmx->cap[vcpu].set & (1 << VM_CAP_DB_EXIT))) {
 
-      int reflect = 0;
-      /*
-       * A debug exception VMEXIT does not update the DR{6,7}
-       * registers (SDM Vol. 3C 27-1). It is therefore
-       * necessary to emulate these writes here.
-       *
-       * We reflect everything except watchpoint hits. Since
-       * it is up to the userland to reinject a debug
-       * exception when a guest watchpoint is hit, the
-       * register must be updated here so that the guest may
-       * properly register the watchpoint hit.
-       */
-      int trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
-      int debug_detect = !!(qual & EXIT_QUAL_DBG_BD);
-      int watch_mask = qual & EXIT_QUAL_DBG_B_MASK;
+			int reflect = 0;
+			/*
+			 * A debug exception VMEXIT does not update the DR{6,7}
+			 * registers (SDM Vol. 3C 27-1). It is therefore
+			 * necessary to emulate these writes here.
+			 *
+			 * We reflect everything except watchpoint hits. Since
+			 * it is up to the userland to reinject a debug
+			 * exception when a guest watchpoint is hit, the
+			 * register must be updated here so that the guest may
+			 * properly register the watchpoint hit.
+			 */
+			int trace_trap = !!(qual & EXIT_QUAL_DBG_BS);
+			int debug_detect = !!(qual & EXIT_QUAL_DBG_BD);
+			int watch_mask = qual & EXIT_QUAL_DBG_B_MASK;
 
-      printf("%s: watchpoint vmexit, mask: 0x%04x, trace_trap: %d\r\n",
-             __func__, (int)(qual & EXIT_QUAL_DBG_B_MASK), trace_trap);
+			printf(
+			    "%s: watchpoint vmexit, mask: 0x%04x, trace_trap: %d\r\n",
+			    __func__, (int)(qual & EXIT_QUAL_DBG_B_MASK),
+			    trace_trap);
 
-      uint64_t dr6;
-      error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_DR6, &dr6);
-      KASSERT(error == 0, ("%s: error %d fetching DR6", __func__, error));
+			uint64_t dr6;
+			error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_DR6, &dr6);
+			KASSERT(error == 0,
+			    ("%s: error %d fetching DR6", __func__, error));
 
-      uint64_t regval;
-      error = vmx_getreg(vmx, vcpu, VM_REG_GUEST_RFLAGS, &regval);
-      KASSERT(error == 0, ("%s: error %d fetching DR6", __func__, error));
+			uint64_t regval;
+			error = vmx_getreg(
+			    vmx, vcpu, VM_REG_GUEST_RFLAGS, &regval);
+			KASSERT(error == 0,
+			    ("%s: error %d fetching DR6", __func__, error));
 
+			dr6 &= DBREG_DR6_RESERVED1;
+			dr6 |= (1 << 16);
 
-      dr6 &= DBREG_DR6_RESERVED1;
-      dr6 |= (1 << 16);
+			if (watch_mask) {
+				vmexit->exitcode = VM_EXITCODE_DB;
+				vmexit->u.dbg.pushf_intercept = 0;
+				vmexit->u.dbg.trace_trap = 0;
+				vmexit->u.dbg.drx_access = -1;
+				vmexit->u.dbg.watchpoints = watch_mask;
+				vmexit->u.dbg.drx_access = -1;
+				vmexit->u.dbg.watchpoints = watch_mask;
 
-      if (watch_mask) {
-        vmexit->exitcode = VM_EXITCODE_DB;
-        vmexit->u.dbg.pushf_intercept = 0;
-        vmexit->u.dbg.trace_trap = 0;
-        vmexit->u.dbg.drx_access = -1;
-        vmexit->u.dbg.watchpoints = watch_mask;
-        vmexit->u.dbg.drx_access = -1;
-        vmexit->u.dbg.watchpoints = watch_mask;
+				dr6 |= watch_mask;
+				printf("%s: watchpoint hit, mask: 0x%04x\r\n",
+				    __func__, watch_mask);
+				/* Bounce to userland */
+				reflect = 0;
+			} else {
+				dr6 |= debug_detect ? DBREG_DR6_BD : 0;
+				dr6 |= (trace_trap) ? DBREG_DR6_BS : 0;
+				regval &= ~(PSL_T);
 
-        dr6 |= watch_mask;
-        printf(
-               "%s: watchpoint hit, mask: 0x%04x\r\n", __func__, watch_mask);
-        /* Bounce to userland */
-        reflect = 0;
-      } else {
-	      dr6 |= debug_detect ? DBREG_DR6_BD : 0;
-	      dr6 |= (trace_trap) ? DBREG_DR6_BS : 0;
-	      regval &= ~(PSL_T);
+				/* Reflect back into guest */
+				reflect = 1;
 
-	      /* Reflect back into guest */
-	      reflect = 1;
+				printf(
+				    "%s: reflecting db exception, updated DR6: 0x%08lx\r\n",
+				    __func__, dr6);
+			}
+			error = vmx_setreg(vmx, vcpu, VM_REG_GUEST_DR6, dr6);
+			KASSERT(error == 0,
+			    ("%s: error %d updating DR6", __func__, error));
+			printf("%s: dr6 setreg error: %d\n", __func__, error);
 
-	      printf("%s: reflecting db exception, updated DR6: 0x%08lx\r\n",
-		  __func__, dr6);
-      }
-      error = vmx_setreg(vmx, vcpu, VM_REG_GUEST_DR6, dr6);
-      KASSERT(error == 0, ("%s: error %d updating DR6", __func__, error));
-      printf("%s: dr6 setreg error: %d\n", __func__, error);
+			error = vmx_setreg(
+			    vmx, vcpu, VM_REG_GUEST_RFLAGS, regval);
+			KASSERT(error == 0,
+			    ("%s: error %d fetching DR6", __func__, error));
 
-      error = vmx_setreg(vmx, vcpu, VM_REG_GUEST_RFLAGS, regval);
-      KASSERT(error == 0, ("%s: error %d fetching DR6", __func__, error));
-
-      if(!reflect){
-	      break;
-      }
+			if (!reflect) {
+				break;
+			}
 		}
 
 		if (intr_vec == IDT_PF) {
@@ -3683,7 +3694,7 @@ vmx_getcap(void *arg, int vcpu, int type, int *retval)
 		break;
 	case VM_CAP_BPT_EXIT:
 	case VM_CAP_DB_EXIT:
-  case VM_CAP_DR_MOV_EXIT:
+	case VM_CAP_DR_MOV_EXIT:
 		ret = 0;
 		break;
 	default:
@@ -3790,13 +3801,13 @@ vmx_setcap(void *arg, int vcpu, int type, int val)
 			reg = VMCS_EXCEPTION_BITMAP;
 		}
 		break;
-  case VM_CAP_DR_MOV_EXIT:
+	case VM_CAP_DR_MOV_EXIT:
 		retval = 0;
 
-    pptr = &vmx->cap[vcpu].proc_ctls;
-    baseval = *pptr;
-    flag = PROCBASED_MOV_DR_EXITING;
-    reg = VMCS_PRI_PROC_BASED_CTLS;
+		pptr = &vmx->cap[vcpu].proc_ctls;
+		baseval = *pptr;
+		flag = PROCBASED_MOV_DR_EXITING;
+		reg = VMCS_PRI_PROC_BASED_CTLS;
 		break;
 	default:
 		break;
