@@ -988,9 +988,6 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum)
 	int access, len;
 	struct watchpoint *wp;
 
-	debug("%s: gva: 0x%08lx, type: %d, watchnum: %d\n", __func__, gva, type,
-	    watchnum);
-
 	cpuset_t mask;
 	int vcpu;
 	uint64_t dr7;
@@ -1069,8 +1066,6 @@ clear_watchpoint(int watchnum, int skip_vcpu, bool clear_dbreg)
 	cpuset_t mask;
 	int vcpu;
 	uint64_t dr7;
-
-	debug("%s: watchnum: %d\n", __func__, watchnum);
 
 	mask = vcpus_active;
 	while (!CPU_EMPTY(&mask)) {
@@ -1259,8 +1254,6 @@ handle_drx_read(int vcpu, struct vm_exit *vmexit)
 	pthread_mutex_lock(&gdb_lock);
 	wp = &watch_stats.watchpoints[dbreg_num];
 
-	debug("%s: drx_read %d\n", __func__, dbreg_num);
-
 	if (dbreg_num == 7) {
 		vm_get_register(ctx, vcpu, gpr, &gpr_val);
 
@@ -1268,8 +1261,6 @@ handle_drx_read(int vcpu, struct vm_exit *vmexit)
 			/* Clear newly read dr7 mask for gdbstub watchpoints */
 			if (watch_stats.watchpoints[i].state == WATCH_ACTIVE) {
 				gpr_val &= ~DBREG_DR7_MASK(i);
-				debug("%s: cleared watch %d from gpr\n",
-				    __func__, i);
 			}
 		}
 
@@ -1278,7 +1269,6 @@ handle_drx_read(int vcpu, struct vm_exit *vmexit)
 	/* If the guest attempts to read from a gdbstub-active dbreg, set the
 	 * gpr register to 0 */
 	if (wp->state == WATCH_ACTIVE) {
-		debug("%s: setting gpr %d to 0\n", __func__, vmexit->u.dbg.gpr);
 		vm_set_register(ctx, vcpu, vmexit->u.dbg.gpr, 0);
 	}
 
@@ -1300,12 +1290,9 @@ handle_drx_write(int vcpu, struct vm_exit *vmexit)
 	pthread_mutex_lock(&gdb_lock);
 	wp = &watch_stats.watchpoints[dbreg_num];
 
-	debug("%s: drx_write %d\n", __func__, dbreg_num);
-
 	if (dbreg_num == 7) {
 		/* A new DR7 was loaded, update watchpoint metadata */
 		int dr7 = vmexit->u.dbg.watchpoints;
-		debug("%s:  0x%04x\n", __func__, dr7);
 
 		/* Clear any watchpoints the guest started using */
 		for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {

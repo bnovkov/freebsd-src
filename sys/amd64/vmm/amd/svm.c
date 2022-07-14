@@ -1320,30 +1320,6 @@ nrip_valid(uint64_t exitcode)
 	}
 }
 
-static void
-dump_dbregs(struct svm_softc *svm_sc, int vcpu)
-{
-	uint64_t dr0;
-	uint64_t dr1;
-	uint64_t dr2;
-	uint64_t dr3;
-	uint64_t dr6;
-	uint64_t dr7;
-	uint64_t rf;
-
-	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR0, &dr0);
-	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR1, &dr1);
-	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR2, &dr2);
-	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR3, &dr3);
-	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR6, &dr6);
-	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_DR7, &dr7);
-	svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rf);
-
-	printf(
-	    "%s: dr0: 0x%08lx, dr1: 0x%08lx, dr2: 0x%08lx, dr3: 0x%08lx, dr6: 0x%08lx, dr7: 0x%08lx, rflags: 0x%08lx\r\n",
-	    __func__, dr0, dr1, dr2, dr3, dr6, dr7, rf);
-}
-
 static __inline int
 mov_dr_gpr_num_to_reg(int gpr)
 {
@@ -1399,11 +1375,6 @@ emulate_mov_dr(struct svm_softc *svm_sc, struct vm_exit *vmexit, int vcpu,
 	vmexit->u.dbg.pushf_intercept = 0;
 	vmexit->u.dbg.drx_access = dbreg_num;
 	vmexit->u.dbg.gpr = -1;
-
-	printf(
-	    "%s: DRx %s vmexit, vcpu:%d, code: 0x%04lx, gpr:%d,  dbreg: %d\r\n",
-	    __func__, (write ? "write" : "read"), vcpu, code,
-	    (int)VMCB_DR_INTCTP_GPR_NUM(info1), dbreg_num);
 
 	/*
 	 * Emulate MOV DR.
@@ -1573,10 +1544,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			stepped = !!(dr6 & DBREG_DR6_BS);
 			watch_mask = (dr6 & DBREG_DR6_BMASK);
 
-			printf(
-			    "%s: IDT_DB vmexit, stepped: %d, watch_mask: 0x%08lx\r\n",
-			    __func__, stepped, watch_mask);
-
 			if (stepped &&
 			    (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
 				vmexit->exitcode = VM_EXITCODE_DB;
@@ -1590,8 +1557,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 					/* DB exit was caused by stepping over
 					 * popf */
 					uint64_t rflags;
-					printf("%s: popf trace trap\r\n",
-					    __func__);
 
 					s_vcpu->db_info.popf_next = 0;
 					/*
@@ -1606,8 +1571,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 				} else if (s_vcpu->db_info.pushf_next) {
 					/* DB exit was caused by stepping over
 					 * pushf */
-					printf("%s: pushf trace trap\r\n",
-					    __func__);
 
 					/*
 					 * Adjusting the pushed rflags after a
@@ -1630,9 +1593,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			    (s_vcpu->caps & (1 << VM_CAP_DB_EXIT))) {
 				/* A hw watchpoint was triggered - bounce to
 				 * userland */
-				printf(
-				    "%s: watchpoint vmexit, mask: 0x%08lx\r\n",
-				    __func__, watch_mask);
 
 				vmexit->exitcode = VM_EXITCODE_DB;
 				vmexit->u.dbg.trace_trap = 0;
@@ -1651,10 +1611,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 				reflect = 0;
 				handled = 0;
 			}
-			printf(
-			    "%s: IDT_DB vmexit: %s reflecting DB exception\r\n",
-			    __func__, (reflect ? "" : "not"));
-			dump_dbregs(svm_sc, vcpu);
 			break;
 		}
 		case IDT_BP:
@@ -1794,7 +1750,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		/* Update shadow TF to guard against unrelated intercepts */
 		s_vcpu->db_info.shadow_rflags_tf = rflags & PSL_T;
 
-		printf("%s: pushf stepped\r\n", __func__);
 		/* Restart this instruction */
 		vmexit->rip -= vmexit->inst_length;
 		/* Disable PUSHF intercepts - avoid a loop*/
@@ -1811,7 +1766,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 		uint64_t rflags;
 		svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
 
-		printf("%s: popf stepped\r\n", __func__);
 		/* Restart this instruction */
 		vmexit->rip -= vmexit->inst_length;
 		/* Disable POPF intercepts - avoid a loop*/
@@ -2614,13 +2568,11 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		break;
 	case VM_CAP_BPT_EXIT:
 		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP), val);
-		printf("%s: BPT_EXIT %s\r\n", __func__, val ? "ON" : "OFF");
 		break;
 	case VM_CAP_RFLAGS_SSTEP: {
 		uint64_t rflags;
 		int db_inctpt_val = val;
 		struct svm_vcpu *s_vcpu;
-		printf("%s: RFLAGS_SSTEP %s\r\n", __func__, val ? "ON" : "OFF");
 		if (svm_getreg(sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags)) {
 			error = (EINVAL);
 			break;
