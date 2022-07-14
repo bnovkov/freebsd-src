@@ -2662,7 +2662,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 			val = (s_vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP));
 		}
 
-		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), db_intcpt);
+		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
 
 		break;
 	}
