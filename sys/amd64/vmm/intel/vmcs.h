@@ -433,7 +433,7 @@ vmcs_write(uint32_t encoding, uint64_t val)
 /*
  * Exit qualification for APIC-access VM exit
  */
-#define APIC_ACCESS_OFFSET(qual) ((qual) & 0xFFF)
+#define	APIC_ACCESS_OFFSET(qual)	((qual) & 0xFFF)
 #define	APIC_ACCESS_TYPE(qual)		(((qual) >> 12) & 0xF)
 
 /*
