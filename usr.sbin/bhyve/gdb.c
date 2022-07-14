@@ -889,7 +889,7 @@ _gdb_cpu_step(int vcpu)
 {
 	struct vcpu_state *vs;
 
-	debug("$vCPU %d MTRAP\n", vcpu);
+	debug("$vCPU %d stepped\n", vcpu);
 	pthread_mutex_lock(&gdb_lock);
 	vs = &vcpu_state[vcpu];
 	if (vs->stepping) {
