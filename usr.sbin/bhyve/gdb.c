@@ -982,6 +982,12 @@ set_dbreg_exit_caps(bool enable)
 	return (true);
 }
 
+/*
+ * A helper routine for setting watchpoints.
+ * Each watchpoint is "global" and is placed into the corresponding DR*
+ * registers on all vCPUs.
+ */
+
 static int
 set_watchpoint(uint64_t gva, int type, int bytes, int watchnum)
 {
@@ -1039,8 +1045,10 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum)
 	}
 
 	wp = &watch_stats.watchpoints[watchnum];
-	/* An already active watchpoint can be passed; dont increment overall
-	 * active*/
+	/*
+	 * An already active watchpoint can be passed - don't
+	 * increment overall active watchpoints.
+	 */
 	if (wp->state != WATCH_ACTIVE) {
 		watch_stats.no_active++;
 	}
@@ -1056,9 +1064,13 @@ set_watchpoint(uint64_t gva, int type, int bytes, int watchnum)
 
 /*
  * Clears watchpoint metadata and disables it on all guest vCPUs.
+ *
  * The 'skip_vcpu' arg may be passed to prevent this routine from modifying the
  * DR7 register on a specific vCPU (used when handling VMEXITS caused by DR7
  * write to avoid thrashing the new value).
+ *
+ * The 'clear_dbreg' arg controls whether the underlying debug register is
+ * zeroed.
  */
 static int
 clear_watchpoint(int watchnum, int skip_vcpu, bool clear_dbreg)
@@ -1143,7 +1155,7 @@ migrate_watchpoint(struct watchpoint *wp)
 }
 
 static void
-rebuild_avail_watchpoints(void)
+init_watchpoint_metadata(void)
 {
 	cpuset_t mask;
 	int vcpu;
@@ -1169,6 +1181,12 @@ rebuild_avail_watchpoints(void)
 		 * unavailable */
 		watch_stats.avail_dbregs &= ~vcpu_used_dbreg_mask;
 	}
+}
+
+static void
+rebuild_avail_watchpoints(void)
+{
+	init_watchpoint_metadata();
 
 	for (int i = 0; i < GDB_WATCHPOINT_MAX; i++) {
 		if (watch_stats.watchpoints[i].state == WATCH_ACTIVE) {
@@ -1355,7 +1373,6 @@ handle_drx_write(int vcpu, struct vm_exit *vmexit)
 			debug("%s: %s migrating watchpoint %d\n", __func__,
 			    (error != -1 ? "succeeded" : "failed"), i);
 			if (error) {
-
 				break;
 			}
 		}
@@ -1377,10 +1394,12 @@ gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
 	/* RFLAGS.TF exit? */
 	if (vmexit->u.dbg.trace_trap) {
 		_gdb_cpu_step(vcpu);
-	} else if (vmexit->u.dbg.drx_access != -1 && vmexit->u.dbg.gpr != -1) {
-		handle_drx_read(vcpu, vmexit);
 	} else if (vmexit->u.dbg.drx_access != -1) {
-		handle_drx_write(vcpu, vmexit);
+		if (vmexit->u.dbg.gpr != -1) {
+			handle_drx_read(vcpu, vmexit);
+		} else {
+			handle_drx_write(vcpu, vmexit);
+		}
 	} else if (vmexit->u.dbg.watchpoints) {
 		/* A watchpoint was triggered */
 		handle_watchpoint_hit(vcpu, vmexit->u.dbg.watchpoints);
@@ -1829,33 +1848,7 @@ update_watchpoint(uint64_t gva, int type, int bytes, int insert)
 				return;
 			}
 
-			cpuset_t mask;
-			int vcpu;
-			uint64_t dr7;
-
-			GDB_WATCHPOINT_INIT();
-
-			mask = vcpus_active;
-			while (!CPU_EMPTY(&mask)) {
-				int vcpu_used_dbreg_mask = 0;
-
-				vcpu = CPU_FFS(&mask) - 1;
-				CPU_CLR(vcpu, &mask);
-
-				/* Construct bitmask of active dbregs */
-				vm_get_register(
-				    ctx, vcpu, VM_REG_GUEST_DR7, &dr7);
-				vcpu_used_dbreg_mask = (DBREG_DR7_ENABLED(
-							    dr7, 0) |
-				    (DBREG_DR7_ENABLED(dr7, 1) << 1) |
-				    (DBREG_DR7_ENABLED(dr7, 2) << 2) |
-				    (DBREG_DR7_ENABLED(dr7, 3) << 3));
-
-				/* Mark any currently enabled dbreg as
-				 * unavailable */
-				watch_stats.avail_dbregs &=
-				    ~vcpu_used_dbreg_mask;
-			}
+			init_watchpoint_metadata();
 		}
 
 		if (watch_stats.no_active == GDB_WATCHPOINT_MAX ||

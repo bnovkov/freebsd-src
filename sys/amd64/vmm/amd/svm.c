@@ -2649,7 +2649,6 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 			s_vcpu->caps &= ~(1 << VM_CAP_DR_MOV_EXIT);
 		}
 		/* Intercept DR0-3,7 writes */
-
 		svm_set_intercept(
 		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(0), val);
 		svm_set_intercept(
@@ -2661,6 +2660,7 @@ svm_setcap(void *arg, int vcpu, int type, int val)
 		svm_set_intercept(
 		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_WRITE(7), val);
 
+		/* Intercept DR0-3,7 reads */
 		svm_set_intercept(
 		    sc, vcpu, VMCB_DR_INTCPT, VMCB_INTCPT_DR_READ(0), val);
 		svm_set_intercept(
@@ -2714,7 +2714,10 @@ svm_getcap(void *arg, int vcpu, int type, int *retval)
 		*retval = !!(
 		    svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_SSTEP));
 		break;
-
+	case VM_CAP_DR_MOV_EXIT:
+		*retval = !!(
+		    svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_DR_MOV_EXIT));
+		break;
 	default:
 		error = ENOENT;
 		break;

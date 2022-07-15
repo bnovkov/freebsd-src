@@ -2816,6 +2816,10 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 			    ("%s: error %d fetching DR6", __func__, error));
 
 			dr6 &= DBREG_DR6_RESERVED1;
+			/*
+			 * Clear the RTM flag (0 indicates a hit,
+			 * Intel SDM Vol. 3B 17-3 ).
+			 */
 			dr6 |= (1 << 16);
 
 			if (watch_mask) {
