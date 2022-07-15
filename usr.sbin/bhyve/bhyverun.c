@@ -950,15 +950,15 @@ vmexit_breakpoint(struct vmctx *ctx, struct vm_exit *vmexit, int *pvcpu)
 }
 
 static vmexit_handler_t handler[VM_EXITCODE_MAX] = {
-	[VM_EXITCODE_INOUT] = vmexit_inout,
-	[VM_EXITCODE_INOUT_STR] = vmexit_inout,
-	[VM_EXITCODE_VMX] = vmexit_vmx,
-	[VM_EXITCODE_SVM] = vmexit_svm,
-	[VM_EXITCODE_BOGUS] = vmexit_bogus,
+	[VM_EXITCODE_INOUT]  = vmexit_inout,
+	[VM_EXITCODE_INOUT_STR]  = vmexit_inout,
+	[VM_EXITCODE_VMX]    = vmexit_vmx,
+	[VM_EXITCODE_SVM]    = vmexit_svm,
+	[VM_EXITCODE_BOGUS]  = vmexit_bogus,
 	[VM_EXITCODE_REQIDLE] = vmexit_reqidle,
-	[VM_EXITCODE_RDMSR] = vmexit_rdmsr,
-	[VM_EXITCODE_WRMSR] = vmexit_wrmsr,
-	[VM_EXITCODE_MTRAP] = vmexit_mtrap,
+	[VM_EXITCODE_RDMSR]  = vmexit_rdmsr,
+	[VM_EXITCODE_WRMSR]  = vmexit_wrmsr,
+	[VM_EXITCODE_MTRAP]  = vmexit_mtrap,
 	[VM_EXITCODE_INST_EMUL] = vmexit_inst_emul,
 	[VM_EXITCODE_SPINUP_AP] = vmexit_spinup_ap,
 	[VM_EXITCODE_SUSPENDED] = vmexit_suspend,

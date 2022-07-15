@@ -57,11 +57,11 @@ struct svm_vcpu {
 	struct svm_regctx swctx; /* software saved vcpu context */
 	uint64_t	vmcb_pa; /* VMCB physical address */
 	uint64_t	nextrip; /* next instruction to be executed by guest */
-	int lastcpu;		 /* host cpu that the vcpu last ran on */
+	int		lastcpu; /* host cpu that the vcpu last ran on */
 	uint32_t	dirty;	 /* state cache bits that must be cleared */
 	long		eptgen;	 /* pmap->pm_eptgen when the vcpu last ran */
 	struct asid	asid;
-	int caps; /* optional vm capabilities */
+	int		caps;	 /* optional vm capabilities */
 	struct svm_vcpu_debug_info db_info;
 } __aligned(PAGE_SIZE);
 

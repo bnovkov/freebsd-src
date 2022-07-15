@@ -1660,7 +1660,6 @@ svm_vmexit(struct svm_softc *svm_sc, int vcpu, struct vm_exit *vmexit)
 			KASSERT(error == 0, ("%s: vm_inject_exception error %d",
 			    __func__, error));
 		}
-		//		handled = 1;
 		break;
 	case VMCB_EXIT_MSR:	/* MSR access. */
 		eax = state->rax;
