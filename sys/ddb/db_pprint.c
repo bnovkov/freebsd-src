@@ -36,6 +36,7 @@
 #include <sys/malloc.h>
 
 #include <ddb/ddb.h>
+#include <ddb/db_access.h>
 #include <ddb/db_lex.h>
 
 #define OBJTOFF_INVALID 0xffffffff
@@ -43,127 +44,146 @@
 static linker_ctf_t kernel_ctf;
 static bool ctf_loaded = false;
 
-static int init_typeoff(linker_ctf_t *lc, const ctf_header_t *hp){
-  uint32_t *typoff;
-  uint32_t typeoff = hp->cth_typeoff;
-  uint32_t stroff = hp->cth_stroff;
+static int
+init_typeoff(linker_ctf_t *lc, const ctf_header_t *hp)
+{
+	uint32_t *typoff;
+	uint32_t typeoff = hp->cth_typeoff;
+	uint32_t stroff = hp->cth_stroff;
 
-  const uint8_t *ctfstart = lc->ctftab + sizeof(ctf_header_t);
-  size_t typecnt = 0;
+	const uint8_t *ctfstart = lc->ctftab + sizeof(ctf_header_t);
+	size_t typecnt = 0;
 
-  /* Initialize type offsets */
-  while (typeoff < stroff){
-    u_int vlen, kind, size;
-    size_t skiplen, type_struct_size;
-    struct ctf_type_v3 *t = (struct ctf_type_v3 *)(__DECONST(uint8_t*, ctfstart) + typeoff);
+	/* Initialize type offsets */
+	while (typeoff < stroff) {
+		u_int vlen, kind, size;
+		size_t skiplen, type_struct_size;
+		struct ctf_type_v3 *t =
+		    (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
+			typeoff);
 
-    vlen = CTF_V3_INFO_VLEN(t->ctt_info);
-    kind = CTF_V3_INFO_KIND(t->ctt_info);
-    size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? CTF_TYPE_LSIZE(t) : t->ctt_size);
-    type_struct_size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? sizeof(struct ctf_type_v3) : sizeof(struct ctf_stype_v3));
+		vlen = CTF_V3_INFO_VLEN(t->ctt_info);
+		kind = CTF_V3_INFO_KIND(t->ctt_info);
+		size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? CTF_TYPE_LSIZE(t) :
+							     t->ctt_size);
+		type_struct_size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ?
+			sizeof(struct ctf_type_v3) :
+			sizeof(struct ctf_stype_v3));
 
-    skiplen = 0;
+		skiplen = 0;
 
-    switch(kind){
-    case CTF_K_INTEGER:
-    case CTF_K_FLOAT:
-      skiplen = sizeof(uint32_t);
-      break;
-    case CTF_K_ARRAY:
-      skiplen = sizeof(struct ctf_array_v3);
-      break;
-    case CTF_K_UNION:
-    case CTF_K_STRUCT:
-      skiplen = vlen * ((size < CTF_V3_LSTRUCT_THRESH) ? sizeof(struct ctf_member_v3) : sizeof(struct ctf_lmember_v3));
-      break;
-    case CTF_K_ENUM:
-      skiplen = vlen * sizeof(struct ctf_enum);
-      break;
-    case CTF_K_FUNCTION:
-      skiplen = vlen * sizeof(uint32_t);
-      break;
-    case CTF_K_UNKNOWN:
-    case CTF_K_FORWARD:
-    case CTF_K_POINTER:
-    case CTF_K_TYPEDEF:
-    case CTF_K_VOLATILE:
-    case CTF_K_CONST:
-    case CTF_K_RESTRICT:
-      break;
-    default:
-      return (EINVAL);
-    }
+		switch (kind) {
+		case CTF_K_INTEGER:
+		case CTF_K_FLOAT:
+			skiplen = sizeof(uint32_t);
+			break;
+		case CTF_K_ARRAY:
+			skiplen = sizeof(struct ctf_array_v3);
+			break;
+		case CTF_K_UNION:
+		case CTF_K_STRUCT:
+			skiplen = vlen *
+			    ((size < CTF_V3_LSTRUCT_THRESH) ?
+				    sizeof(struct ctf_member_v3) :
+				    sizeof(struct ctf_lmember_v3));
+			break;
+		case CTF_K_ENUM:
+			skiplen = vlen * sizeof(struct ctf_enum);
+			break;
+		case CTF_K_FUNCTION:
+			skiplen = vlen * sizeof(uint32_t);
+			break;
+		case CTF_K_UNKNOWN:
+		case CTF_K_FORWARD:
+		case CTF_K_POINTER:
+		case CTF_K_TYPEDEF:
+		case CTF_K_VOLATILE:
+		case CTF_K_CONST:
+		case CTF_K_RESTRICT:
+			break;
+		default:
+			return (EINVAL);
+		}
 
-    typecnt++;
-    typeoff += type_struct_size + skiplen;
-  }
+		typecnt++;
+		typeoff += type_struct_size + skiplen;
+	}
 
-  typoff = malloc(sizeof(uint32_t) * (typecnt + 1), M_TEMP, M_WAITOK);
+	typoff = malloc(sizeof(uint32_t) * (typecnt + 1), M_TEMP, M_WAITOK);
 	*lc->typoffp = typoff;
 
-  typeoff = hp->cth_typeoff;
-  size_t cur_typeid = 0;
+	typeoff = hp->cth_typeoff;
+	size_t cur_typeid = 0;
 
-  /* Populate type offsets array */
-  while (typeoff < stroff){
-    u_int vlen, kind, size;
-    size_t skiplen, type_struct_size;
-    struct ctf_type_v3 *t = (struct ctf_type_v3 *)(__DECONST(uint8_t*, ctfstart) + typeoff);
+	/* Populate type offsets array */
+	while (typeoff < stroff) {
+		u_int vlen, kind, size;
+		size_t skiplen, type_struct_size;
+		struct ctf_type_v3 *t =
+		    (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
+			typeoff);
 
-    vlen = CTF_V3_INFO_VLEN(t->ctt_info);
-    kind = CTF_V3_INFO_KIND(t->ctt_info);
-    size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? CTF_TYPE_LSIZE(t) : t->ctt_size);
-    type_struct_size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? sizeof(struct ctf_type_v3) : sizeof(struct ctf_stype_v3));
+		vlen = CTF_V3_INFO_VLEN(t->ctt_info);
+		kind = CTF_V3_INFO_KIND(t->ctt_info);
+		size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? CTF_TYPE_LSIZE(t) :
+							     t->ctt_size);
+		type_struct_size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ?
+			sizeof(struct ctf_type_v3) :
+			sizeof(struct ctf_stype_v3));
 
-    switch(kind){
-    case CTF_K_INTEGER:
-    case CTF_K_FLOAT:
-      skiplen = sizeof(uint32_t);
-      break;
-    case CTF_K_ARRAY:
-      skiplen = sizeof(struct ctf_array_v3);
-      break;
-    case CTF_K_UNION:
-    case CTF_K_STRUCT:
-      skiplen = vlen * ((size < CTF_V3_LSTRUCT_THRESH) ? sizeof(struct ctf_member_v3) : sizeof(struct ctf_lmember_v3));
-      break;
-    case CTF_K_ENUM:
-      skiplen = vlen * sizeof(struct ctf_enum);
-      break;
-    case CTF_K_FUNCTION:
-      skiplen = vlen * sizeof(uint32_t);
-      break;
-    case CTF_K_UNKNOWN:
-    case CTF_K_FORWARD:
-    case CTF_K_POINTER:
-    case CTF_K_TYPEDEF:
-    case CTF_K_VOLATILE:
-    case CTF_K_CONST:
-    case CTF_K_RESTRICT:
-      skiplen = 0;
-      break;
-    default:
-      return (EINVAL);
-    }
+		switch (kind) {
+		case CTF_K_INTEGER:
+		case CTF_K_FLOAT:
+			skiplen = sizeof(uint32_t);
+			break;
+		case CTF_K_ARRAY:
+			skiplen = sizeof(struct ctf_array_v3);
+			break;
+		case CTF_K_UNION:
+		case CTF_K_STRUCT:
+			skiplen = vlen *
+			    ((size < CTF_V3_LSTRUCT_THRESH) ?
+				    sizeof(struct ctf_member_v3) :
+				    sizeof(struct ctf_lmember_v3));
+			break;
+		case CTF_K_ENUM:
+			skiplen = vlen * sizeof(struct ctf_enum);
+			break;
+		case CTF_K_FUNCTION:
+			skiplen = vlen * sizeof(uint32_t);
+			break;
+		case CTF_K_UNKNOWN:
+		case CTF_K_FORWARD:
+		case CTF_K_POINTER:
+		case CTF_K_TYPEDEF:
+		case CTF_K_VOLATILE:
+		case CTF_K_CONST:
+		case CTF_K_RESTRICT:
+			skiplen = 0;
+			break;
+		default:
+			return (EINVAL);
+		}
 
-    typoff[cur_typeid + 1] = typeoff;
-    cur_typeid++;
-    typeoff += type_struct_size + skiplen;
-  }
+		typoff[cur_typeid + 1] = typeoff;
+		cur_typeid++;
+		typeoff += type_struct_size + skiplen;
+	}
 
-  printf("%s: total typeoff: %x, header stroff: %x, ntypes: %zu\n", __func__, typeoff, stroff, typecnt);
+	printf("%s: total typeoff: %x, header stroff: %x, ntypes: %zu\n",
+	    __func__, typeoff, stroff, typecnt);
 
-  return (0);
+	return (0);
 }
 
 /* Initialize object offsets*/
 static int
-init_objtoff(linker_ctf_t *lc, const ctf_header_t *hp){
-  uint32_t *ctfoff;
-  uint32_t objtoff = hp->cth_objtoff;
-  const Elf_Sym *symp = lc->symtab;
+init_objtoff(linker_ctf_t *lc, const ctf_header_t *hp)
+{
+	uint32_t *ctfoff;
+	uint32_t objtoff = hp->cth_objtoff;
+	const Elf_Sym *symp = lc->symtab;
 	const size_t idwidth = 4;
-
 
 	ctfoff = malloc(sizeof(uint32_t) * lc->nsym, M_TEMP, M_WAITOK);
 	*lc->ctfoffp = ctfoff;
@@ -178,7 +198,7 @@ init_objtoff(linker_ctf_t *lc, const ctf_header_t *hp){
 		case STT_OBJECT:
 			if (objtoff >= hp->cth_funcoff ||
 			    (symp->st_shndx == SHN_ABS &&
-           symp->st_value == 0)) {
+				symp->st_value == 0)) {
 				*ctfoff = OBJTOFF_INVALID;
 				break;
 			}
@@ -193,7 +213,7 @@ init_objtoff(linker_ctf_t *lc, const ctf_header_t *hp){
 		}
 	}
 
-  return (0);
+	return (0);
 }
 
 static int
@@ -218,14 +238,13 @@ db_offsets_init(linker_ctf_t *lc)
 		return (EINVAL);
 	}
 
-  if(init_objtoff(lc, hp)){
-    return (EINVAL);
-  }
+	if (init_objtoff(lc, hp)) {
+		return (EINVAL);
+	}
 
-  if(init_typeoff(lc, hp)){
-    return (EINVAL);
-  }
-
+	if (init_typeoff(lc, hp)) {
+		return (EINVAL);
+	}
 
 	return (0);
 }
@@ -271,54 +290,121 @@ db_freectf(void *dummy __unused)
 SYSINIT(ddb_initctf, SI_SUB_TUNABLES, SI_ORDER_ANY, db_initctf, NULL);
 SYSUNINIT(ddb_freectf, SI_SUB_TUNABLES, SI_ORDER_ANY, db_freectf, NULL);
 
+static uint32_t
+sym_to_objtoff(const Elf_Sym *sym)
+{
+	size_t sym_idx = sym - kernel_ctf.symtab;
+	return (*kernel_ctf.ctfoffp)[sym_idx];
+}
+
+static uint32_t
+typeid_to_typeoff(uint32_t typeid)
+{
+	return (*kernel_ctf.typoffp)[typeid];
+}
+
 static struct ctf_type_v3 *
-sym_to_type(const Elf_Sym *sym){
-  size_t sym_idx;
-  uint32_t objtoff, typeid, typeoff;
-  struct ctf_type_v3 *symtype = NULL;
+sym_to_type(const Elf_Sym *sym)
+{
+	uint32_t objtoff, typeid, typeoff;
+	struct ctf_type_v3 *symtype = NULL;
 	const ctf_header_t *hp = (const ctf_header_t *)kernel_ctf.ctftab;
 
-  if(sym == NULL){
-    return (NULL);
+	if (sym == NULL) {
+		return (NULL);
+	}
+
+	objtoff = sym_to_objtoff(sym);
+	/* Sanity check - should not happen */
+	if (objtoff == OBJTOFF_INVALID) {
+		// 	db_printf("Error");
+		return (NULL);
+	}
+	typeid = *(const uint32_t *)(kernel_ctf.ctftab + sizeof(ctf_header_t) +
+	    objtoff);
+	typeoff = typeid_to_typeoff(typeid);
+	symtype = (struct ctf_type_v3 *)(__DECONST(uint8_t *,
+					     kernel_ctf.ctftab) +
+	    sizeof(ctf_header_t) + typeoff);
+	const char *name = __DECONST(uint8_t *, kernel_ctf.ctftab) +
+	    sizeof(ctf_header_t) + hp->cth_stroff + symtype->ctt_name;
+
+	db_printf("Obj offset: %x\n", objtoff);
+	db_printf("Type ID: %d\n", typeid);
+	db_printf("Type offset: %x\n", typeoff);
+	db_printf("Type kind: %d\n", CTF_V3_INFO_KIND(symtype->ctt_info));
+	db_printf("Type name: %s\n", name);
+
+	return symtype;
+}
+
+#define INT_MODIFIER(ishex, size_modifier, issigned)                 \
+	((ishex) ? "0x%" size_modifier "x" : ((issigned) ? "%ld" : "%lu"));
+
+static inline void db_pprint_int(db_expr_t addr, struct ctf_type_v3 * type, boolean_t ishex){
+  char *modifier;
+  size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
+                             sizeof(struct ctf_type_v3) :
+                             sizeof(struct ctf_stype_v3));
+  uint32_t data = db_get_value((db_expr_t)type + type_struct_size,
+                               sizeof(uint32_t), 0);
+
+  u_int bits = CTF_INT_BITS(data);
+  boolean_t sign = !!(CTF_INT_ENCODING(data) & CTF_INT_SIGNED);
+  boolean_t ischar = !!(CTF_INT_ENCODING(data) & CTF_INT_CHAR);
+
+
+
+  switch (bits) {
+  case 64:
+    modifier = INT_MODIFIER(ishex, "l", sign);
+    break;
+  case 32:
+    modifier = INT_MODIFIER(ishex, "", sign);
+    break;
+  case 16:
+    modifier = INT_MODIFIER(ishex, "h", sign);
+    break;
+  case 8:
+    modifier = ischar ? "%c" :
+      INT_MODIFIER(ishex, "hh", sign);
+    break;
+  default:
+    db_printf("Invalid size found for integer type\n");
+    break;
   }
 
-  sym_idx = sym - kernel_ctf.symtab;
-  objtoff = (*kernel_ctf.ctfoffp)[sym_idx];
-  /* Sanity check - should not happen */
-  if(objtoff == OBJTOFF_INVALID){
-    // 	db_printf("Error");
-    return (NULL);
-  }
-  typeid = *(const uint32_t *)(kernel_ctf.ctftab + sizeof(ctf_header_t) + objtoff);
-  typeoff = (*kernel_ctf.typoffp)[typeid];
-  symtype = (struct ctf_type_v3*)(__DECONST(uint8_t*, kernel_ctf.ctftab) + sizeof(ctf_header_t) + typeoff);
-  const char *name = __DECONST(uint8_t*, kernel_ctf.ctftab) + sizeof(ctf_header_t) + hp->cth_stroff +  symtype->ctt_name;
+  db_printf(modifier, db_get_value(addr, bits / 8, sign));
 
-  db_printf("Obj offset: %x\n", objtoff);
-  db_printf("Type ID: %d\n", typeid);
-  db_printf("Type offset: %x\n", typeoff);
-  db_printf("Type kind: %d\n", CTF_V3_INFO_KIND(symtype->ctt_info));
-  db_printf("Type name: %s\n", name);
-
-  return symtype;
 }
 
 static int
-db_pprint_symbol(const Elf_Sym *sym)
+db_pprint_symbol(const Elf_Sym *sym, boolean_t hex)
 {
-  struct ctf_type_v3 *type;
+	struct ctf_type_v3 *type;
+	u_int kind;
+	db_expr_t addr = sym->st_value;
 
-  type = sym_to_type(sym);
-  if(!type){
-    db_printf("Cant find CTF type info\n");
-    return -1;
-  }
+	type = sym_to_type(sym);
+	if (!type) {
+		db_printf("Cant find CTF type info\n");
+		return -1;
+	}
 
+	kind = CTF_V3_INFO_KIND(type->ctt_info);
 
+	switch (kind) {
+	case CTF_K_INTEGER:
+    db_pprint_int(addr, type, hex);
+		break;
 
+	case CTF_K_FLOAT:
+		break;
+	default:
+		break;
+	}
 	return 0;
 }
-
 static Elf_Sym *
 lookup_symbol(const char *name)
 {
@@ -335,16 +421,39 @@ lookup_symbol(const char *name)
 	return (NULL);
 }
 
+/*
+ * Pretty print a symbol.
+ * Syntax: pprint [/dx] name
+ */
 DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
 {
 	int t; //, err;
 	Elf_Sym *sym;
+	boolean_t hex = false;
 
 	if (!ctf_loaded) {
 		db_error("Kernel CTF data not present\n");
 	}
 
+	/* Parse print modifiers */
 	t = db_read_token();
+	if (t == tSLASH) {
+		t = db_read_token();
+		if (t != tIDENT) {
+			db_error("Invalid modifier\n");
+		}
+
+		if (!strcmp(db_tok_string, "x")) {
+			hex = true;
+		} else if (!strcmp(db_tok_string, "d")) {
+			hex = false;
+		} else {
+			db_error("Invalid modifier\n");
+		}
+		/* Fetch next token */
+		t = db_read_token();
+	}
+
 	if (t != tIDENT) {
 		db_error("Invalid argument");
 	}
@@ -356,10 +465,10 @@ DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
 		db_error("Symbol not found\n");
 	}
 
-  if(ELF_ST_TYPE(sym->st_info) != STT_OBJECT){
-    db_error("Symbol is not a variable\n");
-  }
+	if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT) {
+		db_error("Symbol is not a variable\n");
+	}
 
 	db_printf("Addr: %p\n", (void *)sym->st_value);
-  db_pprint_symbol(sym);
+	db_pprint_symbol(sym, hex);
 }
