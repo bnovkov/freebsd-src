@@ -41,8 +41,16 @@
 
 #define OBJTOFF_INVALID 0xffffffff
 
+static void db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type,
+    bool follow);
+
 static linker_ctf_t kernel_ctf;
 static bool ctf_loaded = false;
+
+/*
+ * Command arguments.
+ */
+static bool ishex = false;
 
 static int
 init_typeoff(linker_ctf_t *lc, const ctf_header_t *hp)
@@ -297,18 +305,35 @@ sym_to_objtoff(const Elf_Sym *sym)
 	return (*kernel_ctf.ctfoffp)[sym_idx];
 }
 
-static uint32_t
-typeid_to_typeoff(uint32_t typeid)
+static struct ctf_type_v3 *
+typeid_to_type(uint32_t typeid)
 {
-	return (*kernel_ctf.typoffp)[typeid];
+	uint32_t typeoff = (*kernel_ctf.typoffp)[typeid];
+
+	return (struct ctf_type_v3 *)(__DECONST(uint8_t *, kernel_ctf.ctftab) +
+	    sizeof(ctf_header_t) + typeoff);
 }
+
+static const char *
+stroff_to_str(uint32_t off)
+{
+	const ctf_header_t *hp = (const ctf_header_t *)kernel_ctf.ctftab;
+	uint32_t stroff = hp->cth_stroff + off;
+
+	if (stroff >= (hp->cth_stroff + hp->cth_strlen)) {
+		return "invalid";
+	}
+
+	return (const char *)kernel_ctf.ctftab + sizeof(ctf_header_t) + stroff;
+}
+
+#define type_to_name(ctf_type) stroff_to_str((ctf_type)->ctt_name)
 
 static struct ctf_type_v3 *
 sym_to_type(const Elf_Sym *sym)
 {
-	uint32_t objtoff, typeid, typeoff;
+	uint32_t objtoff, typeid;
 	struct ctf_type_v3 *symtype = NULL;
-	const ctf_header_t *hp = (const ctf_header_t *)kernel_ctf.ctftab;
 
 	if (sym == NULL) {
 		return (NULL);
@@ -322,68 +347,197 @@ sym_to_type(const Elf_Sym *sym)
 	}
 	typeid = *(const uint32_t *)(kernel_ctf.ctftab + sizeof(ctf_header_t) +
 	    objtoff);
-	typeoff = typeid_to_typeoff(typeid);
-	symtype = (struct ctf_type_v3 *)(__DECONST(uint8_t *,
-					     kernel_ctf.ctftab) +
-	    sizeof(ctf_header_t) + typeoff);
-	const char *name = __DECONST(uint8_t *, kernel_ctf.ctftab) +
-	    sizeof(ctf_header_t) + hp->cth_stroff + symtype->ctt_name;
+	symtype = typeid_to_type(typeid);
+
+	const char *name = type_to_name(symtype);
 
 	db_printf("Obj offset: %x\n", objtoff);
 	db_printf("Type ID: %d\n", typeid);
-	db_printf("Type offset: %x\n", typeoff);
 	db_printf("Type kind: %d\n", CTF_V3_INFO_KIND(symtype->ctt_info));
 	db_printf("Type name: %s\n", name);
 
 	return symtype;
 }
 
-#define INT_MODIFIER(ishex, size_modifier, issigned)                 \
+/*
+ * Type printing helper routines.
+ */
+
+#define INT_MODIFIER(ishex, size_modifier, issigned) \
 	((ishex) ? "0x%" size_modifier "x" : ((issigned) ? "%ld" : "%lu"));
 
-static inline void db_pprint_int(db_expr_t addr, struct ctf_type_v3 * type, boolean_t ishex){
-  char *modifier;
-  size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
-                             sizeof(struct ctf_type_v3) :
-                             sizeof(struct ctf_stype_v3));
-  uint32_t data = db_get_value((db_expr_t)type + type_struct_size,
-                               sizeof(uint32_t), 0);
+static inline void
+db_pprint_int(db_expr_t addr, struct ctf_type_v3 *type)
+{
+	char *modifier;
 
-  u_int bits = CTF_INT_BITS(data);
-  boolean_t sign = !!(CTF_INT_ENCODING(data) & CTF_INT_SIGNED);
-  boolean_t ischar = !!(CTF_INT_ENCODING(data) & CTF_INT_CHAR);
+	if (db_pager_quit) {
+		return;
+	}
 
+	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
+		sizeof(struct ctf_type_v3) :
+		sizeof(struct ctf_stype_v3));
+	uint32_t data = db_get_value((db_expr_t)type + type_struct_size,
+	    sizeof(uint32_t), 0);
 
+	u_int bits = CTF_INT_BITS(data);
+	boolean_t sign = !!(CTF_INT_ENCODING(data) & CTF_INT_SIGNED);
+	boolean_t ischar = !!(CTF_INT_ENCODING(data) & CTF_INT_CHAR);
 
-  switch (bits) {
-  case 64:
-    modifier = INT_MODIFIER(ishex, "l", sign);
-    break;
-  case 32:
-    modifier = INT_MODIFIER(ishex, "", sign);
-    break;
-  case 16:
-    modifier = INT_MODIFIER(ishex, "h", sign);
-    break;
-  case 8:
-    modifier = ischar ? "%c" :
-      INT_MODIFIER(ishex, "hh", sign);
-    break;
-  default:
-    db_printf("Invalid size found for integer type\n");
-    break;
-  }
+	switch (bits) {
+	case 64:
+		modifier = INT_MODIFIER(ishex, "l", sign);
+		break;
+	case 32:
+		modifier = INT_MODIFIER(ishex, "", sign);
+		break;
+	case 16:
+		modifier = INT_MODIFIER(ishex, "h", sign);
+		break;
+	case 8:
+		modifier = ischar ? "%c" : INT_MODIFIER(ishex, "hh", sign);
+		break;
+	default:
+		db_printf("Invalid size found for integer type\n");
+		break;
+	}
 
-  db_printf(modifier, db_get_value(addr, bits / 8, sign));
+	db_printf(modifier, db_get_value(addr, bits / 8, sign));
+}
 
+static inline void
+db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
+{
+	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
+		sizeof(struct ctf_type_v3) :
+		sizeof(struct ctf_stype_v3));
+	ssize_t struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
+		CTF_TYPE_LSIZE(type) :
+		type->ctt_size);
+	u_int vlen = CTF_V3_INFO_VLEN(type->ctt_info);
+	const char *mname;
+
+	if (db_pager_quit) {
+		return;
+	}
+
+	db_printf("{\n");
+
+	if (struct_size < CTF_V3_LSTRUCT_THRESH) {
+		struct ctf_member_v3 *mp, *endp;
+
+		mp = (struct ctf_member_v3 *)((db_expr_t)type +
+		    type_struct_size);
+		endp = mp + vlen;
+
+		for (; mp < endp; mp++) {
+			struct ctf_type_v3 *mtype = typeid_to_type(
+			    mp->ctm_type);
+			db_expr_t maddr = addr + mp->ctm_offset;
+
+			mname = stroff_to_str(mp->ctm_name);
+			db_printf("%s = ", mname);
+
+			db_pprint_type(maddr, mtype, false);
+			db_printf(", ");
+		}
+	} else {
+		struct ctf_lmember_v3 *mp, *endp;
+		mp = (struct ctf_lmember_v3 *)((db_expr_t)type +
+		    type_struct_size);
+		endp = mp + vlen;
+
+		for (; mp < endp; mp++) {
+			struct ctf_type_v3 *mtype = typeid_to_type(
+			    mp->ctlm_type);
+			db_expr_t maddr = addr + CTF_LMEM_OFFSET(mp);
+
+			mname = stroff_to_str(mp->ctlm_name);
+			db_printf("%s = ", mname);
+
+			db_pprint_type(maddr, mtype, false);
+			db_printf(", ");
+		}
+	}
+
+	db_printf("\n}");
+}
+
+static inline void
+db_pprint_arr(db_expr_t addr, struct ctf_type_v3 *type)
+{
+	/* TODO */
+}
+
+static inline void
+db_pprint_enum(db_expr_t addr, struct ctf_type_v3 *type)
+{
+	/* TODO */
+}
+
+static void
+db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type, bool follow)
+{
+	u_int kind;
+
+	if (db_pager_quit) {
+		return;
+	}
+
+	kind = CTF_V3_INFO_KIND(type->ctt_info);
+
+	switch (kind) {
+	case CTF_K_INTEGER:
+		db_pprint_int(addr, type);
+		break;
+	case CTF_K_UNION:
+	case CTF_K_STRUCT:
+		// db_printf("STRUCT BLOCK\n");
+		db_pprint_struct(addr, type);
+		break;
+	case CTF_K_FUNCTION:
+	case CTF_K_FLOAT:
+		db_printf(ishex ? "0x%lx" : "%lu", addr);
+		break;
+	case CTF_K_POINTER:
+	case CTF_K_TYPEDEF:
+	case CTF_K_VOLATILE:
+	case CTF_K_RESTRICT:
+	case CTF_K_CONST: {
+		// db_printf("CONST BLOCK\n");
+		if (follow) {
+			struct ctf_type_v3 *ref_type = typeid_to_type(
+			    type->ctt_type);
+			db_pprint_type(addr, ref_type, follow);
+		} else {
+			db_printf("0x%lx", addr);
+		}
+		break;
+	}
+	case CTF_K_ENUM:
+		//    db_printf("ENUM BLOCK\n");
+		db_pprint_enum(addr, type);
+		break;
+	case CTF_K_UNKNOWN:
+	case CTF_K_FORWARD:
+	default:
+		//    db_printf("UNKNOWN BLOCK\n");
+		break;
+	}
+
+	return;
 }
 
 static int
-db_pprint_symbol(const Elf_Sym *sym, boolean_t hex)
+db_pprint_symbol(const Elf_Sym *sym)
 {
-	struct ctf_type_v3 *type;
-	u_int kind;
 	db_expr_t addr = sym->st_value;
+	struct ctf_type_v3 *type;
+
+	if (db_pager_quit) {
+		return -1;
+	}
 
 	type = sym_to_type(sym);
 	if (!type) {
@@ -391,20 +545,11 @@ db_pprint_symbol(const Elf_Sym *sym, boolean_t hex)
 		return -1;
 	}
 
-	kind = CTF_V3_INFO_KIND(type->ctt_info);
+	db_pprint_type(addr, type, true);
 
-	switch (kind) {
-	case CTF_K_INTEGER:
-    db_pprint_int(addr, type, hex);
-		break;
-
-	case CTF_K_FLOAT:
-		break;
-	default:
-		break;
-	}
 	return 0;
 }
+
 static Elf_Sym *
 lookup_symbol(const char *name)
 {
@@ -422,14 +567,13 @@ lookup_symbol(const char *name)
 }
 
 /*
- * Pretty print a symbol.
+ * Pretty print an ELF object symbol.
  * Syntax: pprint [/dx] name
  */
 DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
 {
 	int t; //, err;
 	Elf_Sym *sym;
-	boolean_t hex = false;
 
 	if (!ctf_loaded) {
 		db_error("Kernel CTF data not present\n");
@@ -444,9 +588,9 @@ DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
 		}
 
 		if (!strcmp(db_tok_string, "x")) {
-			hex = true;
+			ishex = true;
 		} else if (!strcmp(db_tok_string, "d")) {
-			hex = false;
+			ishex = false;
 		} else {
 			db_error("Invalid modifier\n");
 		}
@@ -470,5 +614,7 @@ DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
 	}
 
 	db_printf("Addr: %p\n", (void *)sym->st_value);
-	db_pprint_symbol(sym, hex);
+	if (db_pprint_symbol(sym)) {
+		db_error("");
+	}
 }
