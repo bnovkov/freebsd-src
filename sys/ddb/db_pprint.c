@@ -409,6 +409,8 @@ db_pprint_int(db_expr_t addr, struct ctf_type_v3 *type)
 static inline void
 db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 {
+	const char *mname;
+
 	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
 		sizeof(struct ctf_type_v3) :
 		sizeof(struct ctf_stype_v3));
@@ -416,7 +418,6 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 		CTF_TYPE_LSIZE(type) :
 		type->ctt_size);
 	u_int vlen = CTF_V3_INFO_VLEN(type->ctt_info);
-	const char *mname;
 
 	if (db_pager_quit) {
 		return;
@@ -473,7 +474,25 @@ db_pprint_arr(db_expr_t addr, struct ctf_type_v3 *type)
 static inline void
 db_pprint_enum(db_expr_t addr, struct ctf_type_v3 *type)
 {
-	/* TODO */
+	struct ctf_enum *ep, *endp;
+	const char *valname;
+	u_int vlen = CTF_V3_INFO_VLEN(type->ctt_info);
+	int32_t val = db_get_value(addr, sizeof(int), 0);
+	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
+		sizeof(struct ctf_type_v3) :
+		sizeof(struct ctf_stype_v3));
+
+	ep = (struct ctf_enum *)((db_expr_t)type + type_struct_size);
+	endp = ep + vlen;
+
+	for (; ep < endp; ep++) {
+		if (val == ep->cte_value) {
+			valname = stroff_to_str(ep->cte_name);
+			db_printf("%s ", valname);
+			db_printf((ishex ? "(0x%x)" : "(%d)"), val);
+			break;
+		}
+	}
 }
 
 static void
