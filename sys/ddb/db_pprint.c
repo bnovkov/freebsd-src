@@ -35,14 +35,13 @@
 #include <sys/linker.h>
 #include <sys/malloc.h>
 
-#include <ddb/ddb.h>
 #include <ddb/db_access.h>
 #include <ddb/db_lex.h>
+#include <ddb/ddb.h>
 
 #define OBJTOFF_INVALID 0xffffffff
 
-static void db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type,
-    bool follow);
+static void db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type);
 
 static linker_ctf_t kernel_ctf;
 static bool ctf_loaded = false;
@@ -324,7 +323,12 @@ stroff_to_str(uint32_t off)
 		return "invalid";
 	}
 
-	return (const char *)kernel_ctf.ctftab + sizeof(ctf_header_t) + stroff;
+	const char *ret = (const char *)kernel_ctf.ctftab +
+	    sizeof(ctf_header_t) + stroff;
+	if (*ret == '\0')
+		return NULL;
+
+	return ret;
 }
 
 #define type_to_name(ctf_type) stroff_to_str((ctf_type)->ctt_name)
@@ -399,8 +403,8 @@ db_pprint_int(db_expr_t addr, struct ctf_type_v3 *type)
 		modifier = ischar ? "%c" : INT_MODIFIER(ishex, "hh", sign);
 		break;
 	default:
-		db_printf("Invalid size found for integer type\n");
-		break;
+		db_printf("Invalid size '%d' found for integer type\n", bits);
+		return;
 	}
 
 	db_printf(modifier, db_get_value(addr, bits / 8, sign));
@@ -433,6 +437,10 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 		endp = mp + vlen;
 
 		for (; mp < endp; mp++) {
+			if (db_pager_quit) {
+				return;
+			}
+
 			struct ctf_type_v3 *mtype = typeid_to_type(
 			    mp->ctm_type);
 			db_expr_t maddr = addr + mp->ctm_offset;
@@ -440,7 +448,7 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 			mname = stroff_to_str(mp->ctm_name);
 			db_printf("%s = ", mname);
 
-			db_pprint_type(maddr, mtype, false);
+			db_pprint_type(maddr, mtype);
 			db_printf(", ");
 		}
 	} else {
@@ -450,6 +458,10 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 		endp = mp + vlen;
 
 		for (; mp < endp; mp++) {
+			if (db_pager_quit) {
+				return;
+			}
+
 			struct ctf_type_v3 *mtype = typeid_to_type(
 			    mp->ctlm_type);
 			db_expr_t maddr = addr + CTF_LMEM_OFFSET(mp);
@@ -457,7 +469,7 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 			mname = stroff_to_str(mp->ctlm_name);
 			db_printf("%s = ", mname);
 
-			db_pprint_type(maddr, mtype, false);
+			db_pprint_type(maddr, mtype);
 			db_printf(", ");
 		}
 	}
@@ -468,7 +480,34 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 static inline void
 db_pprint_arr(db_expr_t addr, struct ctf_type_v3 *type)
 {
-	/* TODO */
+	struct ctf_array_v3 *arr;
+	struct ctf_type_v3 *elem_type;
+	size_t elem_size;
+	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
+		sizeof(struct ctf_type_v3) :
+		sizeof(struct ctf_stype_v3));
+
+	arr = (struct ctf_array_v3 *)((db_expr_t)type + type_struct_size);
+	elem_type = typeid_to_type(arr->cta_contents);
+	elem_size = ((elem_type->ctt_size == CTF_V3_LSIZE_SENT) ?
+		CTF_TYPE_LSIZE(elem_type) :
+		elem_type->ctt_size);
+
+	db_expr_t elem_addr = addr;
+	db_expr_t end = addr + (arr->cta_nelems * elem_size);
+
+	db_printf("[");
+	for (; elem_addr < end; elem_addr += elem_size) {
+		if (db_pager_quit) {
+			return;
+		}
+
+		db_pprint_type(elem_addr, elem_type);
+
+		if ((elem_addr + elem_size) < end)
+			db_printf(", ");
+	}
+	db_printf("]\n");
 }
 
 static inline void
@@ -495,16 +534,50 @@ db_pprint_enum(db_expr_t addr, struct ctf_type_v3 *type)
 	}
 }
 
-static void
-db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type, bool follow)
+static inline void
+db_pprint_ptr(db_expr_t addr, struct ctf_type_v3 *type)
 {
+	const char *qual = "";
+	const char *name;
+	struct ctf_type_v3 *ref_type;
 	u_int kind;
+	db_expr_t val;
+
+	ref_type = typeid_to_type(type->ctt_type);
+	kind = CTF_V3_INFO_KIND(ref_type->ctt_info);
+
+	switch (kind) {
+	case CTF_K_STRUCT:
+		qual = "struct ";
+		break;
+	case CTF_K_VOLATILE:
+		qual = "volatile ";
+		break;
+	case CTF_K_CONST:
+		qual = "const ";
+		break;
+	default:
+		break;
+	}
+
+	val = db_get_value(addr, sizeof(db_expr_t), false);
+
+	name = stroff_to_str(ref_type->ctt_name);
+	if (name)
+		db_printf("(%s%s *)", qual, name);
+
+	db_printf("0x%lx", val);
+}
+
+static void
+db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type)
+{
 
 	if (db_pager_quit) {
 		return;
 	}
 
-	kind = CTF_V3_INFO_KIND(type->ctt_info);
+	u_int kind = CTF_V3_INFO_KIND(type->ctt_info);
 
 	switch (kind) {
 	case CTF_K_INTEGER:
@@ -512,7 +585,6 @@ db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type, bool follow)
 		break;
 	case CTF_K_UNION:
 	case CTF_K_STRUCT:
-		// db_printf("STRUCT BLOCK\n");
 		db_pprint_struct(addr, type);
 		break;
 	case CTF_K_FUNCTION:
@@ -520,28 +592,25 @@ db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type, bool follow)
 		db_printf(ishex ? "0x%lx" : "%lu", addr);
 		break;
 	case CTF_K_POINTER:
+		db_pprint_ptr(addr, type);
+		break;
 	case CTF_K_TYPEDEF:
 	case CTF_K_VOLATILE:
 	case CTF_K_RESTRICT:
 	case CTF_K_CONST: {
-		// db_printf("CONST BLOCK\n");
-		if (follow) {
-			struct ctf_type_v3 *ref_type = typeid_to_type(
-			    type->ctt_type);
-			db_pprint_type(addr, ref_type, follow);
-		} else {
-			db_printf("0x%lx", addr);
-		}
+		struct ctf_type_v3 *ref_type = typeid_to_type(type->ctt_type);
+		db_pprint_type(addr, ref_type);
 		break;
 	}
 	case CTF_K_ENUM:
-		//    db_printf("ENUM BLOCK\n");
 		db_pprint_enum(addr, type);
+		break;
+	case CTF_K_ARRAY:
+		db_pprint_arr(addr, type);
 		break;
 	case CTF_K_UNKNOWN:
 	case CTF_K_FORWARD:
 	default:
-		//    db_printf("UNKNOWN BLOCK\n");
 		break;
 	}
 
@@ -564,7 +633,7 @@ db_pprint_symbol(const Elf_Sym *sym)
 		return -1;
 	}
 
-	db_pprint_type(addr, type, true);
+	db_pprint_type(addr, type);
 
 	return 0;
 }
@@ -593,6 +662,8 @@ DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
 {
 	int t; //, err;
 	Elf_Sym *sym;
+
+	ishex = false;
 
 	if (!ctf_loaded) {
 		db_error("Kernel CTF data not present\n");
