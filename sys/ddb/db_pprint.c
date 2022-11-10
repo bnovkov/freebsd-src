@@ -38,6 +38,7 @@
 #include <ddb/ddb.h>
 #include <ddb/db_access.h>
 #include <ddb/db_lex.h>
+#include <ddb/db_sym.h>
 
 #define OBJTOFF_INVALID 0xffffffff
 
@@ -636,6 +637,64 @@ DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
 	db_printf("Arg: %s\n", db_tok_string);
 
 	sym = lookup_symbol(db_tok_string);
+	if (sym == NULL) {
+		db_error("Symbol not found\n");
+	}
+
+	if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT) {
+		db_error("Symbol is not a variable\n");
+	}
+
+	db_printf("Addr: %p\n", (void *)sym->st_value);
+	if (db_pprint_symbol(sym)) {
+		db_error("");
+	}
+}
+
+
+/*
+ * Pretty print an address.
+ * Syntax: pprint [/dx] addr
+ */
+DB_COMMAND_FLAGS(pprint_addr, db_pprint_addr_cmd, CS_OWN)
+{
+	int t; //, err;
+	Elf_Sym *sym;
+  db_expr_t off;
+
+	ishex = false;
+
+	if (!ctf_loaded) {
+		db_error("Kernel CTF data not present\n");
+	}
+
+	/* Parse print modifiers */
+	t = db_read_token();
+	if (t == tSLASH) {
+		t = db_read_token();
+		if (t != tIDENT) {
+			db_error("Invalid modifier\n");
+		}
+
+		if (!strcmp(db_tok_string, "x")) {
+			ishex = true;
+		} else if (!strcmp(db_tok_string, "d")) {
+			ishex = false;
+		} else {
+			db_error("Invalid modifier\n");
+		}
+		/* Fetch next token */
+		t = db_read_token();
+	}
+
+	if (t != tNUMBER) {
+		db_error("Invalid address");
+	}
+
+  addr = db_tok_number;
+	db_printf("Addr: 0x%lx\n", addr);
+
+	sym = __DECONST(Elf_Sym *, db_search_symbol(addr, DB_STGY_ANY, &off));
 	if (sym == NULL) {
 		db_error("Symbol not found\n");
 	}
