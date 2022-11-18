@@ -49,12 +49,13 @@ int debug_level = DEBUG_LEVEL;
 static char *infile = NULL;
 static const char *outfile = NULL;
 static int dynsym;
+static int mark_loadable = 0;
 
 static void
 usage(void)
 {
 	(void) fprintf(stderr,
-	    "Usage: %s [-gis] -l label | -L labelenv [-o outfile] object_file\n"
+	    "Usage: %s [-agis] -l label | -L labelenv [-o outfile] object_file\n"
 	    "\n"
 	    "  Note: if -L labelenv is specified and labelenv is not set in\n"
 	    "  the environment, a default value is used.\n",
@@ -165,7 +166,7 @@ main(int argc, char **argv)
 	if (getenv("CTFCONVERT_DEBUG_LEVEL"))
 		debug_level = atoi(getenv("CTFCONVERT_DEBUG_LEVEL"));
 
-	while ((c = getopt(argc, argv, ":l:L:o:givs")) != EOF) {
+	while ((c = getopt(argc, argv, ":l:L:o:givsa")) != EOF) {
 		switch (c) {
 		case 'l':
 			label = optarg;
@@ -185,6 +186,9 @@ main(int argc, char **argv)
 			break;
 		case 'g':
 			keep_stabs = CTF_KEEP_STABS;
+			break;
+		case 'a':
+			mark_loadable = CTF_MARK_ALLOC;
 			break;
 		case 'v':
 			verbose = 1;
@@ -247,10 +251,10 @@ main(int argc, char **argv)
 	 * to a temporary file, and replace the input file when we're done.
 	 */
 	if (outfile && strcmp(infile, outfile) != 0) {
-		write_ctf(mstrtd, infile, outfile, dynsym | keep_stabs);
+		write_ctf(mstrtd, infile, outfile, dynsym | keep_stabs | mark_loadable);
 	} else {
 		char *tmpname = mktmpname(infile, ".ctf");
-		write_ctf(mstrtd, infile, tmpname, dynsym | keep_stabs);
+		write_ctf(mstrtd, infile, tmpname, dynsym | keep_stabs | mark_loadable);
 		if (rename(tmpname, infile) != 0)
 			terminate("Couldn't rename temp file %s", tmpname);
 		free(tmpname);
