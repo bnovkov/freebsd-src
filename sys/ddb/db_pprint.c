@@ -68,9 +68,9 @@ db_initctf(void *dummy __unused)
 
 	memset((void *)&kernel_ctf, 0, sizeof(linker_ctf_t));
 
-	err = linker_ctf_get(linker_kernel_file, &kernel_ctf);
+	err = linker_ctf_get_ddb(linker_kernel_file, &kernel_ctf);
 	if (err) {
-		printf("%s: linker_ctf_get error: %d\n", __func__, err);
+		printf("%s: linker_ctf_get_ddb error: %d\n", __func__, err);
 		return;
 	}
 
@@ -141,9 +141,8 @@ sym_to_objtoff(const Elf_Sym *sym, const Elf_Sym *symtab, const Elf_Sym *symtab_
     }
 
     /* Skip scope symbols */
-    /*
-      char *name;
-
+        /*
+    char *name;
     // TODO: fetch elf symtab
     name = (const char	*)(strbase + sym.st_name);
     if	(strcmp(name, "_START_") == 0 || strcmp(name, "_END_") == 0){
@@ -340,7 +339,7 @@ db_pprint_int(db_expr_t addr, struct ctf_type_v3 *type)
 		db_printf("Invalid size '%d' found for integer type\n", bits);
 		return;
 	}
-  size_t nbytes = (bits / 8) ? (bits / 8) : 0;
+  size_t nbytes = (bits / 8) ? (bits / 8) : 1;
 	db_printf(modifier, db_get_value(addr, nbytes, sign));
 }
 
@@ -598,9 +597,9 @@ lookup_symbol(const char *name)
 
 /*
  * Pretty print an ELF object symbol.
- * Syntax: pprint [/dx] name
+ * Syntax: pprint_sym [/dx] name
  */
-DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
+DB_COMMAND_FLAGS(pprint_sym, db_pprint_cmd, CS_OWN)
 {
 	int t; //, err;
 	Elf_Sym *sym;
@@ -656,7 +655,7 @@ DB_COMMAND_FLAGS(pprint, db_pprint_cmd, CS_OWN)
  * Pretty print an address.
  * Syntax: pprint [/dx] addr
  */
-DB_COMMAND_FLAGS(pprint_addr, db_pprint_addr_cmd, CS_OWN)
+DB_COMMAND_FLAGS(pprint, db_pprint_addr_cmd, CS_OWN)
 {
 	int t; //, err;
 	Elf_Sym *sym;

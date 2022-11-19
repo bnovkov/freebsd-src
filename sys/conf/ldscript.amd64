@@ -179,10 +179,11 @@ SECTIONS
       This way it can be mapped using non-executable large pages. */
    . = ALIGN(0x200000);
   }
-
+	
+  _ctf = .;
+  .SUNW_ctf    : { *(.SUNW_ctf) }
   _end = .; PROVIDE (end = .);
   . = DATA_SEGMENT_END (.);
- .SUNW_ctf    : { *(.SUNW_ctf) } :rodata 
 
   /* Stabs debugging sections.  */
   .stab          0 : { *(.stab) }
