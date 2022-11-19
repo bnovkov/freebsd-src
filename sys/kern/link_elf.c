@@ -177,6 +177,7 @@ static kobj_method_t link_elf_methods[] = {
 	KOBJMETHOD(linker_each_function_name,	link_elf_each_function_name),
 	KOBJMETHOD(linker_each_function_nameval, link_elf_each_function_nameval),
 	KOBJMETHOD(linker_ctf_get,		link_elf_ctf_get),
+  KOBJMETHOD(linker_ctf_get_ddb,		link_elf_ctf_get_ddb),
 	KOBJMETHOD(linker_symtab_get,		link_elf_symtab_get),
 	KOBJMETHOD(linker_strtab_get,		link_elf_strtab_get),
 	KOBJMETHOD_END
@@ -490,11 +491,44 @@ link_elf_init(void* arg)
 	}
 	(void)link_elf_preload_parse_symbols(ef);
 
+#ifdef DDB_CTF
+  Elf_Shdr *shdr = (Elf_Shdr *)preload_search_info(modptr, MODINFO_METADATA | MODINFOMD_SHDR);
+  Elf_Ehdr *ehdr = (Elf_Ehdr *)preload_search_info(modptr, MODINFO_METADATA | MODINFOMD_ELFHDR);
+
+  extern uint8_t _ctf;
+  vm_offset_t sunw_addr = (vm_offset_t)&_ctf; /* sunw_ctf ldscript symbol */
+  vm_offset_t data_end_addr = (vm_offset_t)&_end; /* data segment end ldscript symbol */
+
+  /* Check if .SUNW_ctf was loaded */
+  if(sunw_addr != data_end_addr){
+    if(shdr != NULL && ehdr != NULL){
+      /* Populate ef->ctf* fields */
+      for (int i = 0; i < ehdr->e_shnum; i++) {
+        Elf_Shdr *cshdr = &shdr[i];
+
+        if (cshdr->sh_addr == sunw_addr){
+          printf("%s: %s: .SUNW_ctf at %p\n", __func__, "kernel", (void *)cshdr->sh_addr);
+          // TODO: uncompress
+          ef->ctftab = (caddr_t)cshdr->sh_addr;
+          ef->ctfcnt = cshdr->sh_size;
+          break;
+        }
+      }
+    } else {
+      printf("%s: unable to fetch kernel section headers\n", __func__);
+    }
+  } else {
+    printf("%s: %s: .SUNW_ctf was not loaded\n", __func__, "kernel");
+  }
+#endif
+
 #ifdef GDB
 	r_debug.r_map = NULL;
 	r_debug.r_brk = r_debug_state;
 	r_debug.r_state = RT_CONSISTENT;
 #endif
+
+
 
 	(void)link_elf_link_common_finish(linker_kernel_file);
 	linker_kernel_file->flags |= LINKER_FILE_LINKED;
