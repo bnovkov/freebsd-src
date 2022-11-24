@@ -193,6 +193,7 @@ gdbinit:
 
 ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 	@rm -f ${.TARGET}
+
 	@echo linking ${.TARGET}
 	${SYSTEM_LD}
 .if !empty(MD_ROOT_SIZE_CONFIGURED) && defined(MFS_IMAGE)
@@ -201,7 +202,36 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 .if ${MK_CTF} != "no"
 	@echo ${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ...
 	@${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${SYSTEM_OBJS} vers.o
+
+.if defined(SUNW_LOADABLE)
+# Dump merged ctf data
+	${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ${.TARGET}
+	${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} ctf.raw
+
+# Create a temporary file to hold ctf data
+	touch ctf.c
+	${CC} -c ctf.c
+	${OBJCOPY} --add-section .SUNW_ctf=ctf.raw ctf.o
+	${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ctf.o
+
+# Re-link the kernel
+	@echo Re-linking ${.TARGET}
+	${SYSTEM_LD} ctf.o
+.if !empty(MD_ROOT_SIZE_CONFIGURED) && defined(MFS_IMAGE)
+	@sh ${S}/tools/embed_mfs.sh ${.TARGET} ${MFS_IMAGE}
 .endif
+
+# Remove "old" .SUNW_ctf
+	${OBJCOPY} -R ".SUNW_ctf" ${.TARGET}
+
+# Cleanup
+	rm ctf.raw
+	rm ctf.o
+	rm ctf.c
+.endif
+
+.endif
+
 .if !defined(DEBUG)
 	${OBJCOPY} --strip-debug ${.TARGET}
 .endif

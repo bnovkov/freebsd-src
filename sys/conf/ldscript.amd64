@@ -179,9 +179,8 @@ SECTIONS
       This way it can be mapped using non-executable large pages. */
    . = ALIGN(0x200000);
   }
-	
-  _ctf = .;
-  .SUNW_ctf    : { *(.SUNW_ctf) }
+  _ctf = .;	
+  .kern_SUNW_ctf         : { ctf.o(.SUNW_ctf) }
   _end = .; PROVIDE (end = .);
   . = DATA_SEGMENT_END (.);
 
@@ -223,5 +222,5 @@ SECTIONS
   .debug_ranges   0 : { *(.debug_ranges) }
   .gnu.attributes 0 : { KEEP (*(.gnu.attributes)) }
 
-  /DISCARD/ : { *(.note.GNU-stack) }
+  /DISCARD/ : { *(.note.GNU-stack)}
 }
