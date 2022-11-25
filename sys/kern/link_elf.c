@@ -70,6 +70,11 @@ __FBSDID("$FreeBSD$");
 
 #include "linker_if.h"
 
+#ifdef DDB_CTF
+#include <sys/ctf.h>
+#include <contrib/zlib/zlib.h>
+#endif
+
 #define MAXSEGS 4
 
 typedef struct elf_file {
@@ -332,6 +337,70 @@ link_elf_delete_gdb(struct link_map *l)
 }
 #endif /* GDB */
 
+#ifdef DDB_CTF
+static void
+link_elf_init_kernel_ctf(elf_file_t ef){
+  extern uint8_t _ctf;
+  vm_offset_t sunw_addr = (vm_offset_t)&_ctf; /* kernel sunw_ctf ldscript symbol */
+  vm_offset_t data_end_addr = (vm_offset_t)&_end; /* data segment end ldscript symbol */
+  ctf_header_t *hp;
+  uint8_t *ctftab;
+  size_t ctfcnt;
+  int error;
+
+  ef->ctftab = 0;
+  ef->ctfcnt = 0;
+
+  /* Check if .SUNW_ctf was loaded */
+  if(sunw_addr == data_end_addr){
+    printf("%s: %s: .SUNW_ctf was not loaded\n", __func__, "kernel");
+    return;
+  }
+
+  printf("%s: %s: .SUNW_ctf at %p\n", __func__, "kernel", (void *)sunw_addr);
+
+  hp = (ctf_header_t *)sunw_addr;
+  /* Sanity check. */
+	if (hp->cth_magic != CTF_MAGIC) {
+		printf("%s: bad kernel CTF magic value\n",
+           __func__);
+		return;
+	}
+
+	if (hp->cth_version != CTF_VERSION_3) {
+		printf("%s: CTF V2 data encountered\n", __func__);
+		return;
+	}
+
+  ctfcnt = data_end_addr - sunw_addr;
+  /* Uncompress if necessary */
+  if(hp->cth_flags & CTF_F_COMPRESS){
+    size_t decomp_size = hp->cth_stroff + hp->cth_strlen;
+
+    /* Allocate memory for the CTF header + decompressed data */
+    ctftab = malloc(decomp_size + sizeof(ctf_header_t), M_LINKER, M_WAITOK);
+
+    /* Copy the ctf header into the buffer */
+    bcopy(hp, ctftab, sizeof(ctf_header_t));
+
+    /* Decompress rest of CTF data */
+		error = uncompress(ctftab + sizeof(ctf_header_t), &decomp_size,
+                       (uint8_t *)sunw_addr + sizeof(ctf_header_t), ctfcnt - sizeof(ctf_header_t));
+		if (error != Z_OK) {
+			printf("%s(%d): zlib uncompress returned %d\n",
+             __func__, __LINE__, error);
+      return;
+		}
+  }else {
+    ctftab = (uint8_t *)sunw_addr;
+  }
+
+  ef->ctftab = ctftab;
+  ef->ctfcnt = ctfcnt;
+}
+#endif
+
+
 /*
  * The kernel symbol table starts here.
  */
@@ -492,34 +561,7 @@ link_elf_init(void* arg)
 	(void)link_elf_preload_parse_symbols(ef);
 
 #ifdef DDB_CTF
-  Elf_Shdr *shdr = (Elf_Shdr *)preload_search_info(modptr, MODINFO_METADATA | MODINFOMD_SHDR);
-  Elf_Ehdr *ehdr = (Elf_Ehdr *)preload_search_info(modptr, MODINFO_METADATA | MODINFOMD_ELFHDR);
-
-  extern uint8_t _ctf;
-  vm_offset_t sunw_addr = (vm_offset_t)&_ctf; /* sunw_ctf ldscript symbol */
-  vm_offset_t data_end_addr = (vm_offset_t)&_end; /* data segment end ldscript symbol */
-
-  /* Check if .SUNW_ctf was loaded */
-  if(sunw_addr != data_end_addr){
-    if(shdr != NULL && ehdr != NULL){
-      /* Populate ef->ctf* fields */
-      for (int i = 0; i < ehdr->e_shnum; i++) {
-        Elf_Shdr *cshdr = &shdr[i];
-
-        if (cshdr->sh_addr == sunw_addr){
-          printf("%s: %s: .SUNW_ctf at %p\n", __func__, "kernel", (void *)cshdr->sh_addr);
-          // TODO: uncompress
-          ef->ctftab = (caddr_t)cshdr->sh_addr;
-          ef->ctfcnt = cshdr->sh_size;
-          break;
-        }
-      }
-    } else {
-      printf("%s: unable to fetch kernel section headers\n", __func__);
-    }
-  } else {
-    printf("%s: %s: .SUNW_ctf was not loaded\n", __func__, "kernel");
-  }
+  link_elf_init_kernel_ctf(ef);
 #endif
 
 #ifdef GDB

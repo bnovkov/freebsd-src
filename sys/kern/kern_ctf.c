@@ -291,7 +291,6 @@ out:
 	return (error);
 }
 
-
 static int
 link_elf_ctf_get_ddb(linker_file_t lf, linker_ctf_t *lc)
 {
