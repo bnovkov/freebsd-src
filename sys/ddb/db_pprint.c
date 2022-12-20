@@ -40,7 +40,7 @@
 #include <ddb/db_ctf.h>
 
 
-static void db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type);
+static void db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type);
 
 
 /*
@@ -57,7 +57,7 @@ static bool ishex = false;
 	((ishex) ? "0x%" size_modifier "x" : ((issigned) ? "%ld" : "%lu"));
 
 static inline void
-db_pprint_int(db_expr_t addr, struct ctf_type_v3 *type)
+db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
 {
 	char *modifier;
 
@@ -92,19 +92,19 @@ db_pprint_int(db_expr_t addr, struct ctf_type_v3 *type)
 		db_printf("Invalid size '%d' found for integer type\n", bits);
 		return;
 	}
-  size_t nbytes = (bits / 8) ? (bits / 8) : 1;
+  int nbytes = (bits / 8) ? (bits / 8) : 1;
 	db_printf(modifier, db_get_value(addr, nbytes, sign));
 }
 
 static inline void
-db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
+db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type)
 {
 	const char *mname;
 
 	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
 		sizeof(struct ctf_type_v3) :
 		sizeof(struct ctf_stype_v3));
-	ssize_t struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
+	size_t struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
 		CTF_TYPE_LSIZE(type) :
 		type->ctt_size);
 	u_int vlen = CTF_V3_INFO_VLEN(type->ctt_info);
@@ -118,7 +118,7 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 	if (struct_size < CTF_V3_LSTRUCT_THRESH) {
 		struct ctf_member_v3 *mp, *endp;
 
-		mp = (struct ctf_member_v3 *)((db_expr_t)type +
+		mp = (struct ctf_member_v3 *)((db_addr_t)type +
 		    type_struct_size);
 		endp = mp + vlen;
 
@@ -128,18 +128,19 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 			}
 
 			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(mp->ctm_type);
-			db_expr_t maddr = addr + mp->ctm_offset;
+			db_addr_t maddr = addr + mp->ctm_offset;
 
 			mname = db_ctf_stroff_to_str(mp->ctm_name);
-      if(mname)
+      if(mname){
         db_printf("%s = ", mname);
+      }
 
 			db_pprint_type(maddr, mtype);
 			db_printf(", ");
 		}
 	} else {
 		struct ctf_lmember_v3 *mp, *endp;
-		mp = (struct ctf_lmember_v3 *)((db_expr_t)type +
+		mp = (struct ctf_lmember_v3 *)((db_addr_t)type +
 		    type_struct_size);
 		endp = mp + vlen;
 
@@ -150,11 +151,12 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 
 			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(
 			    mp->ctlm_type);
-			db_expr_t maddr = addr + CTF_LMEM_OFFSET(mp);
+			db_addr_t maddr = addr + CTF_LMEM_OFFSET(mp);
 
 			mname = db_ctf_stroff_to_str(mp->ctlm_name);
-      if(mname)
+      if(mname){
         db_printf("%s = ", mname);
+      }
 
 			db_pprint_type(maddr, mtype);
 			db_printf(", ");
@@ -165,7 +167,7 @@ db_pprint_struct(db_expr_t addr, struct ctf_type_v3 *type)
 }
 
 static inline void
-db_pprint_arr(db_expr_t addr, struct ctf_type_v3 *type)
+db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type)
 {
 	struct ctf_array_v3 *arr;
 	struct ctf_type_v3 *elem_type;
@@ -174,14 +176,14 @@ db_pprint_arr(db_expr_t addr, struct ctf_type_v3 *type)
 		sizeof(struct ctf_type_v3) :
 		sizeof(struct ctf_stype_v3));
 
-	arr = (struct ctf_array_v3 *)((db_expr_t)type + type_struct_size);
+	arr = (struct ctf_array_v3 *)((db_addr_t)type + type_struct_size);
 	elem_type = db_ctf_typeid_to_type(arr->cta_contents);
 	elem_size = ((elem_type->ctt_size == CTF_V3_LSIZE_SENT) ?
 		CTF_TYPE_LSIZE(elem_type) :
 		elem_type->ctt_size);
 
-	db_expr_t elem_addr = addr;
-	db_expr_t end = addr + (arr->cta_nelems * elem_size);
+	db_addr_t elem_addr = addr;
+	db_addr_t end = addr + (arr->cta_nelems * elem_size);
 
 	db_printf("[");
 	for (; elem_addr < end; elem_addr += elem_size) {
@@ -191,19 +193,20 @@ db_pprint_arr(db_expr_t addr, struct ctf_type_v3 *type)
 
 		db_pprint_type(elem_addr, elem_type);
 
-		if ((elem_addr + elem_size) < end)
+		if ((elem_addr + elem_size) < end){
 			db_printf(", ");
+    }
 	}
 	db_printf("]\n");
 }
 
 static inline void
-db_pprint_enum(db_expr_t addr, struct ctf_type_v3 *type)
+db_pprint_enum(db_addr_t addr, struct ctf_type_v3 *type)
 {
 	struct ctf_enum *ep, *endp;
 	const char *valname;
 	u_int vlen = CTF_V3_INFO_VLEN(type->ctt_info);
-	int32_t val = db_get_value(addr, sizeof(int), 0);
+  db_expr_t val = db_get_value(addr, sizeof(int), 0);
 	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
 		sizeof(struct ctf_type_v3) :
 		sizeof(struct ctf_stype_v3));
@@ -213,14 +216,16 @@ db_pprint_enum(db_expr_t addr, struct ctf_type_v3 *type)
 	}
 
 
-	ep = (struct ctf_enum *)((db_expr_t)type + type_struct_size);
+	ep = (struct ctf_enum *)((db_addr_t)type + type_struct_size);
 	endp = ep + vlen;
 
 	for (; ep < endp; ep++) {
 		if (val == ep->cte_value) {
 			valname = db_ctf_stroff_to_str(ep->cte_name);
-      if(valname)
+      if(valname){
         db_printf("%s ", valname);
+      }
+
 			db_printf((ishex ? "(0x%x)" : "(%d)"), val);
 			break;
 		}
@@ -228,7 +233,7 @@ db_pprint_enum(db_expr_t addr, struct ctf_type_v3 *type)
 }
 
 static inline void
-db_pprint_ptr(db_expr_t addr, struct ctf_type_v3 *type)
+db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type)
 {
 	const char *qual = "";
 	const char *name;
@@ -256,14 +261,15 @@ db_pprint_ptr(db_expr_t addr, struct ctf_type_v3 *type)
 	val = db_get_value(addr, sizeof(db_expr_t), false);
 
 	name = db_ctf_stroff_to_str(ref_type->ctt_name);
-	if (name)
+	if (name){
 		db_printf("(%s%s *)", qual, name);
+  }
 
 	db_printf("0x%lx", val);
 }
 
 static void
-db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type)
+db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type)
 {
 
 	if (db_pager_quit) {
@@ -309,15 +315,13 @@ db_pprint_type(db_expr_t addr, struct ctf_type_v3 *type)
 	default:
 		break;
 	}
-
-	return;
 }
 
 static int
 db_pprint_symbol(const Elf_Sym *sym)
 {
-	db_expr_t addr = sym->st_value;
-	struct ctf_type_v3 *type;
+	db_addr_t addr = sym->st_value;
+	struct ctf_type_v3 *type = NULL;
 
 	if (db_pager_quit) {
 		return -1;
@@ -341,7 +345,7 @@ db_pprint_symbol(const Elf_Sym *sym)
  */
 void db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 {
-	int t; //, err;
+	int t = 0;
 	Elf_Sym *sym;
   db_expr_t off;
 
@@ -375,7 +379,6 @@ void db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 	}
 
   addr = db_tok_number;
-	db_printf("Addr: 0x%lx\n", addr);
 
 	sym = __DECONST(Elf_Sym *, db_search_symbol(addr, DB_STGY_ANY, &off));
 	if (sym == NULL) {
@@ -386,7 +389,6 @@ void db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 		db_error("Symbol is not a variable\n");
 	}
 
-	db_printf("Addr: %p\n", (void *)sym->st_value);
 	if (db_pprint_symbol(sym)) {
 		db_error("");
 	}

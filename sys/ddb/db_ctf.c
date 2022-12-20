@@ -192,8 +192,9 @@ db_ctf_stroff_to_str(uint32_t off)
 	}
 
 	const char *ret = ((const char *)hp + sizeof(ctf_header_t)) + stroff;
-	if (*ret == '\0')
+	if (*ret == '\0'){
 		return NULL;
+  }
 
 	return ret;
 }
