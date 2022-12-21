@@ -486,10 +486,6 @@ write_file(Elf *src, const char *srcname, Elf *dst, const char *dstname,
 	 * headers from the existing file to the new file.
 	 */
 	if (sehdr.e_phnum != 0) {
-		if (flags & CTF_MARK_ALLOC) {
-			elfterminate(dstname, "Refusing to mark SUNW_ctf with SHF_ALLOC - file has program headers");
-		}
-
 		(void) elf_flagelf(dst, ELF_C_SET, ELF_F_LAYOUT);
 		if (gelf_newphdr(dst, sehdr.e_phnum) == NULL)
 			elfterminate(dstname, "Cannot make phdrs in temp file");
@@ -673,11 +669,6 @@ write_file(Elf *src, const char *srcname, Elf *dst, const char *dstname,
 	shdr.sh_size = ctfsize;
 	shdr.sh_link = symtab_idx;
 	shdr.sh_addralign = 4;
-
-	if (flags & CTF_MARK_ALLOC) {
-		shdr.sh_flags = SHF_ALLOC;
-	}
-
 	if (changing && sehdr.e_phnum != 0) {
 		pad = new_offset % shdr.sh_addralign;
 
