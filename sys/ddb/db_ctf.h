@@ -1,7 +1,6 @@
 #ifndef _DDB_DB_CTF_H_
 #define _DDB_DB_CTF_H_
 
-
 #include <sys/types.h>
 #include <sys/ctf.h>
 

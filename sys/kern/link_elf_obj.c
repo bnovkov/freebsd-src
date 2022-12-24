@@ -347,8 +347,6 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 	Elf_Addr off;
 	int error, i, j, pb, ra, rl, shstrindex, symstrindex, symtabindex;
 
-  printf("%s: preloading %s\n", __func__, filename);
-
 	/* Look to see if we have the file preloaded */
 	modptr = preload_search_by_name(filename);
 	if (modptr == NULL)
@@ -476,32 +474,6 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 	ef->ddbstrtab = (char *)shdr[symstrindex].sh_addr;
 	ef->shstrcnt = shdr[shstrindex].sh_size;
 	ef->shstrtab = (char *)shdr[shstrindex].sh_addr;
-  ef->ctftab = 0;
-  ef->ctfcnt = 0;
-  ef->ctfoff = NULL;
-
-#ifdef DDB_CTF
-  /* Populate ef->ctf* fields */
-  for (i = 0; i < hdr->e_shnum; i++) {
-    Elf_Shdr *cshdr = &shdr[i];
-    const char *name = (const char *)(ef->shstrtab + cshdr->sh_name);
-
-		if (!strcmp(name, ".SUNW_ctf")){
-      /* Check if .SUNW_ctf was loaded */
-      if(cshdr->sh_addr == 0){
-        printf("%s: %s: .SUNW_ctf present but not loaded\n", __func__, filename);
-        break;
-      }
-      printf("%s: %s: .SUNW_ctf at %p\n", __func__, filename, (void *)cshdr->sh_addr);
-
-      // TODO: uncompress
-      ef->ctftab = (caddr_t)cshdr->sh_addr;
-      ef->ctfcnt = cshdr->sh_size;
-      break;
-    }
-	}
-#endif
-
 
 	/* Now fill out progtab and the relocation tables. */
 	pb = 0;
@@ -738,8 +710,6 @@ link_elf_load_file(linker_class_t cls, const char *filename,
 	lf = NULL;
 	mapsize = 0;
 	hdr = NULL;
-
-  printf("%s: loading %s\n", __func__, filename);
 
 	nd = malloc(sizeof(struct nameidata), M_TEMP, M_WAITOK);
 	NDINIT(nd, LOOKUP, FOLLOW, UIO_SYSSPACE, filename);

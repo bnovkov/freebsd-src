@@ -54,9 +54,6 @@ SIZE?=		size
 .if defined(DEBUG)
 CTFFLAGS+=	-g
 .endif
-.if defined(SUNW_LOADABLE)
-CTFFLAGS+=	-a
-.endif
 .if ${MACHINE_CPUARCH} == "amd64" && ${COMPILER_TYPE} != "clang"
 _COPTFLAGS_EXTRA=-frename-registers
 .else

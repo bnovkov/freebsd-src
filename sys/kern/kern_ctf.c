@@ -144,7 +144,7 @@ link_elf_ctf_get(linker_file_t lf, linker_ctf_t *lc)
 		    shdr[hdr->e_shstrndx].sh_type);
 		error = EFTYPE;
 		goto out;
-	} 
+	}
 
 	/* Allocate memory to buffer the section header strings. */
 	shstrtab = malloc(shdr[hdr->e_shstrndx].sh_size, M_LINKER, M_WAITOK);
@@ -295,27 +295,27 @@ static int
 link_elf_ctf_get_ddb(linker_file_t lf, linker_ctf_t *lc)
 {
 #ifdef DDB_CTF
-	elf_file_t ef = (elf_file_t) lf;
+        elf_file_t ef = (elf_file_t) lf;
 
-  if (lf == NULL || lc == NULL)
-		return (EINVAL);
+        if (lf == NULL || lc == NULL)
+                return (EINVAL);
 
-  if(ef->ctftab == 0 || ef->ctfcnt == 0){
-    return (EINVAL);
-  }
+        if(ef->ctftab == 0 || ef->ctfcnt == 0){
+                return (EINVAL);
+        }
 
-	bzero(lc, sizeof(*lc));
+        bzero(lc, sizeof(*lc));
 
-  lc->ctftab = ef->ctftab;
-  lc->ctfcnt = ef->ctfcnt;
-  lc->symtab = ef->ddbsymtab;
-  lc->nsym   = ef->ddbsymcnt;
-  lc->strtab = ef->ddbstrtab;
-  lc->strcnt = ef->ddbstrcnt;
+        lc->ctftab = ef->ctftab;
+        lc->ctfcnt = ef->ctfcnt;
+        lc->symtab = ef->ddbsymtab;
+        lc->nsym   = ef->ddbsymcnt;
+        lc->strtab = ef->ddbstrtab;
+        lc->strcnt = ef->ddbstrcnt;
 
-  return (0);
+        return (0);
 
 #else
-  return (EOPNOTSUPP);
+        return (EOPNOTSUPP);
 #endif
 }

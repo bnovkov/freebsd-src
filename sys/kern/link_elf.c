@@ -340,63 +340,64 @@ link_elf_delete_gdb(struct link_map *l)
 #ifdef DDB_CTF
 static void
 link_elf_init_kernel_ctf(elf_file_t ef){
-  extern uint8_t _ctf;
-  vm_offset_t sunw_addr = (vm_offset_t)&_ctf; /* kernel sunw_ctf ldscript symbol */
-  vm_offset_t data_end_addr = (vm_offset_t)&_end; /* data segment end ldscript symbol */
-  ctf_header_t *hp;
-  uint8_t *ctftab;
-  size_t ctfcnt;
-  int error;
+        extern uint8_t _ctf;
+        vm_offset_t sunw_addr = (vm_offset_t)&_ctf; /* kernel sunw_ctf ldscript symbol */
+        vm_offset_t data_end_addr = (vm_offset_t)&_end; /* data segment end ldscript symbol */
+        ctf_header_t *hp;
+        uint8_t *ctftab;
+        size_t ctfcnt;
+        int error;
 
-  ef->ctftab = 0;
-  ef->ctfcnt = 0;
+        ef->ctftab = 0;
+        ef->ctfcnt = 0;
 
-  /* Check if .SUNW_ctf was loaded */
-  if(sunw_addr == data_end_addr){
-    printf("%s: %s: .SUNW_ctf was not loaded\n", __func__, "kernel");
-    return;
-  }
+        /* Check if .SUNW_ctf was loaded */
+        if(sunw_addr == data_end_addr){
+                printf("%s: %s: .SUNW_ctf was not loaded\n", __func__, "kernel");
+                return;
+        }
 
-  printf("%s: %s: .SUNW_ctf at %p\n", __func__, "kernel", (void *)sunw_addr);
+        printf("%s: %s: .SUNW_ctf at %p\n", __func__, "kernel", (void *)sunw_addr);
 
-  hp = (ctf_header_t *)sunw_addr;
-  /* Sanity check. */
-	if (hp->cth_magic != CTF_MAGIC) {
-		printf("%s: bad kernel CTF magic value\n",
-           __func__);
-		return;
-	}
+        hp = (ctf_header_t *)sunw_addr;
 
-	if (hp->cth_version != CTF_VERSION_3) {
-		printf("%s: CTF V2 data encountered\n", __func__);
-		return;
-	}
+        /* Sanity check. */
+        if (hp->cth_magic != CTF_MAGIC) {
+                printf("%s: bad kernel CTF magic value\n",
+                       __func__);
+                return;
+        }
 
-  ctfcnt = data_end_addr - sunw_addr;
-  /* Uncompress if necessary */
-  if(hp->cth_flags & CTF_F_COMPRESS){
-    size_t decomp_size = hp->cth_stroff + hp->cth_strlen;
+        if (hp->cth_version != CTF_VERSION_3) {
+                printf("%s: CTF V2 data encountered\n", __func__);
+                return;
+        }
 
-    /* Allocate memory for the CTF header + decompressed data */
-    ctftab = malloc(decomp_size + sizeof(ctf_header_t), M_LINKER, M_WAITOK);
+        ctfcnt = data_end_addr - sunw_addr;
+        /* Uncompress if necessary */
+        if(hp->cth_flags & CTF_F_COMPRESS){
+                size_t decomp_size = hp->cth_stroff + hp->cth_strlen;
 
-    /* Copy the ctf header into the buffer */
-    bcopy(hp, ctftab, sizeof(ctf_header_t));
+                /* Allocate memory for the CTF header + decompressed data */
+                ctftab = malloc(decomp_size + sizeof(ctf_header_t), M_LINKER, M_WAITOK);
 
-    /* Decompress rest of CTF data */
-		error = uncompress(ctftab + sizeof(ctf_header_t), &decomp_size,
-                       (uint8_t *)sunw_addr + sizeof(ctf_header_t), ctfcnt - sizeof(ctf_header_t));
-		if (error != Z_OK) {
-			printf("%s(%d): zlib uncompress returned %d\n",
-             __func__, __LINE__, error);
-      return;
-		}
-  }else {
-    ctftab = (uint8_t *)sunw_addr;
-  }
+                /* Copy the ctf header into the buffer */
+                bcopy(hp, ctftab, sizeof(ctf_header_t));
 
-  ef->ctftab = ctftab;
-  ef->ctfcnt = ctfcnt;
+                /* Decompress rest of CTF data */
+                error = uncompress(ctftab + sizeof(ctf_header_t), &decomp_size,
+                                   (uint8_t *)sunw_addr + sizeof(ctf_header_t), ctfcnt - sizeof(ctf_header_t));
+                if (error != Z_OK) {
+                        printf("%s(%d): zlib uncompress returned %d\n",
+                               __func__, __LINE__, error);
+                        return;
+                }
+        }else {
+                ctftab = (uint8_t *)sunw_addr;
+        }
+
+        ef->ctftab = ctftab;
+        ef->ctfcnt = ctfcnt;
 }
 #endif
 
@@ -569,8 +570,6 @@ link_elf_init(void* arg)
 	r_debug.r_brk = r_debug_state;
 	r_debug.r_state = RT_CONSISTENT;
 #endif
-
-
 
 	(void)link_elf_link_common_finish(linker_kernel_file);
 	linker_kernel_file->flags |= LINKER_FILE_LINKED;

@@ -216,14 +216,16 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 
 # Re-link the kernel
 	@echo Re-linking ${.TARGET}
-	${SYSTEM_LD} ctf.o
+	${SYSTEM_LD} ctf.o	
+	
 .if !empty(MD_ROOT_SIZE_CONFIGURED) && defined(MFS_IMAGE)
 	@sh ${S}/tools/embed_mfs.sh ${.TARGET} ${MFS_IMAGE}
 .endif
 
 # Remove "old" .SUNW_ctf
 	${OBJCOPY} -R ".SUNW_ctf" ${.TARGET}
-
+# Rename loadable ctf section
+	objcopy --rename-section .kern_SUNW_ctf=.SUNW_ctf ${.TARGET}
 # Cleanup
 	rm ctf.raw
 	rm ctf.o
