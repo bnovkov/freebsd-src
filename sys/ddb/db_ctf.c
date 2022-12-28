@@ -78,16 +78,6 @@ sym_to_objtoff(const Elf_Sym *sym, const Elf_Sym *symtab, const Elf_Sym *symtab_
                         continue;
                 }
 
-                /* Skip scope symbols */
-                /*
-                  char *name;
-                  // TODO: fetch elf symtab
-                  name = (const char	*)(strbase + sym.st_name);
-                  if	(strcmp(name, "_START_") == 0 || strcmp(name, "_END_") == 0){
-                  continue;
-                  }
-                */
-
                 /* Skip non-object symbols */
                 if (ELF_ST_TYPE(symp->st_info) != STT_OBJECT) {
                         continue;
@@ -204,7 +194,6 @@ struct ctf_type_v3 *
 db_ctf_sym_to_type(const Elf_Sym *sym)
 {
         uint32_t objtoff, typeid;
-        struct ctf_type_v3 *symtype = NULL;
         const Elf_Sym *symtab, *symtab_end;
 
         if (sym == NULL) {
@@ -224,17 +213,6 @@ db_ctf_sym_to_type(const Elf_Sym *sym)
 
         typeid = *(const uint32_t *)(db_ctf.kernel_ctf.ctftab + sizeof(ctf_header_t) +
                                      objtoff);
-        symtype = db_ctf_typeid_to_type(typeid);
-        if(!symtype){
-                return (NULL);
-        }
 
-        const char *name = db_ctf_stroff_to_str(symtype->ctt_name);
-
-        db_printf("Obj offset: %x\n", objtoff);
-        db_printf("Type ID: %d\n", typeid);
-        db_printf("Type kind: %d\n", CTF_V3_INFO_KIND(symtype->ctt_info));
-        db_printf("Type name: %s\n", name);
-
-        return symtype;
+        return db_ctf_typeid_to_type(typeid);
 }
