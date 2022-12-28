@@ -121,7 +121,6 @@ METHOD int ctf_get_ddb {
 	linker_ctf_t	*lc;
 };
 
-
 #
 # Get the symbol table, returning it in **symtab.  Return the 
 # number of symbols, otherwise zero.
