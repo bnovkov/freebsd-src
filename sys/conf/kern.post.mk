@@ -204,32 +204,33 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 	@${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${SYSTEM_OBJS} vers.o
 
 .if defined(SUNW_LOADABLE)
+	@echo "Integrating .SUNW_ctf into the kernel"
 # Dump merged ctf data
-	${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ${.TARGET}
-	${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} ctf.raw
+	@${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ${.TARGET}
+	@${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} ctf.raw
 
 # Create a temporary file to hold ctf data
-	touch ctf.c
-	${CC} -c ctf.c
-	${OBJCOPY} --add-section .SUNW_ctf=ctf.raw ctf.o
-	${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ctf.o
+	@touch ctf.c
+	@${CC} -c ctf.c
+	@${OBJCOPY} --add-section .SUNW_ctf=ctf.raw ctf.o
+	@${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ctf.o
 
 # Re-link the kernel
 	@echo Re-linking ${.TARGET}
-	${SYSTEM_LD} ctf.o	
-	
+	${SYSTEM_LD} ctf.o
+
 .if !empty(MD_ROOT_SIZE_CONFIGURED) && defined(MFS_IMAGE)
 	@sh ${S}/tools/embed_mfs.sh ${.TARGET} ${MFS_IMAGE}
 .endif
 
 # Remove "old" .SUNW_ctf
-	${OBJCOPY} -R ".SUNW_ctf" ${.TARGET}
+	@${OBJCOPY} -R ".SUNW_ctf" ${.TARGET}
 # Rename loadable ctf section
-	objcopy --rename-section .kern_SUNW_ctf=.SUNW_ctf ${.TARGET}
+	@objcopy --rename-section .kern_SUNW_ctf=.SUNW_ctf ${.TARGET}
 # Cleanup
-	rm ctf.raw
-	rm ctf.o
-	rm ctf.c
+	@rm ctf.raw
+	@rm ctf.o
+	@rm ctf.c
 .endif
 
 .endif

@@ -39,28 +39,15 @@
 #include <ddb/db_sym.h>
 #include <ddb/db_ctf.h>
 
+#define DB_PPRINT_DEFAULT_DEPTH 1
 
-static void db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type);
+static void db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth);
 
-
-/*
- * Command arguments.
- */
-static bool ishex = false;
-
-
-/*
- * Type printing helper routines.
- */
-
-#define INT_MODIFIER(ishex, size_modifier, issigned)                    \
-        ((ishex) ? "0x%" size_modifier "x" : ((issigned) ? "%ld" : "%lu"));
+static u_int max_depth = DB_PPRINT_DEFAULT_DEPTH;
 
 static inline void
 db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
 {
-        char *modifier;
-
         if (db_pager_quit) {
                 return;
         }
@@ -73,29 +60,18 @@ db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
 
         u_int bits = CTF_INT_BITS(data);
         boolean_t sign = !!(CTF_INT_ENCODING(data) & CTF_INT_SIGNED);
-        boolean_t ischar = !!(CTF_INT_ENCODING(data) & CTF_INT_CHAR);
 
         if(bits > 64){
                 db_printf("Invalid size '%d' found for integer type\n", bits);
                 return;
         }
 
-        if(bits > 32 && bits <= 64){
-                modifier = INT_MODIFIER(ishex, "l", sign);
-        }else if(bits > 16 && bits <= 32){
-                modifier = INT_MODIFIER(ishex, "", sign);
-        } else if(bits > 8 && bits <= 16){
-                modifier = INT_MODIFIER(ishex, "h", sign);
-                break;
-        } else {
-                modifier = ischar ? "%c" : INT_MODIFIER(ishex, "hh", sign);
-        }
         int nbytes = (bits / 8) ? (bits / 8) : 1;
-        db_printf(modifier, db_get_value(addr, nbytes, sign));
+        db_printf("0x%lx", db_get_value(addr, nbytes, sign));
 }
 
 static inline void
-db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type)
+db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
         const char *mname;
 
@@ -108,6 +84,11 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type)
         u_int vlen = CTF_V3_INFO_VLEN(type->ctt_info);
 
         if (db_pager_quit) {
+                return;
+        }
+
+        if(depth > max_depth){
+                db_printf("{ ... }, ");
                 return;
         }
 
@@ -133,7 +114,7 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type)
                                 db_printf("%s = ", mname);
                         }
 
-                        db_pprint_type(maddr, mtype);
+                        db_pprint_type(maddr, mtype, depth+1);
                         db_printf(", ");
                 }
         } else {
@@ -156,7 +137,7 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type)
                                 db_printf("%s = ", mname);
                         }
 
-                        db_pprint_type(maddr, mtype);
+                        db_pprint_type(maddr, mtype, depth+1);
                         db_printf(", ");
                 }
         }
@@ -165,7 +146,7 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type)
 }
 
 static inline void
-db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type)
+db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
         struct ctf_array_v3 *arr;
         struct ctf_type_v3 *elem_type;
@@ -189,7 +170,7 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type)
                         return;
                 }
 
-                db_pprint_type(elem_addr, elem_type);
+                db_pprint_type(elem_addr, elem_type, depth);
 
                 if ((elem_addr + elem_size) < end){
                         db_printf(", ");
@@ -224,21 +205,21 @@ db_pprint_enum(db_addr_t addr, struct ctf_type_v3 *type)
                                 db_printf("%s ", valname);
                         }
 
-                        db_printf((ishex ? "(0x%x)" : "(%d)"), val);
+                        db_printf("(0x%lx)", val);
                         break;
                 }
         }
 }
 
 static inline void
-db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type)
+db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
         const char *qual = "";
         const char *name;
         struct ctf_type_v3 *ref_type;
         u_int kind;
-        db_expr_t val;
-
+        db_addr_t val;
+ 
         ref_type = db_ctf_typeid_to_type(type->ctt_type);
         kind = CTF_V3_INFO_KIND(ref_type->ctt_info);
 
@@ -256,18 +237,23 @@ db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type)
                 break;
         }
 
-        val = db_get_value(addr, sizeof(db_expr_t), false);
+        val = db_get_value(addr, sizeof(db_addr_t), false);
 
-        name = db_ctf_stroff_to_str(ref_type->ctt_name);
-        if (name){
-                db_printf("(%s%s *)", qual, name);
+        if(depth < max_depth){
+                db_pprint_type(addr, ref_type, depth+1);
+        }else{
+
+                name = db_ctf_stroff_to_str(ref_type->ctt_name);
+                if (name){
+                        db_printf("(%s%s *)", qual, name);
+                }
+
+                db_printf("0x%lx", val);
         }
-
-        db_printf("0x%lx", val);
 }
 
 static void
-db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type)
+db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
 
         if (db_pager_quit) {
@@ -285,28 +271,28 @@ db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type)
                 break;
         case CTF_K_UNION:
         case CTF_K_STRUCT:
-                db_pprint_struct(addr, type);
+                db_pprint_struct(addr, type, depth);
                 break;
         case CTF_K_FUNCTION:
         case CTF_K_FLOAT:
-                db_printf(ishex ? "0x%lx" : "%lu", addr);
+                db_printf("0x%lx", addr);
                 break;
         case CTF_K_POINTER:
-                db_pprint_ptr(addr, type);
+                db_pprint_ptr(addr, type, depth);
                 break;
         case CTF_K_TYPEDEF:
         case CTF_K_VOLATILE:
         case CTF_K_RESTRICT:
         case CTF_K_CONST: {
                 struct ctf_type_v3 *ref_type = db_ctf_typeid_to_type(type->ctt_type);
-                db_pprint_type(addr, ref_type);
+                db_pprint_type(addr, ref_type, depth);
                 break;
         }
         case CTF_K_ENUM:
                 db_pprint_enum(addr, type);
                 break;
         case CTF_K_ARRAY:
-                db_pprint_arr(addr, type);
+                db_pprint_arr(addr, type, depth);
                 break;
         case CTF_K_UNKNOWN:
         case CTF_K_FORWARD:
@@ -320,11 +306,14 @@ db_pprint_symbol(const Elf_Sym *sym)
 {
         db_addr_t addr = sym->st_value;
         struct ctf_type_v3 *type = NULL;
+        db_expr_t _val;
+
+        const char *sym_name = NULL;
+        const char *type_name = NULL;
 
         if (db_pager_quit) {
                 return -1;
         }
-
 
         type = db_ctf_sym_to_type(sym);
         if (!type) {
@@ -332,22 +321,30 @@ db_pprint_symbol(const Elf_Sym *sym)
                 return -1;
         }
 
-        db_pprint_type(addr, type);
+        db_symbol_values((c_db_sym_t)sym, &sym_name, &_val);
+        type_name = db_ctf_stroff_to_str(type->ctt_name);
+
+        if(type_name){
+                db_printf("%s ", type_name);
+        }
+        if(sym_name){
+                db_printf("%s = ", sym_name);
+        }
+
+        db_pprint_type(addr, type, 0);
 
         return 0;
 }
 
 /*
  * Pretty print an address.
- * Syntax: pprint [/dx] addr
+ * Syntax: pprint [/d depth] addr
  */
 void db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 {
         int t = 0;
         Elf_Sym *sym;
         db_expr_t off;
-
-        ishex = false;
 
         if (!db_ctf_loaded()) {
                 db_error("Kernel CTF data not present\n");
@@ -358,22 +355,24 @@ void db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
         if (t == tSLASH) {
                 t = db_read_token();
                 if (t != tIDENT) {
-                        db_error("Invalid modifier\n");
+                        db_error("Invalid flag passed\n");
                 }
-
-                if (!strcmp(db_tok_string, "x")) {
-                        ishex = true;
-                } else if (!strcmp(db_tok_string, "d")) {
-                        ishex = false;
+                /* Fetch desired depth level */
+                if (!strcmp(db_tok_string, "d")) {
+                        t = db_read_token();
+                        if(t != tNUMBER){
+                                db_error("Invalid depth provided\n");
+                        }
+                        max_depth = db_tok_number;
                 } else {
-                        db_error("Invalid modifier\n");
+                        db_error("Invalid flag passed\n");
                 }
                 /* Fetch next token */
                 t = db_read_token();
         }
 
         if (t != tNUMBER) {
-                db_error("Invalid address");
+                db_error("No address supplied\n");
         }
 
         addr = db_tok_number;
