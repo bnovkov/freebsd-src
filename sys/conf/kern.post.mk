@@ -193,7 +193,6 @@ gdbinit:
 
 ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 	@rm -f ${.TARGET}
-
 	@echo linking ${.TARGET}
 	${SYSTEM_LD}
 .if !empty(MD_ROOT_SIZE_CONFIGURED) && defined(MFS_IMAGE)
@@ -202,7 +201,6 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 .if ${MK_CTF} != "no"
 	@echo ${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ...
 	@${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${SYSTEM_OBJS} vers.o
-
 .if defined(SUNW_LOADABLE)
 	@echo "Integrating .SUNW_ctf into the kernel"
 # Dump merged ctf data
@@ -232,7 +230,6 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 	@rm ctf.o
 	@rm ctf.c
 .endif
-
 .endif
 
 .if !defined(DEBUG)
