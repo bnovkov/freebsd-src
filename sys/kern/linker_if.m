@@ -117,8 +117,8 @@ METHOD int ctf_get {
 };
 
 METHOD int ctf_get_ddb {
-	                  linker_file_t	file;
-	                  linker_ctf_t	*lc;
+	linker_file_t	file;
+	linker_ctf_t	*lc;
 };
 
 

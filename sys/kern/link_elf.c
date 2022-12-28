@@ -182,7 +182,7 @@ static kobj_method_t link_elf_methods[] = {
 	KOBJMETHOD(linker_each_function_name,	link_elf_each_function_name),
 	KOBJMETHOD(linker_each_function_nameval, link_elf_each_function_nameval),
 	KOBJMETHOD(linker_ctf_get,		link_elf_ctf_get),
-  KOBJMETHOD(linker_ctf_get_ddb,		link_elf_ctf_get_ddb),
+	KOBJMETHOD(linker_ctf_get_ddb,		link_elf_ctf_get_ddb),
 	KOBJMETHOD(linker_symtab_get,		link_elf_symtab_get),
 	KOBJMETHOD(linker_strtab_get,		link_elf_strtab_get),
 	KOBJMETHOD_END
@@ -339,68 +339,73 @@ link_elf_delete_gdb(struct link_map *l)
 
 #ifdef DDB_CTF
 static void
-link_elf_init_kernel_ctf(elf_file_t ef){
-        extern uint8_t _ctf;
-        vm_offset_t sunw_addr = (vm_offset_t)&_ctf; /* kernel sunw_ctf ldscript symbol */
-        vm_offset_t data_end_addr = (vm_offset_t)&_end; /* data segment end ldscript symbol */
-        ctf_header_t *hp;
-        uint8_t *ctftab;
-        size_t ctfcnt;
-        int error;
+link_elf_init_kernel_ctf(elf_file_t ef)
+{
+	extern uint8_t _ctf;
+	vm_offset_t sunw_addr =
+	    (vm_offset_t)&_ctf; /* kernel sunw_ctf ldscript symbol */
+	vm_offset_t data_end_addr =
+	    (vm_offset_t)&_end; /* data segment end ldscript symbol */
+	ctf_header_t *hp;
+	uint8_t *ctftab;
+	size_t ctfcnt;
+	int error;
 
-        ef->ctftab = 0;
-        ef->ctfcnt = 0;
+	ef->ctftab = 0;
+	ef->ctfcnt = 0;
 
-        /* Check if .SUNW_ctf was loaded */
-        if(sunw_addr == data_end_addr){
-                printf("%s: %s: .SUNW_ctf was not loaded\n", __func__, "kernel");
-                return;
-        }
+	/* Check if .SUNW_ctf was loaded */
+	if (sunw_addr == data_end_addr) {
+		printf("%s: %s: .SUNW_ctf was not loaded\n", __func__,
+		    "kernel");
+		return;
+	}
 
-        printf("%s: %s: .SUNW_ctf at %p\n", __func__, "kernel", (void *)sunw_addr);
+	printf("%s: %s: .SUNW_ctf at %p\n", __func__, "kernel",
+	    (void *)sunw_addr);
 
-        hp = (ctf_header_t *)sunw_addr;
+	hp = (ctf_header_t *)sunw_addr;
 
-        /* Sanity check. */
-        if (hp->cth_magic != CTF_MAGIC) {
-                printf("%s: bad kernel CTF magic value\n",
-                       __func__);
-                return;
-        }
+	/* Sanity check. */
+	if (hp->cth_magic != CTF_MAGIC) {
+		printf("%s: bad kernel CTF magic value\n", __func__);
+		return;
+	}
 
-        if (hp->cth_version != CTF_VERSION_3) {
-                printf("%s: CTF V2 data encountered\n", __func__);
-                return;
-        }
+	if (hp->cth_version != CTF_VERSION_3) {
+		printf("%s: CTF V2 data encountered\n", __func__);
+		return;
+	}
 
-        ctfcnt = data_end_addr - sunw_addr;
-        /* Uncompress if necessary */
-        if(hp->cth_flags & CTF_F_COMPRESS){
-                size_t decomp_size = hp->cth_stroff + hp->cth_strlen;
+	ctfcnt = data_end_addr - sunw_addr;
+	/* Uncompress if necessary */
+	if (hp->cth_flags & CTF_F_COMPRESS) {
+		size_t decomp_size = hp->cth_stroff + hp->cth_strlen;
 
-                /* Allocate memory for the CTF header + decompressed data */
-                ctftab = malloc(decomp_size + sizeof(ctf_header_t), M_LINKER, M_WAITOK);
+		/* Allocate memory for the CTF header + decompressed data */
+		ctftab = malloc(decomp_size + sizeof(ctf_header_t), M_LINKER,
+		    M_WAITOK);
 
-                /* Copy the ctf header into the buffer */
-                bcopy(hp, ctftab, sizeof(ctf_header_t));
+		/* Copy the ctf header into the buffer */
+		bcopy(hp, ctftab, sizeof(ctf_header_t));
 
-                /* Decompress rest of CTF data */
-                error = uncompress(ctftab + sizeof(ctf_header_t), &decomp_size,
-                                   (uint8_t *)sunw_addr + sizeof(ctf_header_t), ctfcnt - sizeof(ctf_header_t));
-                if (error != Z_OK) {
-                        printf("%s(%d): zlib uncompress returned %d\n",
-                               __func__, __LINE__, error);
-                        return;
-                }
-        }else {
-                ctftab = (uint8_t *)sunw_addr;
-        }
+		/* Decompress rest of CTF data */
+		error = uncompress(ctftab + sizeof(ctf_header_t), &decomp_size,
+		    (uint8_t *)sunw_addr + sizeof(ctf_header_t),
+		    ctfcnt - sizeof(ctf_header_t));
+		if (error != Z_OK) {
+			printf("%s(%d): zlib uncompress returned %d\n",
+			    __func__, __LINE__, error);
+			return;
+		}
+	} else {
+		ctftab = (uint8_t *)sunw_addr;
+	}
 
-        ef->ctftab = ctftab;
-        ef->ctfcnt = ctfcnt;
+	ef->ctftab = ctftab;
+	ef->ctfcnt = ctfcnt;
 }
 #endif
-
 
 /*
  * The kernel symbol table starts here.
@@ -562,7 +567,7 @@ link_elf_init(void* arg)
 	(void)link_elf_preload_parse_symbols(ef);
 
 #ifdef DDB_CTF
-  link_elf_init_kernel_ctf(ef);
+	link_elf_init_kernel_ctf(ef);
 #endif
 
 #ifdef GDB
