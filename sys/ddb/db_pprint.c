@@ -353,6 +353,9 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 		db_error("Kernel CTF data not present\n");
 	}
 
+  /* Set default depth */
+  max_depth = DB_PPRINT_DEFAULT_DEPTH;
+
 	/* Parse print modifiers */
 	t = db_read_token();
 	if (t == tSLASH) {
