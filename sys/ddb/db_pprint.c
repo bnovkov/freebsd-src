@@ -1,8 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (c) 1983, 1991, 1993, 1994
- *	The Regents of the University of California.  All rights reserved.
+ * Copyright (c) 2022  <bojan.novkovic@kset.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,10 +48,6 @@ static u_int max_depth = DB_PPRINT_DEFAULT_DEPTH;
 static inline void
 db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
 {
-	if (db_pager_quit) {
-		return;
-	}
-
 	size_t type_struct_size = ((type->ctt_size == CTF_V3_LSIZE_SENT) ?
 		sizeof(struct ctf_type_v3) :
 		sizeof(struct ctf_stype_v3));
@@ -61,6 +56,10 @@ db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
 
 	u_int bits = CTF_INT_BITS(data);
 	boolean_t sign = !!(CTF_INT_ENCODING(data) & CTF_INT_SIGNED);
+
+	if (db_pager_quit) {
+          return;
+	}
 
 	if (bits > 64) {
 		db_printf("Invalid size '%d' found for integer type\n", bits);
