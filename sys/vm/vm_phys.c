@@ -137,6 +137,12 @@ static int __read_mostly vm_nfreelists;
 vm_paddr_t phys_avail[PHYS_AVAIL_COUNT];
 vm_paddr_t dump_avail[PHYS_AVAIL_COUNT];
 
+struct vm_phys_info {
+        int64_t free_pages;
+        int64_t free_blocks;
+        int64_t order_suitable_pages;
+};
+
 /*
  * Provides the mapping from VM_FREELIST_* to free list indices (flind).
  */
@@ -161,6 +167,18 @@ SYSCTL_OID(_vm, OID_AUTO, phys_free,
     CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
     sysctl_vm_phys_free, "A",
     "Phys Free Info");
+
+static int sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_vm, OID_AUTO, phys_frag_idx,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_vm_phys_frag_idx, "A",
+    "Phys Frag Info");
+
+static int sysctl_vm_phys_unusable_idx(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_vm, OID_AUTO, phys_unusable_idx,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_vm_phys_unusable_idx, "A",
+    "Phys Unusable Idx Info");
 
 static int sysctl_vm_phys_segs(SYSCTL_HANDLER_ARGS);
 SYSCTL_OID(_vm, OID_AUTO, phys_segs,
@@ -253,6 +271,43 @@ vm_phys_domain_match(int prefer, vm_paddr_t low, vm_paddr_t high)
 #endif
 }
 
+static void get_phys_info(struct vm_phys_info *info){
+        struct vm_freelist *fl;
+        int pind, oind, flind, dom;
+
+        /* Calculate total number of free pages and blocks */
+        info->free_pages = info->order_suitable_pages = info->free_blocks = 0;
+        for (dom = 0; dom < vm_ndomains; dom++) {
+                for (flind = 0; flind < vm_nfreelists; flind++) {
+                        for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
+                                for (pind = 0; pind < VM_NFREEPOOL; pind++) {
+                                        fl = vm_phys_free_queues[dom][flind][pind];
+                                        info->free_pages += fl[oind].lcnt << oind;
+                                        info->free_blocks += fl[oind].lcnt;
+                                }
+                        }
+                }
+        }
+}
+
+static void get_order_phys_info(struct vm_phys_info *info, int order){
+        struct vm_freelist *fl;
+        int pind, oind, flind, dom;
+
+        /* Calculate total number of free pages and blocks */
+        info->order_suitable_pages = 0;
+        for (oind = VM_NFREEORDER - 1; oind >= order; oind--) {
+                for (dom = 0; dom < vm_ndomains; dom++) {
+                        for (flind = 0; flind < vm_nfreelists; flind++) {
+                                for (pind = 0; pind < VM_NFREEPOOL; pind++) {
+                                        fl = vm_phys_free_queues[dom][flind][pind];
+                                        info->order_suitable_pages += fl[oind].lcnt << oind;
+                                }
+                        }
+                }
+        }
+}
+
 /*
  * Outputs the state of the physical memory allocator, specifically,
  * the amount of physical memory in each free list.
@@ -296,6 +351,78 @@ sysctl_vm_phys_free(SYSCTL_HANDLER_ARGS)
 	sbuf_delete(&sbuf);
 	return (error);
 }
+
+/*
+ * Outputs the value of the Free Memory Fragmentation Index (FMFI) for each freelist.
+ */
+static int
+sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS)
+{
+	struct sbuf sbuf;
+  int64_t idx;
+  int oind, error;
+  struct vm_phys_info info;
+
+  error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+          return (error);
+	sbuf_new_for_sysctl(&sbuf, NULL, 128 * vm_ndomains, req);
+
+  /* Calculate total number of free pages and blocks */
+  get_phys_info(&info);
+
+  sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  FMFI\n");
+  sbuf_printf(&sbuf, "--\n");
+
+  for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
+          idx = 1000 - (((info.free_pages * 1000 / (1 << oind))) / info.free_blocks);
+          sbuf_printf(&sbuf, "  %2d (%6dK) ", oind,
+                      1 << (PAGE_SHIFT - 10 + oind));
+          sbuf_printf(&sbuf, "|  %ld \n", idx);
+  }
+
+	error = sbuf_finish(&sbuf);
+	sbuf_delete(&sbuf);
+	return (error);
+}
+
+/*
+ * Outputs the value of the unusable free space index for each freelist.
+ */
+static int
+sysctl_vm_phys_unusable_idx(SYSCTL_HANDLER_ARGS)
+{
+	struct sbuf sbuf;
+  int oind, error;
+  int64_t idx;
+  struct vm_phys_info info;
+
+  error = sysctl_wire_old_buffer(req, 0);
+	if (error != 0)
+          return (error);
+	sbuf_new_for_sysctl(&sbuf, NULL, 128 * vm_ndomains, req);
+
+  /* Calculate total number of free pages and blocks */
+  get_phys_info(&info);
+
+  sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  UFSI\n");
+  sbuf_printf(&sbuf, "--\n");
+
+  for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
+          get_order_phys_info(&info, oind);
+
+          idx = ((info.free_pages - info.order_suitable_pages) * 1000) / info.free_pages;
+          sbuf_printf(&sbuf, "  %2d (%6dK) ", oind,
+                      1 << (PAGE_SHIFT - 10 + oind));
+          sbuf_printf(&sbuf, "|  %ld \n", idx);
+  }
+
+	error = sbuf_finish(&sbuf);
+	sbuf_delete(&sbuf);
+	return (error);
+}
+
+
 
 /*
  * Outputs the set of physical memory segments.
