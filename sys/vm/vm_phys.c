@@ -192,6 +192,13 @@ SYSCTL_OID(_vm, OID_AUTO, phys_compact,
            sysctl_vm_phys_compact, "A",
            "Compact physical memory");
 
+static int vm_phys_compact_thresh = 500; /* 200 - 1000 */
+static int sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_vm, OID_AUTO, phys_compact_thresh,
+           CTLTYPE_INT | CTLFLAG_RW, NULL, 0,
+           sysctl_vm_phys_compact_thresh, "I",
+           "Fragmentation index threshold for memory compaction");
+
 #ifdef NUMA
 static int sysctl_vm_phys_locality(SYSCTL_HANDLER_ARGS);
 SYSCTL_OID(_vm, OID_AUTO, phys_locality,
@@ -444,6 +451,59 @@ sysctl_vm_phys_unusable_idx(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
+static int
+sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS){
+  int error;
+  int new = vm_phys_compact_thresh;
+
+  error = sysctl_handle_int(oidp, &new, 0, req);
+  if (error != 0 || req->newptr == NULL)
+    return (error);
+
+  if(new != vm_phys_compact_thresh){
+    if(new < 200){
+      new = 200;
+    }else if(new > 1000){
+      new = 1000;
+    }
+    vm_phys_compact_thresh = new;
+  }
+
+  return (0);
+}
+
+static int
+vm_phys_compact(int order)
+{
+  int error, i;
+  int old_frag_idx, frag_idx;
+
+  frag_idx = old_frag_idx = vm_phys_fragmentation_index(order);
+
+  /* No need to compact if fragmentation is below the threshold */
+  if(old_frag_idx < vm_phys_compact_thresh){
+    return 0;
+  }
+
+  /* Run compaction until the fragmentation metric stops improving */
+  do{
+    old_frag_idx = frag_idx;
+
+    /* Try to reclaim contiguous pages for (order, order + 2) */
+    for(i = MIN(order + 2, (VM_NFREEORDER_MAX - 1)); i >= order; i--){
+        error = vm_page_reclaim_contig(VM_ALLOC_SYSTEM, (1 << order), 0, VM_MAX_ADDRESS,
+                                       (PAGE_SIZE << order), 0);
+        if(!error){
+          continue;
+        }    
+    }
+
+    frag_idx = vm_phys_fragmentation_index(order);
+  } while((old_frag_idx - frag_idx) > 50);
+
+  return 0;
+}
+
 /*
  * Tries to compact physical memory.
  */
@@ -452,15 +512,15 @@ sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
 {
         struct sbuf sbuf;
         int error;
-
+        
         error = sysctl_wire_old_buffer(req, 0);
         if (error != 0)
                 return (error);
         sbuf_new_for_sysctl(&sbuf, NULL, 32, req);
 
-        error = vm_page_reclaim_contig(VM_ALLOC_SYSTEM, 512, 0, VM_MAX_ADDRESS,
-                               PMAP_HAS_LARGEPAGES ? (1 << 21) : PAGE_SIZE, 0);
-        sbuf_printf(&sbuf, "%s to reclaim 2MB", error ? "Managed" : "Failed");
+        sbuf_printf(&sbuf, "2MB frag index before: %d\n", vm_phys_fragmentation_index(9));
+        error = vm_phys_compact(9);
+        sbuf_printf(&sbuf, "2MB frag index after: %d\n", vm_phys_fragmentation_index(9));
 
         error = sbuf_finish(&sbuf);
         sbuf_delete(&sbuf);
