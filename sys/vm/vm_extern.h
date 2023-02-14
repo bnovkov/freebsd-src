@@ -129,6 +129,7 @@ struct sf_buf *vm_imgact_map_page(vm_object_t object, vm_ooffset_t offset);
 void vm_imgact_unmap_page(struct sf_buf *sf);
 void vm_thread_dispose(struct thread *td);
 int vm_thread_new(struct thread *td, int pages);
+vm_pindex_t vm_kstack_pindex(vm_offset_t ks, int npages);
 void vm_thread_stack_back(struct domainset *ds, vm_offset_t kaddr,
     vm_page_t ma[], int npages, int req_class);
 u_int vm_active_count(void);
