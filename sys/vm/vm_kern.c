@@ -175,6 +175,53 @@ kva_free(vm_offset_t addr, vm_size_t size)
 }
 
 /*
+ *	kva_alloc_kstack:
+ *
+ *	Allocate a virtual address range with no underlying object and
+ *	no initial mapping to physical memory.  Any mapping from this
+ *	range to physical memory must be explicitly created prior to
+ *	its use, typically with pmap_qenter().  Any attempt to create
+ *	a mapping on demand through vm_fault() will result in a panic. 
+ */
+vm_offset_t
+kva_alloc_kstack(vm_size_t size)
+{
+	vm_offset_t addr;
+
+	size = round_page(size);
+  /* Fall back to the kernel arena for non-standard kstack sizes */
+  if(size != (kstack_pages + KSTACK_GUARD_PAGES)) {
+    return (kva_alloc(size));
+  }
+
+	if (vmem_alloc(kstack_arena, size, M_BESTFIT | M_NOWAIT, &addr))
+		return (0);
+
+
+	return (addr);
+}
+
+/*
+ *	kva_free:
+ *
+ *	Release a region of kernel virtual memory allocated
+ *	with kva_alloc, and return the physical pages
+ *	associated with that region.
+ *
+ *	This routine may not block on kernel maps.
+ */
+void
+kva_free_kstack(vm_offset_t addr, vm_size_t size)
+{
+	size = round_page(size);
+  if(size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
+    kva_free(addr, size);
+  } else {
+    vmem_free(kernel_arena, addr, size);
+  }
+}
+
+/*
  * Update sanitizer shadow state to reflect a new allocation.  Force inlining to
  * help make KMSAN origin tracking more precise.
  */
@@ -769,6 +816,52 @@ kva_import_domain(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 }
 
 /*
+ * Import KVA from a parent arena into the kstack arena.  Imports must be
+ * a multiple of kernel stack pages + guard pages in size.
+ *
+ * Kstack VA allocations need to be aligned so that the linear KVA pindex
+ * is divisible by the total number of kstack VA pages to ensure that
+ * vm_kstack_pindex works properly. Here we allocate a VA region slightly
+ * larger than the requested size and adjust it until it is both
+ * properly aligned and of the requested size.
+ */
+static int
+kva_import_kstack(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
+{
+  int error, rem;
+  size_t npages = kstack_pages + KSTACK_GUARD_PAGES;
+  vm_pindex_t lin_pidx;
+
+	KASSERT((size % npages) == 0,
+          ("kva_import_kstack: Size %jd is not a multiple of kstack pages (%d)",
+           (intmax_t)size, (int)npages));
+  vmem_size_t padding = (npages) * PAGE_SIZE;
+
+  error = vmem_xalloc(arena, size + padding, PAGE_SIZE, 0, 0, VMEM_ADDR_MIN,
+                      VMEM_ADDR_MAX, flags, addrp);
+  if(error){
+    return (error);
+  }
+
+  lin_pidx = atop(*addrp - VM_MIN_KERNEL_ADDRESS);
+  rem = lin_pidx % (npages);
+  if(rem == 0){
+    /* If *addrp is properly aligned, free the padding */
+    vmem_xfree(arena, *addrp + size, padding);
+    return (0);
+  } else {
+    /* If not, bump addr to next aligned address and free padding */
+    vmem_addr_t addr_old = *addrp;
+    *addrp = *addrp + ((npages - rem) * PAGE_SIZE);
+
+    vmem_xfree(arena, addr_old, (npages - rem) * PAGE_SIZE);
+    vmem_xfree(arena, *addrp + size, rem * PAGE_SIZE);
+  }
+
+  return (0);
+}
+
+/*
  * 	kmem_init:
  *
  *	Create the kernel map; insert a mapping covering kernel text, 
@@ -780,7 +873,7 @@ kva_import_domain(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 void
 kmem_init(vm_offset_t start, vm_offset_t end)
 {
-	vm_size_t quantum;
+	vm_size_t quantum, kstack_quantum;
 	int domain;
 
 	vm_map_init(kernel_map, kernel_pmap, VM_MIN_KERNEL_ADDRESS, end);
@@ -817,13 +910,21 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 	if (vm_ndomains > 1 && PMAP_HAS_DMAP)
 		quantum = KVA_NUMA_IMPORT_QUANTUM;
 	else
-		quantum = KVA_QUANTUM;
+    quantum = KVA_QUANTUM;
+
+  kstack_quantum = quantum - ((quantum % (kstack_pages + KSTACK_GUARD_PAGES))* PAGE_SIZE);
 
 	/*
 	 * Initialize the kernel_arena.  This can grow on demand.
 	 */
 	vmem_init(kernel_arena, "kernel arena", 0, 0, PAGE_SIZE, 0, 0);
 	vmem_set_import(kernel_arena, kva_import, NULL, NULL, quantum);
+
+  /*
+	 * Initialize the kstack_arena.
+	 */
+  vmem_init(kstack_arena, "kstack arena", 0, 0, PAGE_SIZE, 0, 0);
+	vmem_set_import(kstack_arena, kva_import_kstack, NULL, kernel_arena, kstack_quantum);
 
 	for (domain = 0; domain < vm_ndomains; domain++) {
 		/*
