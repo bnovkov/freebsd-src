@@ -217,7 +217,7 @@ kva_free_kstack(vm_offset_t addr, vm_size_t size)
   if(size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
     kva_free(addr, size);
   } else {
-    vmem_free(kernel_arena, addr, size);
+    vmem_free(kstack_arena, addr, size);
   }
 }
 
@@ -864,7 +864,7 @@ kva_import_kstack(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
  * larger than the requested size and adjust it until it is both
  * properly aligned and of the requested size.
  */
-static int
+static void
 kva_release_kstack(void *arena, vmem_addr_t addr, vmem_size_t size)
 {
   int rem;
@@ -891,7 +891,7 @@ kva_release_kstack(void *arena, vmem_addr_t addr, vmem_size_t size)
 
   vmem_xfree(arena, addr, size + padding);
 
-  return (0);
+  return ;
 }
 
 /*
@@ -957,7 +957,7 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 	 * Initialize the kstack_arena.
 	 */
   vmem_init(kstack_arena, "kstack arena", 0, 0, PAGE_SIZE, 0, 0);
-	vmem_set_import(kstack_arena, kva_import_kstack, NULL, kernel_arena, kstack_quantum);
+	vmem_set_import(kstack_arena, kva_import_kstack, kva_release_kstack, kernel_arena, kstack_quantum);
 
 	for (domain = 0; domain < vm_ndomains; domain++) {
 		/*
