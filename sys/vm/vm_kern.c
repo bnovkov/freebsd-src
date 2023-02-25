@@ -190,7 +190,7 @@ kva_alloc_kstack(vm_size_t size)
 
 	size = round_page(size);
   /* Fall back to the kernel arena for non-standard kstack sizes */
-  if(size != (kstack_pages + KSTACK_GUARD_PAGES)) {
+  if(size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
     return (kva_alloc(size));
   }
 
@@ -835,9 +835,10 @@ kva_import_kstack(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 	KASSERT((size % npages) == 0,
           ("kva_import_kstack: Size %jd is not a multiple of kstack pages (%d)",
            (intmax_t)size, (int)npages));
+
   vmem_size_t padding = (npages) * PAGE_SIZE;
 
-  error = vmem_xalloc(arena, size + padding, PAGE_SIZE, 0, 0, VMEM_ADDR_MIN,
+  error = vmem_xalloc(arena, size + padding, KVA_QUANTUM, 0, 0, VMEM_ADDR_MIN,
                       VMEM_ADDR_MAX, flags, addrp);
   if(error){
     return (error);
@@ -845,18 +846,50 @@ kva_import_kstack(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 
   lin_pidx = atop(*addrp - VM_MIN_KERNEL_ADDRESS);
   rem = lin_pidx % (npages);
-  if(rem == 0){
-    /* If *addrp is properly aligned, free the padding */
-    vmem_xfree(arena, *addrp + size, padding);
-    return (0);
-  } else {
-    /* If not, bump addr to next aligned address and free padding */
-    vmem_addr_t addr_old = *addrp;
+  if(rem != 0){
+    /* Bump addr to next aligned address */
     *addrp = *addrp + ((npages - rem) * PAGE_SIZE);
-
-    vmem_xfree(arena, addr_old, (npages - rem) * PAGE_SIZE);
-    vmem_xfree(arena, *addrp + size, rem * PAGE_SIZE);
   }
+
+  return (0);
+}
+
+/*
+ * Release KVA from a parent arena into the kstack arena.  Imports must be
+ * a multiple of kernel stack pages + guard pages in size.
+ *
+ * Kstack VA allocations need to be aligned so that the linear KVA pindex
+ * is divisible by the total number of kstack VA pages to ensure that
+ * vm_kstack_pindex works properly. Here we allocate a VA region slightly
+ * larger than the requested size and adjust it until it is both
+ * properly aligned and of the requested size.
+ */
+static int
+kva_release_kstack(void *arena, vmem_addr_t addr, vmem_size_t size)
+{
+  int rem;
+  size_t npages = kstack_pages + KSTACK_GUARD_PAGES;
+
+	KASSERT((size % npages) == 0,
+          ("kva_release_kstack: Size %jd is not a multiple of kstack pages (%d)",
+           (intmax_t)size, (int)npages));
+	KASSERT((addr % npages) == 0,
+          ("kva_release_kstack: Address %p is not a multiple of kstack pages (%d)",
+           (void *)addr, (int)npages));
+
+  vmem_size_t padding = (npages) * PAGE_SIZE;
+
+  /* If the address is not KVA_QUANTUM-aligned we have to decrement
+   * the address to account for the shift in kva_import_kstack.
+   */
+  rem = addr % KVA_QUANTUM;
+  if(rem){
+    KASSERT(rem <= (npages * PAGE_SIZE), ("kva_release_kstack: rem > npages (%d), (%d)",
+                            rem, (int)npages));
+    addr -= rem;
+  }
+
+  vmem_xfree(arena, addr, size + padding);
 
   return (0);
 }
