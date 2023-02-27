@@ -401,7 +401,9 @@ vm_thread_dispose(struct thread *td)
 }
 
 /*
- * Calculate kstack pindex. Uses a non-linear mapping if guard pages are
+ * Calculate kstack pindex.
+
+ * Uses a non-linear mapping if guard pages are
  * active to avoid pindex holes in the kstack object.
  */
 vm_pindex_t
@@ -413,13 +415,9 @@ vm_kstack_pindex(vm_offset_t ks, int npages){
         if(KSTACK_GUARD_PAGES == 0){
                 return pindex;
         }
-
         KASSERT((pindex % (npages + KSTACK_GUARD_PAGES)) != 0, ("Attempting to calculate kstack guard page pindex\n"));
-        pindex =  (pindex - ((pindex / (npages + KSTACK_GUARD_PAGES)) + 1));
 
-        printf("%s: stack: %p, npages + GUARD: %d, ks pindex: %zu, new pindex: %zu\n", __func__, (void *)ks, npages + KSTACK_GUARD_PAGES, atop(ks - VM_MIN_KERNEL_ADDRESS), pindex);
-
-        return pindex;
+        return (pindex - ((pindex / (npages + KSTACK_GUARD_PAGES)) + 1));
 }
 
 /*
