@@ -298,7 +298,7 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 	/*
 	 * Get a kernel virtual address for this thread's kstack.
 	 */
-  ks = kva_alloc_kstack((pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
+	ks = kva_alloc_kstack((pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
 	if (ks == 0) {
 		printf("%s: kstack allocation failed\n", __func__);
 		return (0);
@@ -407,17 +407,20 @@ vm_thread_dispose(struct thread *td)
  * active to avoid pindex holes in the kstack object.
  */
 vm_pindex_t
-vm_kstack_pindex(vm_offset_t ks, int npages){
-        KASSERT(npages == kstack_pages, ("Calculating kstack pindex with npages != kstack_pages\n"));
+vm_kstack_pindex(vm_offset_t ks, int npages)
+{
+	KASSERT(npages == kstack_pages,
+	    ("Calculating kstack pindex with npages != kstack_pages\n"));
 
-        vm_pindex_t pindex = atop(ks - VM_MIN_KERNEL_ADDRESS);
+	vm_pindex_t pindex = atop(ks - VM_MIN_KERNEL_ADDRESS);
 
-        if(KSTACK_GUARD_PAGES == 0){
-                return pindex;
-        }
-        KASSERT((pindex % (npages + KSTACK_GUARD_PAGES)) != 0, ("Attempting to calculate kstack guard page pindex\n"));
+	if (KSTACK_GUARD_PAGES == 0) {
+		return pindex;
+	}
+	KASSERT((pindex % (npages + KSTACK_GUARD_PAGES)) != 0,
+	    ("Attempting to calculate kstack guard page pindex\n"));
 
-        return (pindex - ((pindex / (npages + KSTACK_GUARD_PAGES)) + 1));
+	return (pindex - ((pindex / (npages + KSTACK_GUARD_PAGES)) + 1));
 }
 
 /*
