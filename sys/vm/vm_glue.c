@@ -431,8 +431,7 @@ vm_thread_stack_back(struct domainset *ds, vm_offset_t ks, vm_page_t ma[],
 	vm_pindex_t pindex;
 	int n;
 
-	pindex = vm_kstack_pindex(ks, npages); //atop(ks - VM_MIN_KERNEL_ADDRESS);
-  vm_kstack_pindex(ks, npages);
+	pindex = vm_kstack_pindex(ks, npages);
 
 	VM_OBJECT_WLOCK(kstack_object);
 	for (n = 0; n < npages;) {

@@ -813,7 +813,9 @@ kva_import_domain(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
  *
  * Kstack VA allocations need to be aligned so that the linear KVA pindex
  * is divisible by the total number of kstack VA pages. This is necessary to make
- * vm_kstack_pindex work properly. We allocate a VA region slightly
+ * vm_kstack_pindex work properly.
+
+ * We allocate a KVA_QUANTUM-aligned VA region that is slightly
  * larger than the requested size and adjust it until it is both
  * properly aligned and of the requested size.
  */
@@ -930,7 +932,10 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		quantum = KVA_NUMA_IMPORT_QUANTUM;
 	else
     quantum = KVA_QUANTUM;
-  kstack_quantum = quantum - ((quantum % (kstack_pages + KSTACK_GUARD_PAGES)) * PAGE_SIZE);
+  /* The kstack_quantum is slightly smaller than KVA_QUANTUM to account
+     for adjustments done in kva_import_kstack. */
+  kstack_quantum = KVA_QUANTUM - ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
+  kstack_quantum -= kstack_quantum % ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
 
 	/*
 	 * Initialize the kernel_arena.  This can grow on demand.
