@@ -538,7 +538,7 @@ vm_thread_swapout(struct thread *td)
 	cpu_thread_swapout(td);
 	kaddr = td->td_kstack;
 	pages = td->td_kstack_pages;
-	pindex = vm_kstack_pindex(kaddr, pages); //atop(kaddr - VM_MIN_KERNEL_ADDRESS);;
+	pindex = vm_kstack_pindex(kaddr, pages);
 	pmap_qremove(kaddr, pages);
 	VM_OBJECT_WLOCK(kstack_object);
 	for (i = 0; i < pages; i++) {
