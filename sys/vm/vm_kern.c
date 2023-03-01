@@ -932,12 +932,10 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		quantum = KVA_NUMA_IMPORT_QUANTUM;
 	else
 		quantum = KVA_QUANTUM;
-	/* The kstack_quantum is slightly smaller than KVA_QUANTUM to account
-	   for adjustments done in kva_import_kstack. */
-	kstack_quantum = KVA_QUANTUM -
-	    ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
-	kstack_quantum -= kstack_quantum %
-	    ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
+  
+	/* The kstack_quantum is larger than KVA_QUANTUM to account
+	   for holes induced by guard pages. */
+	kstack_quantum = KVA_QUANTUM * (kstack_pages + KSTACK_GUARD_PAGES);
 
 	/*
 	 * Initialize the kernel_arena.  This can grow on demand.
