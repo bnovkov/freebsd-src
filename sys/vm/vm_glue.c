@@ -108,10 +108,6 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/cpu.h>
 
-static struct vmem kstack_arena_storage;
-
-vmem_t *kstack_arena = &kstack_arena_storage;
-
 /*
  * MPSAFE
  *
