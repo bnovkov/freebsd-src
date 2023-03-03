@@ -108,6 +108,10 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/cpu.h>
 
+static struct vmem kstack_arena_storage;
+
+vmem_t *kstack_arena = &kstack_arena_storage;
+
 /*
  * MPSAFE
  *
@@ -286,6 +290,45 @@ SYSCTL_PROC(_vm, OID_AUTO, kstack_cache_size,
     sysctl_kstack_cache_size, "IU", "Maximum number of cached kernel stacks");
 
 /*
+ *	kva_alloc_kstack:
+ *
+ *	Allocate a virtual address range from the kstack arena.
+ */
+static vm_offset_t
+kva_alloc_kstack(vm_size_t size)
+{
+	vm_offset_t addr;
+
+	size = round_page(size);
+	/* Fall back to the kernel arena for non-standard kstack sizes */
+	if (size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
+		return (kva_alloc(size));
+	}
+
+	if (vmem_alloc(kstack_arena, size, M_BESTFIT | M_NOWAIT, &addr))
+		return (0);
+
+	return (addr);
+}
+
+/*
+ *	kva_free_kstack:
+ *
+ *	Release a region of kernel virtual memory
+ *	allocated from the kstack arena.
+ */
+static void
+kva_free_kstack(vm_offset_t addr, vm_size_t size)
+{
+	size = round_page(size);
+	if (size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
+		kva_free(addr, size);
+	} else {
+		vmem_free(kstack_arena, addr, size);
+	}
+}
+
+/*
  * Create the kernel stack (including pcb for i386) for a new thread.
  */
 static vm_offset_t
@@ -415,7 +458,7 @@ vm_kstack_pindex(vm_offset_t ks, int npages)
 	vm_pindex_t pindex = atop(ks - VM_MIN_KERNEL_ADDRESS);
 
 	if (KSTACK_GUARD_PAGES == 0) {
-		return pindex;
+		return (pindex);
 	}
 	KASSERT((pindex % (npages + KSTACK_GUARD_PAGES)) != 0,
 	    ("Attempting to calculate kstack guard page pindex\n"));

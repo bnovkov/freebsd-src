@@ -175,45 +175,6 @@ kva_free(vm_offset_t addr, vm_size_t size)
 }
 
 /*
- *	kva_alloc_kstack:
- *
- *	Allocate a virtual address range from the kstack arena.
- */
-vm_offset_t
-kva_alloc_kstack(vm_size_t size)
-{
-	vm_offset_t addr;
-
-	size = round_page(size);
-	/* Fall back to the kernel arena for non-standard kstack sizes */
-	if (size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
-		return (kva_alloc(size));
-	}
-
-	if (vmem_alloc(kstack_arena, size, M_BESTFIT | M_NOWAIT, &addr))
-		return (0);
-
-	return (addr);
-}
-
-/*
- *	kva_free:
- *
- *	Release a region of kernel virtual memory allocated from the kstack
- *arena.
- */
-void
-kva_free_kstack(vm_offset_t addr, vm_size_t size)
-{
-	size = round_page(size);
-	if (size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
-		kva_free(addr, size);
-	} else {
-		vmem_free(kstack_arena, addr, size);
-	}
-}
-
-/*
  * Update sanitizer shadow state to reflect a new allocation.  Force inlining to
  * help make KMSAN origin tracking more precise.
  */
@@ -813,9 +774,8 @@ kva_import_domain(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
  *
  * Kstack VA allocations need to be aligned so that the linear KVA pindex
  * is divisible by the total number of kstack VA pages. This is necessary to
- make
- * vm_kstack_pindex work properly.
-
+ * make vm_kstack_pindex work properly.
+ *
  * We allocate a KVA_QUANTUM-aligned VA region that is slightly
  * larger than the requested size and adjust it until it is both
  * properly aligned and of the requested size.
@@ -932,11 +892,18 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		quantum = KVA_NUMA_IMPORT_QUANTUM;
 	else
 		quantum = KVA_QUANTUM;
-  
+
+	kstack_quantum = KVA_QUANTUM;
+
+#ifdef __ILP32__
+	/* Adjust kstack quantum size. */
+	kstack_quantum -= (kstack_quantum %
+	    ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE));
+#else
 	/* The kstack_quantum is larger than KVA_QUANTUM to account
 	   for holes induced by guard pages. */
-	kstack_quantum = KVA_QUANTUM * (kstack_pages + KSTACK_GUARD_PAGES);
-
+	kstack_quantum *= (kstack_pages + KSTACK_GUARD_PAGES);
+#endif
 	/*
 	 * Initialize the kernel_arena.  This can grow on demand.
 	 */
