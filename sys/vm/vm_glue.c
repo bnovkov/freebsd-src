@@ -108,6 +108,15 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/cpu.h>
 
+#if VM_NRESERVLEVEL > 0
+#define KVA_KSTACK_QUANTUM_SHIFT (VM_LEVEL_0_ORDER + PAGE_SHIFT)
+#else
+#define KVA_KSTACK_QUANTUM_SHIFT (8 + PAGE_SHIFT)
+#endif
+#define KVA_KSTACK_QUANTUM (1ul << KVA_KSTACK_QUANTUM_SHIFT)
+
+static vmem_t *kstack_arena = NULL;
+
 /*
  * MPSAFE
  *
@@ -286,12 +295,10 @@ SYSCTL_PROC(_vm, OID_AUTO, kstack_cache_size,
     sysctl_kstack_cache_size, "IU", "Maximum number of cached kernel stacks");
 
 /*
- *	kva_alloc_kstack:
- *
  *	Allocate a virtual address range from the kstack arena.
  */
 static vm_offset_t
-kva_alloc_kstack(vm_size_t size)
+vm_thread_alloc_kstack_kva(vm_size_t size)
 {
 	vm_offset_t addr;
 
@@ -308,13 +315,11 @@ kva_alloc_kstack(vm_size_t size)
 }
 
 /*
- *	kva_free_kstack:
- *
  *	Release a region of kernel virtual memory
  *	allocated from the kstack arena.
  */
 static void
-kva_free_kstack(vm_offset_t addr, vm_size_t size)
+vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size)
 {
 	size = round_page(size);
 	if (size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
@@ -322,6 +327,81 @@ kva_free_kstack(vm_offset_t addr, vm_size_t size)
 	} else {
 		vmem_free(kstack_arena, addr, size);
 	}
+}
+
+/*
+ * Import KVA from a parent arena into the kstack arena. Imports must be
+ * a multiple of kernel stack pages + guard pages in size.
+ *
+ * Kstack VA allocations need to be aligned so that the linear KVA pindex
+ * is divisible by the total number of kstack VA pages. This is necessary to
+ * make vm_kstack_pindex work properly.
+ *
+ * We allocate a KVA_KSTACK_QUANTUM-aligned VA region that is slightly
+ * larger than the requested size and adjust it until it is both
+ * properly aligned and of the requested size.
+ */
+static int
+vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
+    vmem_addr_t *addrp)
+{
+	int error, rem;
+	size_t npages = kstack_pages + KSTACK_GUARD_PAGES;
+	vmem_size_t padding = npages * PAGE_SIZE;
+	vm_pindex_t lin_pidx;
+
+	KASSERT((size % npages) == 0,
+	    ("kva_import_kstack: Size %jd is not a multiple of kstack pages (%d)",
+		(intmax_t)size, (int)npages));
+
+	error = vmem_xalloc(arena, size + padding, KVA_KSTACK_QUANTUM, 0, 0,
+	    VMEM_ADDR_MIN, VMEM_ADDR_MAX, flags, addrp);
+	if (error) {
+		return (error);
+	}
+
+	lin_pidx = atop(*addrp - VM_MIN_KERNEL_ADDRESS);
+	rem = lin_pidx % (npages);
+	if (rem != 0) {
+		/* Bump addr to next aligned address */
+		*addrp = *addrp + ((npages - rem) * PAGE_SIZE);
+	}
+
+	return (0);
+}
+
+/*
+ * Release KVA from a parent arena into the kstack arena. Released imports must
+ * be a multiple of kernel stack pages + guard pages in size.
+ */
+static void
+vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
+{
+	int rem;
+	size_t npages = kstack_pages + KSTACK_GUARD_PAGES;
+	vmem_size_t padding = npages * PAGE_SIZE;
+
+	KASSERT((size % npages) == 0,
+	    ("kva_release_kstack: Size %jd is not a multiple of kstack pages (%d)",
+		(intmax_t)size, (int)npages));
+	KASSERT((addr % npages) == 0,
+	    ("kva_release_kstack: Address %p is not a multiple of kstack pages (%d)",
+		(void *)addr, (int)npages));
+
+	/*
+	 * If the address is not KVA_KSTACK_QUANTUM-aligned we have to decrement
+	 * it to account for the shift in kva_import_kstack.
+	 */
+	rem = addr % KVA_KSTACK_QUANTUM;
+	if (rem) {
+		KASSERT(rem <= (npages * PAGE_SIZE),
+		    ("kva_release_kstack: rem > npages (%d), (%d)", rem,
+			(int)npages));
+		addr -= rem;
+	}
+	vmem_xfree(arena, addr, size + padding);
+
+	return;
 }
 
 /*
@@ -337,7 +417,8 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 	/*
 	 * Get a kernel virtual address for this thread's kstack.
 	 */
-	ks = kva_alloc_kstack((pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
+	ks = vm_thread_alloc_kstack_kva(
+	    (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
 	if (ks == 0) {
 		printf("%s: kstack allocation failed\n", __func__);
 		return (0);
@@ -380,7 +461,7 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 	}
 	VM_OBJECT_WUNLOCK(kstack_object);
 	kasan_mark((void *)ks, ptoa(pages), ptoa(pages), 0);
-	kva_free_kstack(ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
+	vm_thread_free_kstack_kva(ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
 	    (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
 }
 
@@ -449,7 +530,7 @@ vm_pindex_t
 vm_kstack_pindex(vm_offset_t ks, int npages)
 {
 	KASSERT(npages == kstack_pages,
-	    ("Calculating kstack pindex with npages != kstack_pages\n"));
+	    ("Calculating kstack pindex with npages != kstack_pages"));
 
 	vm_pindex_t pindex = atop(ks - VM_MIN_KERNEL_ADDRESS);
 
@@ -457,7 +538,7 @@ vm_kstack_pindex(vm_offset_t ks, int npages)
 		return (pindex);
 	}
 	KASSERT((pindex % (npages + KSTACK_GUARD_PAGES)) != 0,
-	    ("Attempting to calculate kstack guard page pindex\n"));
+	    ("Attempting to calculate kstack guard page pindex"));
 
 	return (pindex - ((pindex / (npages + KSTACK_GUARD_PAGES)) + 1));
 }
@@ -525,6 +606,8 @@ kstack_release(void *arg, void **store, int cnt)
 static void
 kstack_cache_init(void *null)
 {
+	vm_size_t kstack_quantum;
+
 	kstack_object = vm_object_allocate(OBJT_SWAP,
 	    atop(VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS));
 	kstack_cache = uma_zcache_create("kstack_cache",
@@ -533,6 +616,27 @@ kstack_cache_init(void *null)
 	    UMA_ZONE_FIRSTTOUCH);
 	kstack_cache_size = imax(128, mp_ncpus * 4);
 	uma_zone_set_maxcache(kstack_cache, kstack_cache_size);
+
+	kstack_quantum = KVA_KSTACK_QUANTUM;
+#ifdef __ILP32__
+	/* Adjust kstack quantum size. */
+	kstack_quantum -= (kstack_quantum %
+	    ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE));
+#else
+	/* The kstack_quantum is larger than KVA_QUANTUM to account
+	   for holes induced by guard pages. */
+	kstack_quantum *= (kstack_pages + KSTACK_GUARD_PAGES);
+#endif
+
+	/*
+	 * Create the kstack_arena and set kernel_arena as parent.
+	 */
+	kstack_arena = vmem_create("kstack arena", 0, 0, PAGE_SIZE, 0,
+	    M_WAITOK);
+	KASSERT(kstack_arena != NULL,
+	    ("kstack_cache_init: failed to create kstack_arena"));
+	vmem_set_import(kstack_arena, vm_thread_kstack_arena_import,
+	    vm_thread_kstack_arena_release, kernel_arena, kstack_quantum);
 }
 SYSINIT(vm_kstacks, SI_SUB_KMEM, SI_ORDER_ANY, kstack_cache_init, NULL);
 
