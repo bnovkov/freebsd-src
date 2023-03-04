@@ -450,6 +450,8 @@ int vm_get_intinfo(struct vcpu *vcpu, uint64_t *info1, uint64_t *info2);
  */
 void vm_set_tsc_offset(struct vcpu *vcpu, uint64_t offset);
 
+int vm_check_rdtsc(struct vcpu *vcpu);
+
 enum vm_reg_name vm_segment_name(int seg_encoding);
 
 struct vm_copyinfo {
@@ -497,6 +499,7 @@ enum vm_cap_type {
 	VM_CAP_RDPID,
 	VM_CAP_RDTSCP,
 	VM_CAP_IPI_EXIT,
+	VM_CAP_RDTSC,
 	VM_CAP_MAX
 };
 
@@ -645,6 +648,7 @@ enum vm_exitcode {
 	VM_EXITCODE_VMINSN,
 	VM_EXITCODE_BPT,
 	VM_EXITCODE_IPI,
+  VM_EXITCODE_RDTSC,
 	VM_EXITCODE_MAX
 };
 

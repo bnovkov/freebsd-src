@@ -2784,6 +2784,15 @@ vmx_exit_process(struct vmx *vmx, struct vmx_vcpu *vcpu, struct vm_exit *vmexit)
 		vmexit->inst_length = 0;
 		handled = HANDLED;
 		break;
+  case EXIT_REASON_RDTSC:
+  case EXIT_REASON_RDTSCP:
+    if(vmx_cpl() == 3){
+      error = vm_check_rdtsc(vcpu->vcpu);
+      if(error){
+        // TODO: propagate to upper vm layer
+      }
+    }
+    break;
 	case EXIT_REASON_VMCALL:
 	case EXIT_REASON_VMCLEAR:
 	case EXIT_REASON_VMLAUNCH:
@@ -3627,6 +3636,13 @@ vmx_setcap(void *vcpui, int type, int val)
 
 		vlapic = vm_lapic(vcpu->vcpu);
 		vlapic->ipi_exit = val;
+		break;
+  case VM_CAP_RDTSC_EXIT:
+			retval = 0;
+			pptr = &vcpu->cap.proc_ctls;
+			baseval = *pptr;
+			flag = PROCBASED_RDTSC_EXITING;
+			reg = VMCS_PRI_PROC_BASED_CTLS;
 		break;
 	default:
 		break;

@@ -94,6 +94,7 @@ __FBSDID("$FreeBSD$");
 #include "io/iommu.h"
 
 struct vlapic;
+struct rdtsc_stats;
 
 /*
  * Initialization:
@@ -125,6 +126,7 @@ struct vcpu {
 	struct vm_exit	exitinfo;	/* (x) exit reason and collateral */
 	uint64_t	nextrip;	/* (x) next instruction to execute */
 	uint64_t	tsc_offset;	/* (o) TSC offsetting */
+  struct rdtsc_stats *sca_stats;
 };
 
 #define	vcpu_lock_init(v)	mtx_init(&((v)->mtx), "vcpu lock", 0, MTX_SPIN)
@@ -149,6 +151,13 @@ struct mem_map {
 	int		flags;
 };
 #define	VM_MAX_MEMMAPS	8
+
+struct rdtsc_stats {
+   uint64_t last_reading;
+   uint64_t read_cnt;
+   uint64_t suspicious_read_cnt;
+   uint64_t warning_cnt;
+ }
 
 /*
  * Initialization:
@@ -294,10 +303,9 @@ static int trap_wbinvd;
 SYSCTL_INT(_hw_vmm, OID_AUTO, trap_wbinvd, CTLFLAG_RDTUN, &trap_wbinvd, 0,
     "WBINVD triggers a VM-exit");
 
-static int monitor_sca;
+static int monitor_sca = 0;
 static int sysctl_vmm_monitor_sca(SYSCTL_HANDLER_ARGS);
-SYSCTL_OID(_hw_vmm, OID_AUTO, monitor_sca, CTLFLAG_RW, NULL, 0,
-    sysctl_vmm_monitor_sca, "I",
+SYSCTL_INT(_hw_vmm, OID_AUTO, monitor_sca, CTLFLAG_RDTUN,  &monitor_sca, 0,
     "Monitor and prevent timing-based side-channel attacks");
 
 u_int vm_maxcpu;
@@ -368,6 +376,7 @@ vcpu_alloc(struct vm *vm, int vcpu_id)
 	vcpu->guestfpu = fpu_save_area_alloc();
 	vcpu->stats = vmm_stat_alloc();
 	vcpu->tsc_offset = 0;
+  vcpu->sca_stats = NULL;
 	return (vcpu);
 }
 
@@ -385,6 +394,14 @@ vcpu_init(struct vcpu *vcpu)
 	vcpu->guest_xcr0 = XFEATURE_ENABLED_X87;
 	fpu_save_area_reset(vcpu->guestfpu);
 	vmm_stat_init(vcpu->stats);
+
+  if(monitor_sca){
+    if(vmmops_setcap(vcpu->cookie, VM_CAP_RDTSC_EXIT, 1) < 0 ){
+      printf("%s: failed to activate RDTSC vmexit on vCPU - side-channel monitoring will be inactive\n",
+             __func__);
+    }
+    vcpu->stats = malloc(sizeof(struct rdtsc_stats), M_VM, M_WAITOK | M_ZERO);
+  }
 }
 
 int
@@ -491,7 +508,7 @@ static moduledata_t vmm_kmod = {
 
 /*
  * vmm initialization has the following dependencies:
- *
+g *
  * - VT-x initialization requires smp_rendezvous() and therefore must happen
  *   after SMP is fully functional (after SI_SUB_SMP).
  */
@@ -1754,6 +1771,14 @@ vm_handle_reqidle(struct vcpu *vcpu, bool *retu)
 }
 
 int
+vm_check_rdtsc(struct vcpu *vcpu)
+{
+	int error;
+
+	return (0);
+}
+
+int
 vm_suspend(struct vm *vm, enum vm_suspend_how how)
 {
 	int i;
@@ -2609,7 +2634,7 @@ vm_get_vmspace(struct vm *vm)
 {
 
 	return (vm->vmspace);
-}
+
 
 int
 vm_apicid2vcpuid(struct vm *vm, int apicid)
@@ -2993,20 +3018,3 @@ vm_restore_time(struct vm *vm)
 	return (0);
 }
 #endif
-
-static int sysctl_vmm_monitor_sca(SYSCTL_HANDLER_ARGS){
-	int error;
-	int new = monitor_sca;
-
-	error = sysctl_handle_int(oidp, &new, 0, req);
-	if (error != 0 || req->newptr == NULL)
-		return (error);
-
-	if (new != monitor_sca) {
-		error = vmmops_monitor_sca(vcpu->cookie, new);
-		if (error)
-			return (error);
-	}
-
-	return (0);
-}
