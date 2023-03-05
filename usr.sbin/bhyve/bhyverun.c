@@ -1229,6 +1229,7 @@ set_defaults(void)
 {
 
 	set_config_bool("acpi_tables", false);
+        set_config_bool("sca_monitor", false); 
 	set_config_value("memory.size", "256M");
 	set_config_bool("x86.strictmsr", true);
 }
@@ -1474,6 +1475,9 @@ main(int argc, char *argv[])
 	 */
 	if (get_config_bool("acpi_tables"))
 		vmgenc_init(ctx);
+
+        if (get_config_bool("monitor_sca"))
+		vm_enable_sca_monitor(ctx); 
 
 	init_gdb(ctx);
 
