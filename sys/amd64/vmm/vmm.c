@@ -294,9 +294,16 @@ static int trap_wbinvd;
 SYSCTL_INT(_hw_vmm, OID_AUTO, trap_wbinvd, CTLFLAG_RDTUN, &trap_wbinvd, 0,
     "WBINVD triggers a VM-exit");
 
+static int monitor_sca;
+static int sysctl_vmm_monitor_sca(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_hw_vmm, OID_AUTO, monitor_sca, CTLFLAG_RW, NULL, 0,
+    sysctl_vmm_monitor_sca, "I",
+    "Monitor and prevent timing-based side-channel attacks");
+
 u_int vm_maxcpu;
 SYSCTL_UINT(_hw_vmm, OID_AUTO, maxcpu, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
     &vm_maxcpu, 0, "Maximum number of vCPUs");
+
 
 static void vm_free_memmap(struct vm *vm, int ident);
 static bool sysmem_mapping(struct vm *vm, struct mem_map *mm);
@@ -2986,3 +2993,20 @@ vm_restore_time(struct vm *vm)
 	return (0);
 }
 #endif
+
+static int sysctl_vmm_monitor_sca(SYSCTL_HANDLER_ARGS){
+	int error;
+	int new = monitor_sca;
+
+	error = sysctl_handle_int(oidp, &new, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	if (new != monitor_sca) {
+		error = vmmops_monitor_sca(vcpu->cookie, new);
+		if (error)
+			return (error);
+	}
+
+	return (0);
+}
