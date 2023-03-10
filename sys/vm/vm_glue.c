@@ -276,6 +276,7 @@ vm_sync_icache(vm_map_t map, vm_offset_t va, vm_offset_t sz)
 }
 
 vm_object_t kstack_object;
+vm_object_t kstack_alt_object;
 static uma_zone_t kstack_cache;
 static int kstack_cache_size;
 
@@ -304,7 +305,7 @@ vm_thread_alloc_kstack_kva(vm_size_t size)
 
 	size = round_page(size);
 	/* Fall back to the kernel arena for non-standard kstack sizes */
-	if (size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
+	if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
 		return (kva_alloc(size));
 	}
 
@@ -322,7 +323,7 @@ static void
 vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size)
 {
 	size = round_page(size);
-	if (size != ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
+	if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
 		kva_free(addr, size);
 	} else {
 		vmem_free(kstack_arena, addr, size);
@@ -350,8 +351,8 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 	vmem_size_t padding = npages * PAGE_SIZE;
 	vm_pindex_t lin_pidx;
 
-	KASSERT((size % npages) == 0,
-	    ("kva_import_kstack: Size %jd is not a multiple of kstack pages (%d)",
+	KASSERT(atop(size) % npages == 0,
+	    ("%s: Size %jd is not a multiple of kstack pages (%d)", __func__,
 		(intmax_t)size, (int)npages));
 
 	error = vmem_xalloc(arena, size + padding, KVA_KSTACK_QUANTUM, 0, 0,
@@ -361,10 +362,10 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 	}
 
 	lin_pidx = atop(*addrp - VM_MIN_KERNEL_ADDRESS);
-	rem = lin_pidx % (npages);
+	rem = lin_pidx % npages;
 	if (rem != 0) {
 		/* Bump addr to next aligned address */
-		*addrp = *addrp + ((npages - rem) * PAGE_SIZE);
+		*addrp = *addrp + (npages - rem) * PAGE_SIZE;
 	}
 
 	return (0);
@@ -381,11 +382,11 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 	size_t npages = kstack_pages + KSTACK_GUARD_PAGES;
 	vmem_size_t padding = npages * PAGE_SIZE;
 
-	KASSERT((size % npages) == 0,
-	    ("kva_release_kstack: Size %jd is not a multiple of kstack pages (%d)",
+	KASSERT(size % npages == 0,
+	    ("%s: Size %jd is not a multiple of kstack pages (%d)", __func__,
 		(intmax_t)size, (int)npages));
-	KASSERT((addr % npages) == 0,
-	    ("kva_release_kstack: Address %p is not a multiple of kstack pages (%d)",
+	KASSERT(addr % npages == 0,
+	    ("%s: Address %p is not a multiple of kstack pages (%d)", __func__,
 		(void *)addr, (int)npages));
 
 	/*
@@ -395,13 +396,11 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 	rem = addr % KVA_KSTACK_QUANTUM;
 	if (rem) {
 		KASSERT(rem <= (npages * PAGE_SIZE),
-		    ("kva_release_kstack: rem > npages (%d), (%d)", rem,
+		    ("%s: rem > npages (%d), (%d)", __func__, rem,
 			(int)npages));
 		addr -= rem;
 	}
 	vmem_xfree(arena, addr, size + padding);
-
-	return;
 }
 
 /*
@@ -446,20 +445,21 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 	vm_page_t m;
 	vm_pindex_t pindex;
 	int i;
+	vm_object_t obj = vm_thread_kstack_size_to_obj(pages);
 
 	pindex = vm_kstack_pindex(ks, pages);
 
 	pmap_qremove(ks, pages);
-	VM_OBJECT_WLOCK(kstack_object);
+	VM_OBJECT_WLOCK(obj);
 	for (i = 0; i < pages; i++) {
-		m = vm_page_lookup(kstack_object, pindex + i);
+		m = vm_page_lookup(obj, pindex + i);
 		if (m == NULL)
 			panic("%s: kstack already missing?", __func__);
 		vm_page_xbusy_claim(m);
 		vm_page_unwire_noq(m);
 		vm_page_free(m);
 	}
-	VM_OBJECT_WUNLOCK(kstack_object);
+	VM_OBJECT_WUNLOCK(obj);
 	kasan_mark((void *)ks, ptoa(pages), ptoa(pages), 0);
 	vm_thread_free_kstack_kva(ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
 	    (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
@@ -529,16 +529,15 @@ vm_thread_dispose(struct thread *td)
 vm_pindex_t
 vm_kstack_pindex(vm_offset_t ks, int npages)
 {
-	KASSERT(npages == kstack_pages,
-	    ("Calculating kstack pindex with npages != kstack_pages"));
-
 	vm_pindex_t pindex = atop(ks - VM_MIN_KERNEL_ADDRESS);
 
-	if (KSTACK_GUARD_PAGES == 0) {
+	/* Return the linear pindex if guard pages aren't active or if we are
+	 * allocating a non-standard kstack size. */
+	if (KSTACK_GUARD_PAGES == 0 || npages != kstack_pages) {
 		return (pindex);
 	}
-	KASSERT((pindex % (npages + KSTACK_GUARD_PAGES)) != 0,
-	    ("Attempting to calculate kstack guard page pindex"));
+	KASSERT(pindex % (npages + KSTACK_GUARD_PAGES) != 0,
+	    ("%s: Attempting to calculate kstack guard page pindex", __func__));
 
 	return (pindex - ((pindex / (npages + KSTACK_GUARD_PAGES)) + 1));
 }
@@ -553,23 +552,29 @@ vm_thread_stack_back(struct domainset *ds, vm_offset_t ks, vm_page_t ma[],
 {
 	vm_pindex_t pindex;
 	int n;
-
+	vm_object_t obj = vm_thread_kstack_size_to_obj(npages);
 	pindex = vm_kstack_pindex(ks, npages);
 
-	VM_OBJECT_WLOCK(kstack_object);
+	VM_OBJECT_WLOCK(obj);
 	for (n = 0; n < npages;) {
 		if (vm_ndomains > 1)
-			kstack_object->domain.dr_policy = ds;
+			obj->domain.dr_policy = ds;
 
 		/*
 		 * Use WAITFAIL to force a reset of the domain selection policy
 		 * if we had to sleep for pages.
 		 */
-		n += vm_page_grab_pages(kstack_object, pindex + n,
-		    req_class | VM_ALLOC_WIRED | VM_ALLOC_WAITFAIL,
-		    &ma[n], npages - n);
+		n += vm_page_grab_pages(obj, pindex + n,
+		    req_class | VM_ALLOC_WIRED | VM_ALLOC_WAITFAIL, &ma[n],
+		    npages - n);
 	}
-	VM_OBJECT_WUNLOCK(kstack_object);
+	VM_OBJECT_WUNLOCK(obj);
+}
+
+vm_object_t
+vm_thread_kstack_size_to_obj(int npages)
+{
+	return (npages == kstack_pages ? kstack_object : kstack_alt_object);
 }
 
 static int
@@ -617,15 +622,18 @@ kstack_cache_init(void *null)
 	kstack_cache_size = imax(128, mp_ncpus * 4);
 	uma_zone_set_maxcache(kstack_cache, kstack_cache_size);
 
+	kstack_alt_object = vm_object_allocate(OBJT_SWAP,
+	    atop(VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS));
+
 	kstack_quantum = KVA_KSTACK_QUANTUM;
 #ifdef __ILP32__
 	/* Adjust kstack quantum size. */
-	kstack_quantum -= (kstack_quantum %
-	    ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE));
+	kstack_quantum -= kstack_quantum %
+	    ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
 #else
 	/* The kstack_quantum is larger than KVA_QUANTUM to account
 	   for holes induced by guard pages. */
-	kstack_quantum *= (kstack_pages + KSTACK_GUARD_PAGES);
+	kstack_quantum *= kstack_pages + KSTACK_GUARD_PAGES;
 #endif
 
 	/*
@@ -634,7 +642,7 @@ kstack_cache_init(void *null)
 	kstack_arena = vmem_create("kstack arena", 0, 0, PAGE_SIZE, 0,
 	    M_WAITOK);
 	KASSERT(kstack_arena != NULL,
-	    ("kstack_cache_init: failed to create kstack_arena"));
+	    ("%s: failed to create kstack_arena", __func__));
 	vmem_set_import(kstack_arena, vm_thread_kstack_arena_import,
 	    vm_thread_kstack_arena_release, kernel_arena, kstack_quantum);
 }
