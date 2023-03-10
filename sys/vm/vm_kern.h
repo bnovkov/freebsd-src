@@ -81,5 +81,5 @@ extern u_long vm_kmem_size;
 extern u_int exec_map_entries;
 extern u_int exec_map_entry_size;
 extern vm_object_t kstack_object;
-
+extern vm_object_t kstack_alt_object;
 #endif /* _VM_VM_KERN_H_ */
