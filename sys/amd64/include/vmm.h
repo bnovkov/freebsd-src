@@ -231,6 +231,8 @@ void vm_get_topology(struct vm *vm, uint16_t *sockets, uint16_t *cores,
     uint16_t *threads, uint16_t *maxcpus);
 int vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
     uint16_t threads, uint16_t maxcpus);
+int vm_alloc_rdtsc_stats(struct vcpu *vcpu);
+void vm_free_rdtsc_stats(struct vcpu *vcpu);
 
 /*
  * APIs that modify the guest memory map require all vcpus to be frozen.

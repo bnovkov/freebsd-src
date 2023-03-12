@@ -908,6 +908,7 @@ static const char *capstrmap[] = {
 	[VM_CAP_UNRESTRICTED_GUEST] = "unrestricted_guest",
 	[VM_CAP_ENABLE_INVPCID] = "enable_invpcid",
 	[VM_CAP_BPT_EXIT] = "bpt_exit",
+  [VM_CAP_SCA_MONITOR] = "sca_monitor",
 };
 
 int

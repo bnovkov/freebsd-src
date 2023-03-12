@@ -157,7 +157,7 @@ struct rdtsc_stats {
    uint64_t read_cnt;
    uint64_t suspicious_read_cnt;
    uint64_t warning_cnt;
- }
+ };
 
 /*
  * Initialization:
@@ -394,14 +394,6 @@ vcpu_init(struct vcpu *vcpu)
 	vcpu->guest_xcr0 = XFEATURE_ENABLED_X87;
 	fpu_save_area_reset(vcpu->guestfpu);
 	vmm_stat_init(vcpu->stats);
-
-  if(monitor_sca){
-    if(vmmops_setcap(vcpu->cookie, VM_CAP_RDTSC_EXIT, 1) < 0 ){
-      printf("%s: failed to activate RDTSC vmexit on vCPU - side-channel monitoring will be inactive\n",
-             __func__);
-    }
-    vcpu->stats = malloc(sizeof(struct rdtsc_stats), M_VM, M_WAITOK | M_ZERO);
-  }
 }
 
 int
@@ -1771,9 +1763,19 @@ vm_handle_reqidle(struct vcpu *vcpu, bool *retu)
 }
 
 int
+vm_alloc_rdtsc_stats(struct vcpu *vcpu){
+  vcpu->stats = malloc(sizeof(struct rdtsc_stats), M_VM, M_WAITOK | M_ZERO);
+  return (0);
+}
+
+void
+vm_free_rdtsc_stats(struct vcpu *vcpu){
+         free(vcpu->stats, M_VM);
+} 
+
+int
 vm_check_rdtsc(struct vcpu *vcpu)
 {
-	int error;
 
 	return (0);
 }
@@ -2634,7 +2636,7 @@ vm_get_vmspace(struct vm *vm)
 {
 
 	return (vm->vmspace);
-
+}
 
 int
 vm_apicid2vcpuid(struct vm *vm, int apicid)
