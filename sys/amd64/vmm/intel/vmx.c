@@ -3637,8 +3637,9 @@ vmx_setcap(void *vcpui, int type, int val)
 		vlapic = vm_lapic(vcpu->vcpu);
 		vlapic->ipi_exit = val;
 		break;
-  case VM_CAP_RDTSC_EXIT:
+  case VM_CAP_SCA_MONITOR:
 			retval = 0;
+
 			pptr = &vcpu->cap.proc_ctls;
 			baseval = *pptr;
 			flag = PROCBASED_RDTSC_EXITING;

@@ -499,7 +499,7 @@ enum vm_cap_type {
 	VM_CAP_RDPID,
 	VM_CAP_RDTSCP,
 	VM_CAP_IPI_EXIT,
-	VM_CAP_RDTSC,
+	VM_CAP_SCA_MONITOR,
 	VM_CAP_MAX
 };
 

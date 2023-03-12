@@ -1153,6 +1153,13 @@ spinup_vcpu(struct vmctx *ctx, int vcpu)
 		assert(error == 0);
 	}
 
+  if (get_config_bool("monitor_sca")){
+          if(vm_set_capability(ctx, vcpu, VM_CAP_SCA_MONITOR, 1) < 0){
+                  fprintf(stderr, "Failed to activate side-channel mitigation\n");
+          }
+  }
+
+
 	fbsdrun_addcpu(ctx, vcpu);
 }
 
@@ -1476,8 +1483,6 @@ main(int argc, char *argv[])
 	if (get_config_bool("acpi_tables"))
 		vmgenc_init(ctx);
 
-        if (get_config_bool("monitor_sca"))
-		vm_enable_sca_monitor(ctx); 
 
 	init_gdb(ctx);
 
