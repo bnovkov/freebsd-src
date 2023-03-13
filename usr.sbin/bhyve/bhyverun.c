@@ -1239,6 +1239,7 @@ set_defaults(void)
         set_config_bool("sca_monitor", false); 
 	set_config_value("memory.size", "256M");
 	set_config_bool("x86.strictmsr", true);
+  set_config_bool("monitor_sca", false);
 }
 
 int
@@ -1262,9 +1263,9 @@ main(int argc, char *argv[])
 	progname = basename(argv[0]);
 
 #ifdef BHYVE_SNAPSHOT
-	optstr = "aehuwxACDHIPSWYk:o:p:G:c:s:m:l:K:U:r:";
+	optstr = "aehnuwxACDHIPSWYk:o:p:G:c:s:m:l:K:U:r:";
 #else
-	optstr = "aehuwxACDHIPSWYk:o:p:G:c:s:m:l:K:U:";
+	optstr = "aehnuwxACDHIPSWYk:o:p:G:c:s:m:l:K:U:";
 #endif
 	while ((c = getopt(argc, argv, optstr)) != -1) {
 		switch (c) {
@@ -1309,6 +1310,9 @@ main(int argc, char *argv[])
 				errx(EX_USAGE, "invalid lpc device "
 				    "configuration '%s'", optarg);
 			}
+			break;
+    case 'n':
+			set_config_bool("monitor_sca", true);
 			break;
 #ifdef BHYVE_SNAPSHOT
 		case 'r':

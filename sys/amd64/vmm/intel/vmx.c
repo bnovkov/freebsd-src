@@ -2340,6 +2340,15 @@ emulate_rdmsr(struct vmx_vcpu *vcpu, u_int num, bool *retu)
 }
 
 static int
+emulate_rdtsc(struct vmx_vcpu *vcpu, uint64_t rdtscval){
+  // TODO: add cpl and other checks
+  vmcs_write(VMCS_GUEST_RDX, (uint32_t)(rdtscval >> 32));
+  vmcs_write(VMCS_GUEST_RAX, (uint32_t)(rdtscval));
+
+  return 0;
+}
+
+static int
 vmx_exit_process(struct vmx *vmx, struct vmx_vcpu *vcpu, struct vm_exit *vmexit)
 {
 	int error, errcode, errcode_valid, handled, in;
@@ -2785,14 +2794,19 @@ vmx_exit_process(struct vmx *vmx, struct vmx_vcpu *vcpu, struct vm_exit *vmexit)
 		handled = HANDLED;
 		break;
   case EXIT_REASON_RDTSC:
-  case EXIT_REASON_RDTSCP:
-    if(vmx_cpl() == 3){
-      error = vm_check_rdtsc(vcpu->vcpu);
-      if(error){
-        // TODO: propagate to upper vm layer
+  case EXIT_REASON_RDTSCP:{
+    uint64_t rdtscval = rdtsc();
+    int cpl = vmx_cpl();
+    if(cpl == 3){
+      rdtscval = vm_check_rdtsc(vcpu->vcpu, rdtscval);
+      if(rdtscval == 0){
+        // TODO: propagate error to upper vm layer
       }
     }
+    emulate_rdtsc(vcpu, rdtscval, cpl);
+    handled = HANDLED;
     break;
+  }
 	case EXIT_REASON_VMCALL:
 	case EXIT_REASON_VMCLEAR:
 	case EXIT_REASON_VMLAUNCH:
@@ -3639,7 +3653,7 @@ vmx_setcap(void *vcpui, int type, int val)
 		break;
   case VM_CAP_SCA_MONITOR:{
 			retval = 0;
-      if(val && vm_alloc_rdtsc_stats(vcpu->vcpu) < 0){
+      if(val && (vm_alloc_rdtsc_stats(vcpu->vcpu) < 0)){
         retval = -1;
         break;
       }else if(!val){

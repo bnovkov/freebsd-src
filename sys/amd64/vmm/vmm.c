@@ -303,11 +303,6 @@ static int trap_wbinvd;
 SYSCTL_INT(_hw_vmm, OID_AUTO, trap_wbinvd, CTLFLAG_RDTUN, &trap_wbinvd, 0,
     "WBINVD triggers a VM-exit");
 
-static int monitor_sca = 0;
-static int sysctl_vmm_monitor_sca(SYSCTL_HANDLER_ARGS);
-SYSCTL_INT(_hw_vmm, OID_AUTO, monitor_sca, CTLFLAG_RDTUN,  &monitor_sca, 0,
-    "Monitor and prevent timing-based side-channel attacks");
-
 u_int vm_maxcpu;
 SYSCTL_UINT(_hw_vmm, OID_AUTO, maxcpu, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
     &vm_maxcpu, 0, "Maximum number of vCPUs");
@@ -1771,12 +1766,12 @@ vm_alloc_rdtsc_stats(struct vcpu *vcpu){
 void
 vm_free_rdtsc_stats(struct vcpu *vcpu){
          free(vcpu->stats, M_VM);
-} 
+}
 
 int
 vm_check_rdtsc(struct vcpu *vcpu)
 {
-
+  printf("%s: called\n", __func__);
 	return (0);
 }
 
