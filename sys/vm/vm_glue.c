@@ -321,6 +321,8 @@ vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
       break;
   }while(vm_domainset_iter_policy(&di, &domain) == 0);
 
+  KASSERT(atop(addr - VM_MIN_KERNEL_ADDRESS) % (kstack_pages + KSTACK_GUARD_PAGES) == 0, ("%s: allocated kstack KVA not aligned to multiple of kstack size", __func__));
+
 	return (addr);
 }
 
