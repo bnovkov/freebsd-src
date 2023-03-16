@@ -61,15 +61,17 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include "opt_vm.h"
-#include "opt_kstack_pages.h"
 #include "opt_kstack_max_pages.h"
+#include "opt_kstack_pages.h"
 #include "opt_kstack_usage_prof.h"
+#include "opt_vm.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/asan.h>
 #include <sys/domainset.h>
+#include <sys/kernel.h>
+#include <sys/ktr.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -84,28 +86,26 @@ __FBSDID("$FreeBSD$");
 #include <sys/sf_buf.h>
 #include <sys/shm.h>
 #include <sys/smp.h>
-#include <sys/vmmeter.h>
-#include <sys/vmem.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
-#include <sys/kernel.h>
-#include <sys/ktr.h>
 #include <sys/unistd.h>
+#include <sys/vmem.h>
+#include <sys/vmmeter.h>
 
-#include <vm/uma.h>
 #include <vm/vm.h>
-#include <vm/vm_param.h>
 #include <vm/pmap.h>
+#include <vm/swap_pager.h>
+#include <vm/uma.h>
 #include <vm/vm_domainset.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_kern.h>
 #include <vm/vm_map.h>
+#include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_pagequeue.h>
-#include <vm/vm_object.h>
-#include <vm/vm_kern.h>
-#include <vm/vm_extern.h>
 #include <vm/vm_pager.h>
-#include <vm/swap_pager.h>
+#include <vm/vm_param.h>
 
 #include <machine/cpu.h>
 
@@ -296,32 +296,38 @@ SYSCTL_PROC(_vm, OID_AUTO, kstack_cache_size,
     sysctl_kstack_cache_size, "IU", "Maximum number of cached kernel stacks");
 
 /*
- *	Allocate a virtual address range from a domain kstack arena, following the specified NUMA policy.
+ *	Allocate a virtual address range from a domain kstack arena, following
+ *the specified NUMA policy.
  */
 static vm_offset_t
 vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
 {
 	vm_offset_t addr = 0;
-  vmem_t *arena;
-  struct vm_domainset_iter di;
-  int domain, flags = 0;
+	vmem_t *arena;
+	struct vm_domainset_iter di;
+	int domain, flags = 0;
 
 	size = round_page(size);
 
-  vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
-  do{
-    /* Fall back to the kernel arena for non-standard kstack sizes */
-    if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
-      arena = vm_dom[domain].vmd_kernel_arena;
-    } else {
-      arena = vmd_kstack_arena[domain];
-    }
+	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
+	do {
+		/* Fall back to the kernel arena for non-standard kstack sizes
+		 */
+		if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
+			arena = vm_dom[domain].vmd_kernel_arena;
+		} else {
+			arena = vmd_kstack_arena[domain];
+		}
 
-    if(vmem_alloc(arena, size, M_BESTFIT | M_NOWAIT, &addr) == 0)
-      break;
-  }while(vm_domainset_iter_policy(&di, &domain) == 0);
+		if (vmem_alloc(arena, size, M_BESTFIT | M_NOWAIT, &addr) == 0)
+			break;
+	} while (vm_domainset_iter_policy(&di, &domain) == 0);
 
-  KASSERT(atop(addr - VM_MIN_KERNEL_ADDRESS) % (kstack_pages + KSTACK_GUARD_PAGES) == 0, ("%s: allocated kstack KVA not aligned to multiple of kstack size", __func__));
+	KASSERT(atop(addr - VM_MIN_KERNEL_ADDRESS) %
+		    (kstack_pages + KSTACK_GUARD_PAGES) ==
+		0,
+	    ("%s: allocated kstack KVA not aligned to multiple of kstack size",
+		__func__));
 
 	return (addr);
 }
@@ -333,24 +339,25 @@ vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
 static void
 vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size, int domain)
 {
-  vmem_t *arena = vmd_kstack_arena[domain];
+	vmem_t *arena = vmd_kstack_arena[domain];
 
 	size = round_page(size);
 	if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
-    arena = vm_dom[domain].vmd_kernel_arena;
+		arena = vm_dom[domain].vmd_kernel_arena;
 	}
 
-  vmem_free(arena, addr, size);
+	vmem_free(arena, addr, size);
 }
 
 static vmem_size_t
-vm_thread_kstack_import_quantum(void){
+vm_thread_kstack_import_quantum(void)
+{
 #ifndef __ILP32__
 	/* The kstack_quantum is larger than KVA_QUANTUM to account
 	   for holes induced by guard pages. */
-  return (KVA_KSTACK_QUANTUM * (kstack_pages + KSTACK_GUARD_PAGES));
+	return (KVA_KSTACK_QUANTUM * (kstack_pages + KSTACK_GUARD_PAGES));
 #else
-  return (KVA_KSTACK_QUANTUM);
+	return (KVA_KSTACK_QUANTUM);
 #endif
 }
 
@@ -362,9 +369,9 @@ vm_thread_kstack_import_quantum(void){
  * is divisible by the total number of kstack VA pages. This is necessary to
  * make vm_kstack_pindex work properly.
  *
- * We import a multiple of KVA_KSTACK_QUANTUM-sized region from the parent arena.
- * The actual size used by the kstack arena is one kstack smaller to allow for
- * the necessary alignment adjustments to be made.
+ * We import a multiple of KVA_KSTACK_QUANTUM-sized region from the parent
+ * arena. The actual size used by the kstack arena is one kstack smaller to
+ * allow for the necessary alignment adjustments to be made.
  */
 static int
 vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
@@ -378,8 +385,9 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 	    ("%s: Size %jd is not a multiple of kstack pages (%d)", __func__,
 		(intmax_t)size, (int)npages));
 
-	error = vmem_xalloc(arena, vm_thread_kstack_import_quantum(), KVA_KSTACK_QUANTUM, 0, 0,
-	    VMEM_ADDR_MIN, VMEM_ADDR_MAX, flags, addrp);
+	error = vmem_xalloc(arena, vm_thread_kstack_import_quantum(),
+	    KVA_KSTACK_QUANTUM, 0, 0, VMEM_ADDR_MIN, VMEM_ADDR_MAX, flags,
+	    addrp);
 	if (error) {
 		return (error);
 	}
@@ -438,8 +446,9 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 	/*
 	 * Get a kernel virtual address for this thread's kstack.
 	 */
-	ks = vm_thread_alloc_kstack_kva(
-                                  (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE, ds);
+	ks = vm_thread_alloc_kstack_kva((pages + KSTACK_GUARD_PAGES) *
+		PAGE_SIZE,
+	    ds);
 	if (ks == 0) {
 		printf("%s: kstack allocation failed\n", __func__);
 		return (0);
@@ -477,8 +486,8 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 		m = vm_page_lookup(obj, pindex + i);
 		if (m == NULL)
 			panic("%s: kstack already missing?", __func__);
-    if(domain == -1)
-      domain = vm_page_domain(m);
+		if (domain == -1)
+			domain = vm_page_domain(m);
 		vm_page_xbusy_claim(m);
 		vm_page_unwire_noq(m);
 		vm_page_free(m);
@@ -486,7 +495,7 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 	VM_OBJECT_WUNLOCK(obj);
 	kasan_mark((void *)ks, ptoa(pages), ptoa(pages), 0);
 	vm_thread_free_kstack_kva(ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
-                            (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE, domain);
+	    (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE, domain);
 }
 
 /*
@@ -514,7 +523,7 @@ vm_thread_new(struct thread *td, int pages)
 	 */
 	if (ks == 0)
 		ks = vm_thread_stack_create(DOMAINSET_PREF(PCPU_GET(domain)),
-                                pages);
+		    pages);
 	if (ks == 0)
 		return (0);
 	td->td_kstack = ks;
@@ -637,7 +646,7 @@ static void
 kstack_cache_init(void *null)
 {
 	vm_size_t kstack_quantum;
-  int domain;
+	int domain;
 
 	kstack_object = vm_object_allocate(OBJT_SWAP,
 	    atop(VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS));
@@ -652,22 +661,26 @@ kstack_cache_init(void *null)
 	    atop(VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS));
 
 	kstack_quantum = vm_thread_kstack_import_quantum();
-  /*
-   * Reduce size used by the kstack arena to allow for
-   * alignment adjustments in vm_thread_kstack_arena_import.
-   */
-  kstack_quantum -= ( kstack_pages + KSTACK_GUARD_PAGES)*PAGE_SIZE;
 	/*
-	 * Create the kstack_arena for each domain and set kernel_arena as parent.
+	 * Reduce size used by the kstack arena to allow for
+	 * alignment adjustments in vm_thread_kstack_arena_import.
 	 */
-  for (domain = 0; domain < vm_ndomains; domain++) {
-    vmd_kstack_arena[domain] = vmem_create("kstack arena", 0, 0, PAGE_SIZE, 0,
-                               M_WAITOK);
-    KASSERT(vmd_kstack_arena[domain] != NULL,
-            ("%s: failed to create domain %d kstack_arena", __func__, domain));
-    vmem_set_import(vmd_kstack_arena[domain], vm_thread_kstack_arena_import,
-                    vm_thread_kstack_arena_release, kernel_arena, kstack_quantum);
-  }
+	kstack_quantum -= (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE;
+	/*
+	 * Create the kstack_arena for each domain and set kernel_arena as
+	 * parent.
+	 */
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		vmd_kstack_arena[domain] = vmem_create("kstack arena", 0, 0,
+		    PAGE_SIZE, 0, M_WAITOK);
+		KASSERT(vmd_kstack_arena[domain] != NULL,
+		    ("%s: failed to create domain %d kstack_arena", __func__,
+			domain));
+		vmem_set_import(vmd_kstack_arena[domain],
+		    vm_thread_kstack_arena_import,
+		    vm_thread_kstack_arena_release, kernel_arena,
+		    kstack_quantum);
+	}
 }
 SYSINIT(vm_kstacks, SI_SUB_KMEM, SI_ORDER_ANY, kstack_cache_init, NULL);
 
