@@ -297,7 +297,7 @@ SYSCTL_PROC(_vm, OID_AUTO, kstack_cache_size,
 
 /*
  *	Allocate a virtual address range from a domain kstack arena, following
- *the specified NUMA policy.
+ *	the specified NUMA policy.
  */
 static vm_offset_t
 vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
@@ -311,8 +311,7 @@ vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
 
 	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
 	do {
-		/* Fall back to the kernel arena for non-standard kstack sizes
-		 */
+		/* Allocate from the kernel arena for non-standard kstack sizes. */
 		if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
 			arena = vm_dom[domain].vmd_kernel_arena;
 		} else {
@@ -555,7 +554,7 @@ vm_thread_dispose(struct thread *td)
 
 /*
  * Calculate kstack pindex.
-
+ *
  * Uses a non-linear mapping if guard pages are
  * active to avoid pindex holes in the kstack object.
  */
