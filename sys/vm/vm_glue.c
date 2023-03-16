@@ -311,7 +311,7 @@ vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
   vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
   do{
     /* Fall back to the kernel arena for non-standard kstack sizes */
-    if (__predict_false(size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
+    if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
       arena = vm_dom[domain].vmd_kernel_arena;
     } else {
       arena = vmd_kstack_arena[domain];
@@ -336,11 +336,22 @@ vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size, int domain)
   vmem_t *arena = vmd_kstack_arena[domain];
 
 	size = round_page(size);
-	if (__predict_false(size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE)) {
+	if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
     arena = vm_dom[domain].vmd_kernel_arena;
 	}
 
   vmem_free(arena, addr, size);
+}
+
+static vmem_size_t
+vm_thread_kstack_import_quantum(void){
+#ifndef __ILP32__
+	/* The kstack_quantum is larger than KVA_QUANTUM to account
+	   for holes induced by guard pages. */
+  return (KVA_KSTACK_QUANTUM * (kstack_pages + KSTACK_GUARD_PAGES));
+#else
+  return (KVA_KSTACK_QUANTUM);
+#endif
 }
 
 /*
@@ -351,9 +362,9 @@ vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size, int domain)
  * is divisible by the total number of kstack VA pages. This is necessary to
  * make vm_kstack_pindex work properly.
  *
- * We allocate a KVA_KSTACK_QUANTUM-aligned VA region that is slightly
- * larger than the requested size and adjust it until it is both
- * properly aligned and of the requested size.
+ * We import a multiple of KVA_KSTACK_QUANTUM-sized region from the parent arena.
+ * The actual size used by the kstack arena is one kstack smaller to allow for
+ * the necessary alignment adjustments to be made.
  */
 static int
 vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
@@ -361,14 +372,13 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 {
 	int error, rem;
 	size_t npages = kstack_pages + KSTACK_GUARD_PAGES;
-	vmem_size_t padding = npages * PAGE_SIZE;
 	vm_pindex_t lin_pidx;
 
 	KASSERT(atop(size) % npages == 0,
 	    ("%s: Size %jd is not a multiple of kstack pages (%d)", __func__,
 		(intmax_t)size, (int)npages));
 
-	error = vmem_xalloc(arena, size + padding, KVA_KSTACK_QUANTUM, 0, 0,
+	error = vmem_xalloc(arena, vm_thread_kstack_import_quantum(), KVA_KSTACK_QUANTUM, 0, 0,
 	    VMEM_ADDR_MIN, VMEM_ADDR_MAX, flags, addrp);
 	if (error) {
 		return (error);
@@ -393,7 +403,6 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 {
 	int rem;
 	size_t npages = kstack_pages + KSTACK_GUARD_PAGES;
-	vmem_size_t padding = npages * PAGE_SIZE;
 
 	KASSERT(size % npages == 0,
 	    ("%s: Size %jd is not a multiple of kstack pages (%d)", __func__,
@@ -413,7 +422,7 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 			(int)npages));
 		addr -= rem;
 	}
-	vmem_xfree(arena, addr, size + padding);
+	vmem_xfree(arena, addr, vm_thread_kstack_import_quantum());
 }
 
 /*
@@ -642,17 +651,12 @@ kstack_cache_init(void *null)
 	kstack_alt_object = vm_object_allocate(OBJT_SWAP,
 	    atop(VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS));
 
-	kstack_quantum = KVA_KSTACK_QUANTUM;
-#ifdef __ILP32__
-	/* Adjust kstack quantum size. */
-	kstack_quantum -= kstack_quantum %
-	    ((kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
-#else
-	/* The kstack_quantum is larger than KVA_QUANTUM to account
-	   for holes induced by guard pages. */
-	kstack_quantum *= kstack_pages + KSTACK_GUARD_PAGES;
-#endif
-
+	kstack_quantum = vm_thread_kstack_import_quantum();
+  /*
+   * Reduce size used by the kstack arena to allow for
+   * alignment adjustments in vm_thread_kstack_arena_import.
+   */
+  kstack_quantum -= ( kstack_pages + KSTACK_GUARD_PAGES)*PAGE_SIZE;
 	/*
 	 * Create the kstack_arena for each domain and set kernel_arena as parent.
 	 */
