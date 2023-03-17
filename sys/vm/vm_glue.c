@@ -61,17 +61,15 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include "opt_kstack_max_pages.h"
-#include "opt_kstack_pages.h"
-#include "opt_kstack_usage_prof.h"
 #include "opt_vm.h"
+#include "opt_kstack_pages.h"
+#include "opt_kstack_max_pages.h"
+#include "opt_kstack_usage_prof.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/asan.h>
 #include <sys/domainset.h>
-#include <sys/kernel.h>
-#include <sys/ktr.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -86,26 +84,28 @@ __FBSDID("$FreeBSD$");
 #include <sys/sf_buf.h>
 #include <sys/shm.h>
 #include <sys/smp.h>
+#include <sys/vmmeter.h>
+#include <sys/vmem.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
+#include <sys/kernel.h>
+#include <sys/ktr.h>
 #include <sys/unistd.h>
-#include <sys/vmem.h>
-#include <sys/vmmeter.h>
 
-#include <vm/vm.h>
-#include <vm/pmap.h>
-#include <vm/swap_pager.h>
 #include <vm/uma.h>
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/pmap.h>
 #include <vm/vm_domainset.h>
-#include <vm/vm_extern.h>
-#include <vm/vm_kern.h>
 #include <vm/vm_map.h>
-#include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_pagequeue.h>
+#include <vm/vm_object.h>
+#include <vm/vm_kern.h>
+#include <vm/vm_extern.h>
 #include <vm/vm_pager.h>
-#include <vm/vm_param.h>
+#include <vm/swap_pager.h>
 
 #include <machine/cpu.h>
 
