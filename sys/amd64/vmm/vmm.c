@@ -1769,10 +1769,10 @@ vm_free_rdtsc_stats(struct vcpu *vcpu){
 }
 
 int
-vm_check_rdtsc(struct vcpu *vcpu)
+vm_check_rdtsc(struct vcpu *vcpu, uint64_t rdtscval)
 {
   printf("%s: called\n", __func__);
-	return (0);
+	return (rdtscval);
 }
 
 int
