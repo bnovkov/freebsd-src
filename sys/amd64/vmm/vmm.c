@@ -48,6 +48,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/vnode.h>
+#include <sys/prng.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -126,7 +127,7 @@ struct vcpu {
 	struct vm_exit	exitinfo;	/* (x) exit reason and collateral */
 	uint64_t	nextrip;	/* (x) next instruction to execute */
 	uint64_t	tsc_offset;	/* (o) TSC offsetting */
-  struct rdtsc_stats *sca_stats;
+  struct rdtsc_stats *tsc_stats;
 };
 
 #define	vcpu_lock_init(v)	mtx_init(&((v)->mtx), "vcpu lock", 0, MTX_SPIN)
@@ -154,10 +155,12 @@ struct mem_map {
 
 struct rdtsc_stats {
    uint64_t last_reading;
-   uint64_t read_cnt;
-   uint64_t suspicious_read_cnt;
-   uint64_t warning_cnt;
- };
+   uint64_t delta_thresh;
+};
+#define VMM_SCA_RDTSC_DEFAULT_DELTA_THRESH 300
+#define VMM_SCA_RDTSC_NOISE_LO 256
+#define VMM_SCA_RDTSC_NOISE_HI (4400 - (VMM_SCA_RDTSC_NOISE_LO))
+
 
 /*
  * Initialization:
@@ -347,7 +350,8 @@ vcpu_cleanup(struct vcpu *vcpu, bool destroy)
 	vmmops_vcpu_cleanup(vcpu->cookie);
 	vcpu->cookie = NULL;
 	if (destroy) {
-		vmm_stat_free(vcpu->stats);	
+		vmm_stat_free(vcpu->stats);
+    vm_free_rdtsc_stats(vcpu);
 		fpu_save_area_free(vcpu->guestfpu);
 		vcpu_lock_destroy(vcpu);
 		free(vcpu, M_VM);
@@ -371,7 +375,7 @@ vcpu_alloc(struct vm *vm, int vcpu_id)
 	vcpu->guestfpu = fpu_save_area_alloc();
 	vcpu->stats = vmm_stat_alloc();
 	vcpu->tsc_offset = 0;
-  vcpu->sca_stats = NULL;
+  vcpu->tsc_stats = NULL;
 	return (vcpu);
 }
 
@@ -1759,20 +1763,31 @@ vm_handle_reqidle(struct vcpu *vcpu, bool *retu)
 
 int
 vm_alloc_rdtsc_stats(struct vcpu *vcpu){
-  vcpu->stats = malloc(sizeof(struct rdtsc_stats), M_VM, M_WAITOK | M_ZERO);
+  vcpu->tsc_stats = malloc(sizeof(struct rdtsc_stats), M_VM, M_WAITOK | M_ZERO);
+  vcpu->tsc_stats->delta_thresh = VMM_SCA_RDTSC_DEFAULT_DELTA_THRESH;
   return (0);
 }
 
 void
 vm_free_rdtsc_stats(struct vcpu *vcpu){
-         free(vcpu->stats, M_VM);
+         free(vcpu->tsc_stats, M_VM);
 }
 
-int
-vm_check_rdtsc(struct vcpu *vcpu, uint64_t rdtscval)
+/*
+ * Checks for possible timing-based side-channel attacks.
+ * Must be invoked for userspace code only (cpl == 3).
+ */
+void
+vm_check_rdtsc(struct vcpu *vcpu, uint64_t *tscval)
 {
-  printf("%s: called\n", __func__);
-	return (rdtscval);
+  struct rdtsc_stats *sp = vcpu->tsc_stats;
+
+  if((*tscval - sp->last_reading) <= sp->delta_thresh){
+    sp->last_reading = *tscval;
+    *tscval += VMM_SCA_RDTSC_NOISE_LO + (prng64_bounded(VMM_SCA_RDTSC_NOISE_HI));
+  } else {
+    sp->last_reading = *tscval;
+  }
 }
 
 int

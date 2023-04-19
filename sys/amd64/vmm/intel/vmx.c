@@ -2340,8 +2340,9 @@ emulate_rdmsr(struct vmx_vcpu *vcpu, u_int num, bool *retu)
 }
 
 static int
-emulate_rdtsc(struct vmx_vcpu *vcpu){
-  uint64_t rdtscval = rdtsc();
+emulate_rdtsc(struct vmx_vcpu *vcpu)
+{
+  uint64_t tscval = rdtsc();
   int cpl = vmx_cpl();
 
   if(cpl == 3){
@@ -2351,11 +2352,11 @@ emulate_rdtsc(struct vmx_vcpu *vcpu){
       return (-1);
     }
     /* Check for suspicious behaviour */
-    rdtscval = vm_check_rdtsc(vcpu->vcpu, rdtscval);
+    vm_check_rdtsc(vcpu->vcpu, &tscval);
   }
 
-  vmcs_write(VM_REG_GUEST_RDX, (uint32_t)(rdtscval >> 32));
-  vmcs_write(VM_REG_GUEST_RAX, (uint32_t)(rdtscval));
+  vmxctx_setreg(&vcpu->ctx, VM_REG_GUEST_RDX, (uint32_t)(tscval >> 32));
+  vmxctx_setreg(&vcpu->ctx, VM_REG_GUEST_RAX, (uint32_t)(tscval));
 
   return (0);
 }
@@ -2806,11 +2807,10 @@ vmx_exit_process(struct vmx *vmx, struct vmx_vcpu *vcpu, struct vm_exit *vmexit)
 		handled = HANDLED;
 		break;
   case EXIT_REASON_RDTSC:
-  case EXIT_REASON_RDTSCP:{
-    emulate_rdtsc(vcpu);
-    handled = HANDLED;
+  case EXIT_REASON_RDTSCP:
+    if(emulate_rdtsc(vcpu) == 0)
+      handled = HANDLED;
     break;
-  }
 	case EXIT_REASON_VMCALL:
 	case EXIT_REASON_VMCLEAR:
 	case EXIT_REASON_VMLAUNCH:
