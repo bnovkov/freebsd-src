@@ -3628,6 +3628,17 @@ vmx_setcap(void *vcpui, int type, int val)
 		vlapic = vm_lapic(vcpu->vcpu);
 		vlapic->ipi_exit = val;
 		break;
+  case VM_CAP_SSTEP_MASK_HWINTR:
+    retval = 0;
+    uint64_t rflags;
+    error = vmx_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+    KASSERT(error == 0, ("%s: vmx_getreg error %d", __func__, error));
+    rflags &= ~PSL_I;
+    rflags |= val * PSL_I;
+
+    error = vmx_setreg(vcpu, VM_REG_GUEST_RFLAGS, rflags);
+    KASSERT(error == 0, ("%s: vmx_setreg error %d", __func__, error));
+    break;
 	default:
 		break;
 	}
