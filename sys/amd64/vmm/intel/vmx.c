@@ -3628,27 +3628,29 @@ vmx_setcap(void *vcpui, int type, int val)
 		vlapic = vm_lapic(vcpu->vcpu);
 		vlapic->ipi_exit = val;
 		break;
-  case VM_CAP_SSTEP_MASK_HWINTR:{
-    uint64_t rflags;
+	case VM_CAP_SSTEP_MASK_HWINTR: {
+		uint64_t rflags;
 
-    retval = 0;
-    error = vmx_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
-    KASSERT(error == 0, ("%s: vmx_getreg error %d", __func__, error));
+		retval = 0;
+		error = vmx_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+		KASSERT(error == 0,
+		    ("%s: vmx_getreg error %d", __func__, error));
 
-    if(val){
-      /* Save current IF bit and disable interrupts. */
-      vcpu->dbg.shadow_if = rflags & PSL_I;
-      rflags &= ~PSL_I;
-    } else {
-      /* Restore shadowed IF bit. */
-      rflags &= ~PSL_I;
-      rflags |= vcpu->dbg.shadow_if;
-    }
+		if (val) {
+			/* Save current IF bit and disable interrupts. */
+			vcpu->dbg.shadow_if = rflags & PSL_I;
+			rflags &= ~PSL_I;
+		} else {
+			/* Restore shadowed IF bit. */
+			rflags &= ~PSL_I;
+			rflags |= vcpu->dbg.shadow_if;
+		}
 
-    error = vmx_setreg(vcpu, VM_REG_GUEST_RFLAGS, rflags);
-    KASSERT(error == 0, ("%s: vmx_setreg error %d", __func__, error));
-    break;
-  }
+		error = vmx_setreg(vcpu, VM_REG_GUEST_RFLAGS, rflags);
+		KASSERT(error == 0,
+		    ("%s: vmx_setreg error %d", __func__, error));
+		break;
+	}
 	default:
 		break;
 	}

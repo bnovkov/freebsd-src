@@ -802,7 +802,7 @@ gdb_cpu_resume(struct vcpu *vcpu)
 		error = vm_set_capability(vcpu, VM_CAP_MTRAP_EXIT, 1);
 		assert(error == 0);
 
-    error = vm_set_capability(vcpu, VM_CAP_SSTEP_MASK_HWINTR, 1);
+		error = vm_set_capability(vcpu, VM_CAP_SSTEP_MASK_HWINTR, 1);
 		assert(error == 0);
 	}
 }
