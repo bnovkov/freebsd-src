@@ -126,6 +126,10 @@ enum {
 	GUEST_MSR_NUM		/* must be the last enumeration */
 };
 
+struct vmxdbg {
+  int shadow_if;
+};
+
 struct vmx_vcpu {
 	struct vmx	*vmx;
 	struct vcpu	*vcpu;
@@ -136,6 +140,7 @@ struct vmx_vcpu {
 	struct vmxctx	ctx;
 	struct vmxcap	cap;
 	struct vmxstate	state;
+  struct vmxdbg dbg;
 	struct vm_mtrr  mtrr;
 	int		vcpuid;
 };
