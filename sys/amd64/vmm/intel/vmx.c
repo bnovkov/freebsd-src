@@ -3635,13 +3635,13 @@ vmx_setcap(void *vcpui, int type, int val)
     error = vmx_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
     KASSERT(error == 0, ("%s: vmx_getreg error %d", __func__, error));
 
-    rflags &= ~PSL_I;
     if(val){
-      /* Save current IF bit */
+      /* Save current IF bit and disable interrupts. */
       vcpu->dbg.shadow_if = rflags & PSL_I;
-      rflags |= PSL_I;
+      rflags &= ~PSL_I;
     } else {
-      /* Restore shadowed IF bit */
+      /* Restore shadowed IF bit. */
+      rflags &= ~PSL_I;
       rflags |= vcpu->dbg.shadow_if;
     }
 

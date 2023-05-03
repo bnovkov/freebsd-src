@@ -802,7 +802,7 @@ gdb_cpu_resume(struct vcpu *vcpu)
 		error = vm_set_capability(vcpu, VM_CAP_MTRAP_EXIT, 1);
 		assert(error == 0);
 
-    error = vm_set_capability(vcpu, VM_CAP_SSTEP_MASK_HWINTR, 0);
+    error = vm_set_capability(vcpu, VM_CAP_SSTEP_MASK_HWINTR, 1);
 		assert(error == 0);
 	}
 }
@@ -856,7 +856,7 @@ gdb_cpu_mtrap(struct vcpu *vcpu)
 		vs->stepping = false;
 		vs->stepped = true;
 		vm_set_capability(vcpu, VM_CAP_MTRAP_EXIT, 0);
-		vm_set_capability(vcpu, VM_CAP_SSTEP_MASK_HWINTR, 1);
+		vm_set_capability(vcpu, VM_CAP_SSTEP_MASK_HWINTR, 0);
 
 		while (vs->stepped) {
 			if (stopped_vcpu == -1) {
