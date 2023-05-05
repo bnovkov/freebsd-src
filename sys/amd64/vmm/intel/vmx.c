@@ -1433,6 +1433,11 @@ vmx_inject_interrupts(struct vmx_vcpu *vcpu, struct vlapic *vlapic,
 	uint64_t rflags, entryinfo;
 	uint32_t gi, info;
 
+
+	if (vcpu->cap.set & (1 << VM_CAP_MASK_HWINTR)) {
+		return;
+	}
+
 	if (vcpu->state.nextrip != guestrip) {
 		gi = vmcs_read(VMCS_GUEST_INTERRUPTIBILITY);
 		if (gi & HWINTR_BLOCKING) {
@@ -2640,7 +2645,7 @@ vmx_exit_process(struct vmx *vmx, struct vmx_vcpu *vcpu, struct vm_exit *vmexit)
 
 		/*
 		 * If Virtual NMIs control is 1 and the VM-exit is due to a
-		 * fault encountered during the execution of IRET then we must
+		 * fault encou ntered during the execution of IRET then we must
 		 * restore the state of "virtual-NMI blocking" before resuming
 		 * the guest.
 		 *
@@ -3628,30 +3633,9 @@ vmx_setcap(void *vcpui, int type, int val)
 		vlapic = vm_lapic(vcpu->vcpu);
 		vlapic->ipi_exit = val;
 		break;
-	case VM_CAP_MASK_HWINTR: {
+	case VM_CAP_MASK_HWINTR:		
 		retval = 0;
-		uint64_t rflags;
-		
-		error = vmx_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
-		if (error)
-			return (error);
-
-		if (val) {
-			/* Save current IF bit and disable interrupts. */
-			vcpu->dbg.shadow_if = rflags & PSL_I;
-			rflags &= ~PSL_I;
-		} else {
-			/* Restore shadowed IF bit. */
-			rflags &= ~PSL_I;
-			rflags |= vcpu->dbg.shadow_if;
-		}
-
-		error = vmx_setreg(vcpu, VM_REG_GUEST_RFLAGS, rflags);
-		if (error)
-			return (error);
-
 		break;
-	}
 	default:
 		break;
 	}
