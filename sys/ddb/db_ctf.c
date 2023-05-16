@@ -43,10 +43,12 @@ static struct ddb_ctf {
 static void
 db_ctf_init(void *arg)
 {
+
 	int err;
+  const ctf_header_t *hp;
 
 	memset((void *)&db_ctf, 0, sizeof(db_ctf));
-
+  /*
 	err = linker_ctf_get_ddb(linker_kernel_file, &db_ctf.kernel_ctf);
 	if (err) {
 		printf("%s: linker_ctf_get_ddb error: %d\n", __func__, err);
@@ -54,11 +56,34 @@ db_ctf_init(void *arg)
 	}
 
 	printf("%s: loaded kernel CTF info\n", __func__);
+        */
+
+                err = linker_ctf_get(linker_kernel_file, &db_ctf.kernel_ctf);
+                if (err) {
+                        printf("%s: linker_ctf_get error: %d\n", __func__, err);
+                        return;
+                }
+
+                hp = (const ctf_header_t *)db_ctf.kernel_ctf.ctftab;
+
+                /* Sanity checks. */
+                if (db_ctf.kernel_ctf.symtab == NULL) {
+                        printf("%s: kernel symbol table missing\n", __func__);
+                        return;
+                }
+
+                if (hp->cth_version != CTF_VERSION_3) {
+                        printf("%s: CTF V2 data encountered\n", __func__);
+                        return;
+                }
+
+                printf("%s: loaded kernel CTF info\n", __func__);
+
 
 	db_ctf.loaded = true;
 }
 
-SYSINIT(db_ctf, SI_SUB_KLD, SI_ORDER_FOURTH, db_ctf_init, NULL);
+SYSINIT(db_ctf, SI_SUB_LAST, SI_ORDER_ANY, db_ctf_init, NULL);
 
 bool
 db_ctf_loaded(void)

@@ -321,7 +321,6 @@ typedef struct linker_ctf {
 } linker_ctf_t;
 
 int	linker_ctf_get(linker_file_t, linker_ctf_t *);
-int	linker_ctf_get_ddb(linker_file_t, linker_ctf_t *);
 
 int elf_cpu_load_file(linker_file_t);
 int elf_cpu_unload_file(linker_file_t);

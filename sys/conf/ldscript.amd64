@@ -176,8 +176,6 @@ SECTIONS
       This way it can be mapped using non-executable large pages. */
    . = ALIGN(0x200000);
   }
-  _ctf = .;
-  .kern_SUNW_ctf         : { ctf.o(.SUNW_ctf) }
   _end = .; PROVIDE (end = .);
   . = DATA_SEGMENT_END (.);
   /* Stabs debugging sections.  */

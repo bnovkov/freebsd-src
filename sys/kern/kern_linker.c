@@ -778,12 +778,6 @@ linker_ctf_get(linker_file_t file, linker_ctf_t *lc)
 	return (LINKER_CTF_GET(file, lc));
 }
 
-int
-linker_ctf_get_ddb(linker_file_t file, linker_ctf_t *lc)
-{
-	return (LINKER_CTF_GET_DDB(file, lc));
-}
-
 static int
 linker_file_add_dependency(linker_file_t file, linker_file_t dep)
 {

@@ -290,32 +290,3 @@ out:
 
 	return (error);
 }
-
-static int
-link_elf_ctf_get_ddb(linker_file_t lf, linker_ctf_t *lc)
-{
-#ifdef DDB_CTF
-        elf_file_t ef = (elf_file_t) lf;
-
-        if (lf == NULL || lc == NULL)
-                return (EINVAL);
-
-        if (ef->ctftab == 0 || ef->ctfcnt == 0){
-                return (EINVAL);
-        }
-
-        bzero(lc, sizeof(*lc));
-
-        lc->ctftab = ef->ctftab;
-        lc->ctfcnt = ef->ctfcnt;
-        lc->symtab = ef->ddbsymtab;
-        lc->nsym   = ef->ddbsymcnt;
-        lc->strtab = ef->ddbstrtab;
-        lc->strcnt = ef->ddbstrcnt;
-
-        return (0);
-
-#else
-        return (EOPNOTSUPP);
-#endif
-}
