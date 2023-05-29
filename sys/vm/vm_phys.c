@@ -354,7 +354,7 @@ vm_phys_get_order_info(struct vm_phys_info *info, int order, int domain)
         }
 }
 
-static int
+int
 vm_phys_fragmentation_index(int order, int domain)
 {
         struct vm_phys_info info;
@@ -398,7 +398,8 @@ sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS)
 	for (dom = 0; dom < vm_ndomains; dom++) {
 		vm_domain_free_lock(VM_DOMAIN(dom));
 
-		sbuf_printf(&sbuf, "\nDOMAIN %d\n", dom);
+    sbuf_printf(&sbuf, "\n--\n");
+    sbuf_printf(&sbuf, "\nDOMAIN %d\n", dom);
 		sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  FMFI\n");
 		sbuf_printf(&sbuf, "--\n");
 
@@ -435,7 +436,8 @@ sysctl_vm_phys_unusable_idx(SYSCTL_HANDLER_ARGS)
 	for (dom = 0; dom < vm_ndomains; dom++) {
 		vm_domain_free_lock(VM_DOMAIN(dom));
 
-		sbuf_printf(&sbuf, "\nDOMAIN %d\n", dom);
+		sbuf_printf(&sbuf, "\n--\n");
+		sbuf_printf(&sbuf, "DOMAIN %d\n", dom);
 		sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  UFSI\n");
 		sbuf_printf(&sbuf, "--\n");
 
