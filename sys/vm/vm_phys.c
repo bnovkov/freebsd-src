@@ -186,19 +186,6 @@ SYSCTL_OID(_vm, OID_AUTO, phys_segs,
     sysctl_vm_phys_segs, "A",
     "Phys Seg Info");
 
-static int sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS);
-SYSCTL_OID(_vm, OID_AUTO, phys_compact,
-           CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
-           sysctl_vm_phys_compact, "A",
-           "Compact physical memory");
-
-static int vm_phys_compact_thresh = 500; /* 200 - 1000 */
-static int sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS);
-SYSCTL_OID(_vm, OID_AUTO, phys_compact_thresh,
-           CTLTYPE_INT | CTLFLAG_RW, NULL, 0,
-           sysctl_vm_phys_compact_thresh, "I",
-           "Fragmentation index threshold for memory compaction");
-
 #ifdef NUMA
 static int sysctl_vm_phys_locality(SYSCTL_HANDLER_ARGS);
 SYSCTL_OID(_vm, OID_AUTO, phys_locality,
@@ -329,92 +316,101 @@ sysctl_vm_phys_free(SYSCTL_HANDLER_ARGS)
 }
 
 static void
-get_phys_info(struct vm_phys_info *info)
+vm_phys_get_info(struct vm_phys_info *info, int domain)
 {
         struct vm_freelist *fl;
-        int pind, oind, flind, dom;
+	int pind, oind, flind;
 
-        /* Calculate total number of free pages and blocks */
+	/* Calculate total number of free pages and blocks */
         info->free_pages = info->order_suitable_pages = info->free_blocks = 0;
-        for (dom = 0; dom < vm_ndomains; dom++) {
-                for (flind = 0; flind < vm_nfreelists; flind++) {
-                        for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
-                                for (pind = 0; pind < VM_NFREEPOOL; pind++) {
-                                        fl = vm_phys_free_queues[dom][flind][pind];
-                                        info->free_pages += fl[oind].lcnt << oind;
-                                        info->free_blocks += fl[oind].lcnt;
-                                }
-                        }
-                }
-        }
+	for (flind = 0; flind < vm_nfreelists; flind++) {
+		for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
+			for (pind = 0; pind < VM_NFREEPOOL; pind++) {
+				fl = vm_phys_free_queues[domain][flind][pind];
+				info->free_pages += fl[oind].lcnt << oind;
+				info->free_blocks += fl[oind].lcnt;
+			}
+		}
+	}
 }
 
 static void
-get_order_phys_info(struct vm_phys_info *info, int order)
+vm_phys_get_order_info(struct vm_phys_info *info, int order, int domain)
 {
         struct vm_freelist *fl;
-        int pind, oind, flind, dom;
+	int pind, oind, flind;
 
-        /* Calculate total number of free pages
+	/* Calculate total number of free pages
            for the specified order and higher orders */
         info->order_suitable_pages = 0;
         for (oind = VM_NFREEORDER - 1; oind >= order; oind--) {
-                for (dom = 0; dom < vm_ndomains; dom++) {
                         for (flind = 0; flind < vm_nfreelists; flind++) {
                                 for (pind = 0; pind < VM_NFREEPOOL; pind++) {
-                                        fl = vm_phys_free_queues[dom][flind][pind];
-                                        info->order_suitable_pages += fl[oind].lcnt << oind;
+					fl = vm_phys_free_queues[domain][flind]
+								[pind];
+					info->order_suitable_pages += fl[oind].lcnt << oind;
                                 }
                         }
-                }
         }
 }
 
 static int
-vm_phys_fragmentation_index(int order)
+vm_phys_fragmentation_index(int order, int domain)
 {
         struct vm_phys_info info;
 
-        get_phys_info(&info);
+	vm_domain_free_assert_locked(VM_DOMAIN(domain));
+	vm_phys_get_info(&info, domain);
 
-        return 1000 - ((info.free_pages * 1000) / (1 << order) / info.free_blocks);
+	return (1000 -
+	    ((info.free_pages * 1000) / (1 << order) / info.free_blocks));
 }
 
 static int
-vm_phys_unusable_index(int order)
+vm_phys_unusable_index(int order, int domain)
 {
         struct vm_phys_info info;
 
-        get_phys_info(&info);
-        get_order_phys_info(&info, order);
+	vm_domain_free_assert_locked(VM_DOMAIN(domain));
+	vm_phys_get_info(&info, domain);
+	vm_phys_get_order_info(&info, order, domain);
 
-        return ((info.free_pages - info.order_suitable_pages) * 1000) / info.free_pages;
+	return (((info.free_pages - info.order_suitable_pages) * 1000) /
+	    info.free_pages);
 }
 
 /*
- * Outputs the value of the Free Memory Fragmentation Index (FMFI) for each freelist.
+ * Outputs the value of the Free Memory Fragmentation Index (FMFI) for each
+ * domain.
  */
 static int
 sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf sbuf;
   int64_t idx;
-  int oind, error;
+  int oind, dom, error;
 
   error = sysctl_wire_old_buffer(req, 0);
 	if (error != 0)
           return (error);
 	sbuf_new_for_sysctl(&sbuf, NULL, 128 * vm_ndomains, req);
 
-  sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  FMFI\n");
-  sbuf_printf(&sbuf, "--\n");
+	for (dom = 0; dom < vm_ndomains; dom++) {
+		vm_domain_free_lock(VM_DOMAIN(dom));
 
-  for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
-          idx = vm_phys_fragmentation_index(oind);
-          sbuf_printf(&sbuf, "  %2d (%6dK) ", oind,
-                      1 << (PAGE_SHIFT - 10 + oind));
-          sbuf_printf(&sbuf, "|  %ld \n", idx);
-  }
+		sbuf_printf(&sbuf, "\nDOMAIN %d\n", dom);
+		sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  FMFI\n");
+		sbuf_printf(&sbuf, "--\n");
+
+		for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
+			idx = vm_phys_fragmentation_index(oind, dom);
+			sbuf_printf(&sbuf, "  %2d (%6dK) ", oind,
+			    1 << (PAGE_SHIFT - 10 + oind));
+			sbuf_printf(&sbuf, "|  %ld \n", idx);
+		}
+
+		vm_domain_free_unlock(VM_DOMAIN(dom));
+	}
 
 	error = sbuf_finish(&sbuf);
 	sbuf_delete(&sbuf);
@@ -422,110 +418,40 @@ sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS)
 }
 
 /*
- * Outputs the value of the unusable free space index for each freelist.
+ * Outputs the value of the unusable free space index for each domain.
  */
 static int
 sysctl_vm_phys_unusable_idx(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf sbuf;
-  int oind, error;
-  int64_t idx;
+	int oind, dom, error;
+	int64_t idx;
 
-  error = sysctl_wire_old_buffer(req, 0);
+	error = sysctl_wire_old_buffer(req, 0);
 	if (error != 0)
           return (error);
 	sbuf_new_for_sysctl(&sbuf, NULL, 128 * vm_ndomains, req);
 
-  sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  UFSI\n");
-  sbuf_printf(&sbuf, "--\n");
+	for (dom = 0; dom < vm_ndomains; dom++) {
+		vm_domain_free_lock(VM_DOMAIN(dom));
 
-  for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
-          idx = vm_phys_unusable_index(oind);
-          sbuf_printf(&sbuf, "  %2d (%6dK) ", oind,
-                      1 << (PAGE_SHIFT - 10 + oind));
-          sbuf_printf(&sbuf, "|  %ld \n", idx);
-  }
+		sbuf_printf(&sbuf, "\nDOMAIN %d\n", dom);
+		sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  UFSI\n");
+		sbuf_printf(&sbuf, "--\n");
+
+		for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
+			idx = vm_phys_unusable_index(oind, dom);
+			sbuf_printf(&sbuf, "  %2d (%6dK) ", oind,
+			    1 << (PAGE_SHIFT - 10 + oind));
+			sbuf_printf(&sbuf, "|  %ld \n", idx);
+		}
+
+		vm_domain_free_unlock(VM_DOMAIN(dom));
+	}
 
 	error = sbuf_finish(&sbuf);
 	sbuf_delete(&sbuf);
 	return (error);
-}
-
-static int
-sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS){
-  int error;
-  int new = vm_phys_compact_thresh;
-
-  error = sysctl_handle_int(oidp, &new, 0, req);
-  if (error != 0 || req->newptr == NULL)
-    return (error);
-
-  if(new != vm_phys_compact_thresh){
-    if(new < 200){
-      new = 200;
-    }else if(new > 1000){
-      new = 1000;
-    }
-    vm_phys_compact_thresh = new;
-  }
-
-  return (0);
-}
-
-static int
-vm_phys_compact(int order)
-{
-  int error, i;
-  int old_frag_idx, frag_idx;
-
-  frag_idx = old_frag_idx = vm_phys_fragmentation_index(order);
-
-  /* No need to compact if fragmentation is below the threshold */
-  if(old_frag_idx < vm_phys_compact_thresh){
-    return 0;
-  }
-
-  /* Run compaction until the fragmentation metric stops improving */
-  do{
-    old_frag_idx = frag_idx;
-
-    /* Try to reclaim contiguous pages for (order, order + 2) */
-    for(i = MIN(order + 2, (VM_NFREEORDER_MAX - 1)); i >= order; i--){
-        error = vm_page_reclaim_contig(VM_ALLOC_SYSTEM, (1 << order), 0, VM_MAX_ADDRESS,
-                                       (PAGE_SIZE << order), 0);
-        if(!error){
-          continue;
-        }    
-    }
-
-    frag_idx = vm_phys_fragmentation_index(order);
-  } while((old_frag_idx - frag_idx) > 50);
-
-  return 0;
-}
-
-/*
- * Tries to compact physical memory.
- */
-static int
-sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
-{
-        struct sbuf sbuf;
-        int error;
-        
-        error = sysctl_wire_old_buffer(req, 0);
-        if (error != 0)
-                return (error);
-        sbuf_new_for_sysctl(&sbuf, NULL, 32, req);
-
-        sbuf_printf(&sbuf, "2MB frag index before: %d\n", vm_phys_fragmentation_index(9));
-        error = vm_phys_compact(9);
-        sbuf_printf(&sbuf, "2MB frag index after: %d\n", vm_phys_fragmentation_index(9));
-
-        error = sbuf_finish(&sbuf);
-        sbuf_delete(&sbuf);
-
-        return (error);
 }
 
 /*
