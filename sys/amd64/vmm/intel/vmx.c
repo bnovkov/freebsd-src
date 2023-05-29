@@ -1433,7 +1433,6 @@ vmx_inject_interrupts(struct vmx_vcpu *vcpu, struct vlapic *vlapic,
 	uint64_t rflags, entryinfo;
 	uint32_t gi, info;
 
-
 	if (vcpu->cap.set & (1 << VM_CAP_MASK_HWINTR)) {
 		return;
 	}
