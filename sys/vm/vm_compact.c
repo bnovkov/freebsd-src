@@ -55,15 +55,17 @@ SYSCTL_OID(_vm, OID_AUTO, phys_compact_thresh, CTLTYPE_INT | CTLFLAG_RW, NULL,
     "Fragmentation index threshold for memory compaction");
 
 static struct mtx compact_lock;
-static LIST_HEAD(, vm_compact_ctx) active_compactions;
+static LIST_HEAD(, vm_compact_ctx) active_compactions[MAXMEMDOM];
 
 struct vm_compact_ctx {
 	vm_compact_search_fn search_fn;
 	vm_compact_defrag_fn defrag_fn;
+	vm_compact_end_fn end_fn;
 
 	struct vm_compact_region region;
 
 	int order;
+	int domain;
 
 	LIST_ENTRY(vm_compact_ctx) entries;
 };
@@ -97,9 +99,12 @@ vm_compact_job_valid(void *ctx)
 {
 	struct vm_compact_ctx *ctxp;
 
-	LIST_FOREACH (ctxp, &active_compactions, entries) {
-		if (ctxp == (struct vm_compact_ctx *)ctx) {
-			return true;
+	for (int dom = 0; dom < vm_ndomains; dom++) {
+
+		LIST_FOREACH (ctxp, &active_compactions[dom], entries) {
+			if (ctxp == (struct vm_compact_ctx *)ctx) {
+				return true;
+			}
 		}
 	}
 
@@ -114,14 +119,28 @@ vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
 	    ctxp2->region.start <= ctxp1->region.end);
 }
 
+static bool
+vm_compact_check_range_domain(vm_paddr_t start, vm_paddr_t end)
+{
+	return (vm_page_domain(PHYS_TO_VM_PAGE(start)) ==
+	    vm_page_domain(PHYS_TO_VM_PAGE(end)));
+}
+
 void *
 vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
-    vm_paddr_t start, vm_paddr_t end, int order, int *error)
+    vm_compact_end_fn efn, vm_paddr_t start, vm_paddr_t end, int order, int *error)
 {
 	struct vm_compact_ctx *ctxp;
 
+	/* Arguments sanity check. */
 	if (end <= start || order > (VM_NFREEORDER_MAX - 1)) {
 		*error = (EINVAL);
+		return (NULL);
+	}
+
+	/* Check whether 'start' and 'end' belong to the same domain. */
+	if (!vm_compact_check_range_domain(start, end)) {
+		*error = (ERANGE);
 		return (NULL);
 	}
 
@@ -130,9 +149,11 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 
 	ctxp->search_fn = sfn;
 	ctxp->defrag_fn = dfn;
+	ctxp->end_fn = efn;
 	ctxp->region.start = start;
 	ctxp->region.end = end;
 	ctxp->order = order;
+	ctxp->domain = vm_page_domain(PHYS_TO_VM_PAGE(start));
 
 	return ((void *)ctxp);
 }
@@ -159,26 +180,27 @@ vm_compact_run(void *ctx, int domain)
 
 	VM_COMPACT_LOCK();
 	/* Check if the requested compaction overlaps with an existing one. */
-	LIST_FOREACH (ctxp_tmp, &active_compactions, entries) {
+	LIST_FOREACH (ctxp_tmp, &active_compactions[ctxp->domain], entries) {
 		if (vm_compact_job_overlaps(ctxp, ctxp_tmp)) {
 			VM_COMPACT_UNLOCK();
-			return (EBUSY);
+			return (EINPROGRESS);
 		}
 	}
 
-	LIST_INSERT_HEAD(&active_compactions, ctxp, entries);
+	LIST_INSERT_HEAD(&active_compactions[ctxp->domain], ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
 	frag_idx = old_frag_idx = vm_phys_fragmentation_index(ctxp->order,
 	    domain);
 
-	/* No need to compact if fragmentation is below the threshold */
+	/* No need to compact if fragmentation is below the threshold. */
 	if (old_frag_idx < vm_phys_compact_thresh) {
 		return 0;
 	}
 
-	/* Run compaction until the fragmentation metric stops improving */
+	/* Run compaction until the fragmentation metric stops improving. */
 	do {
+		// TODO: rework to use end_fn later on
 		old_frag_idx = frag_idx;
 
 		ctxp->search_fn(&r);
