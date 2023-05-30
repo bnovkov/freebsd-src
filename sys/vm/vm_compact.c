@@ -92,25 +92,6 @@ sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
-/* Checks if the provided pointer is valid, i.e. queued on the list of active
- * compactions. */
-static bool
-vm_compact_job_valid(void *ctx)
-{
-	struct vm_compact_ctx *ctxp;
-
-	for (int dom = 0; dom < vm_ndomains; dom++) {
-
-		LIST_FOREACH (ctxp, &active_compactions[dom], entries) {
-			if (ctxp == (struct vm_compact_ctx *)ctx) {
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
-
 static bool
 vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
     struct vm_compact_ctx *ctxp2)
@@ -177,9 +158,6 @@ vm_compact_run(void *ctx)
 	struct vm_compact_region r;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
-
-	KASSERT(vm_compact_job_valid(ctx),
-	    ("Invalid compaction ctx pointer provided"));
 
 	VM_COMPACT_LOCK();
 	/* Check if the requested compaction overlaps with an existing one. */
