@@ -168,8 +168,10 @@ vm_compact_run(void *ctx)
 	LIST_INSERT_HEAD(&active_compactions[ctxp->domain], ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
+  vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 	frag_idx = old_frag_idx = vm_phys_fragmentation_index(ctxp->order,
 	    ctxp->domain);
+  vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
 
 	/* No need to compact if fragmentation is below the threshold. */
 	if (old_frag_idx < vm_phys_compact_thresh) {
@@ -184,7 +186,9 @@ vm_compact_run(void *ctx)
 		ctxp->search_fn(&r);
 		stop = ctxp->defrag_fn(&r);
 
+    vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
+    vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
 	} while (!stop || (old_frag_idx - frag_idx) > 20 || frag_idx >= vm_phys_compact_thresh);
 
 	VM_COMPACT_LOCK();
