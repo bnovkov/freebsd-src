@@ -2142,7 +2142,7 @@ sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
         vm_paddr_t start, end;
 
         start = vm_phys_segs[0].start;
-        end = vm_phys_segs[vm_phys_nsegs-1].end;
+        end = vm_phys_segs[vm_phys_nsegs-1].end - PAGE_SIZE;
         cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag, NULL, start, end, 9, &error);
         KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
 
@@ -2158,6 +2158,6 @@ sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
 
         error = sbuf_finish(&sbuf);
         sbuf_delete(&sbuf);
-
+        
         return (error);
 }
