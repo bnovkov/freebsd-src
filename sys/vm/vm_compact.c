@@ -34,7 +34,6 @@
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/queue.h>
-#include <sys/sbuf.h>
 #include <sys/sysctl.h>
 
 #include <vm/vm.h>
@@ -115,8 +114,8 @@ static bool
 vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
     struct vm_compact_ctx *ctxp2)
 {
-	return (ctxp1->region.start <= ctxp2->region.end &&
-	    ctxp2->region.start <= ctxp1->region.end);
+        return (ctxp1->region.start <= (ctxp2->region.start + ctxp2->region.npages) &&
+                ctxp2->region.start <= (ctxp1->region.start + ctxp1->region.npages ));
 }
 
 static bool
@@ -150,8 +149,8 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 	ctxp->search_fn = sfn;
 	ctxp->defrag_fn = dfn;
 	ctxp->end_fn = efn;
-	ctxp->region.start = start;
-	ctxp->region.end = end;
+	ctxp->region.start = PHYS_TO_VM_PAGE(start);
+	ctxp->region.npages = atop(start - end);
 	ctxp->order = order;
 	ctxp->domain = vm_page_domain(PHYS_TO_VM_PAGE(start));
 
@@ -168,9 +167,9 @@ vm_compact_free_job(void *ctx)
 }
 
 int
-vm_compact_run(void *ctx, int domain)
+vm_compact_run(void *ctx)
 {
-	int old_frag_idx, frag_idx;
+  int old_frag_idx, frag_idx, stop;
 	struct vm_compact_region r;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
@@ -191,7 +190,7 @@ vm_compact_run(void *ctx, int domain)
 	VM_COMPACT_UNLOCK();
 
 	frag_idx = old_frag_idx = vm_phys_fragmentation_index(ctxp->order,
-	    domain);
+	    ctxp->domain);
 
 	/* No need to compact if fragmentation is below the threshold. */
 	if (old_frag_idx < vm_phys_compact_thresh) {
@@ -204,10 +203,10 @@ vm_compact_run(void *ctx, int domain)
 		old_frag_idx = frag_idx;
 
 		ctxp->search_fn(&r);
-		ctxp->defrag_fn(&r);
+		stop = ctxp->defrag_fn(&r);
 
-		frag_idx = vm_phys_fragmentation_index(ctxp->order, domain);
-	} while ((old_frag_idx - frag_idx) > 20);
+		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
+	} while (stop == 0 || (old_frag_idx - frag_idx) > 20 || frag_idx >= vm_phys_compact_thresh);
 
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);

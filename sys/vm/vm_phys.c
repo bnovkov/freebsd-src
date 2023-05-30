@@ -67,6 +67,7 @@
 #include <vm/vm_page.h>
 #include <vm/vm_phys.h>
 #include <vm/vm_pagequeue.h>
+#include <vm/vm_compact.h>
 
 _Static_assert(sizeof(long) * NBBY >= VM_PHYSSEG_MAX,
     "Too many physsegs.");
@@ -2019,3 +2020,111 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 	}
 }
 #endif
+
+static
+int vm_phys_compact_search(vm_compact_region_t result){
+        struct  vm_phys_seg *max = &vm_phys_segs[0];
+        for(int i =1; i<vm_phys_nsegs; i++){
+                if((max->end - max->start) < (vm_phys_segs[i].end - vm_phys_segs[i].start)){
+                        max = &vm_phys_segs[i];
+                }
+        }
+
+        result->start = max->first_page;
+        result->npages = atop(max->end - max->start);
+        return 0;
+}
+
+/*
+ * Determine whether a given page is eligible as a relocation destination.
+ * A suitable page is left in a xbusied state.
+ */
+static
+bool vm_phys_defrag_page_free(vm_page_t p){
+        if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
+                return false;
+        if(vm_page_tryxbusy(p) != 0){
+                if (vm_page_queue(p) == PQ_NONE){
+                        return true;
+                }
+                vm_page_xunbusy(p);
+        }
+        return false;
+}
+
+/*
+ * Determine whether a given page is eligible as a relocation destination.
+ * A suitable page is left in a xbusied state and its object locked.
+ */
+static
+bool vm_phys_defrag_page_relocatable(vm_page_t p){
+        if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
+                return false;
+        if(vm_page_tryxbusy(p) != 0){
+                if (vm_page_queue(p) != PQ_NONE){
+                        VM_OBJECT_WLOCK(p->object);
+                        return true;
+                }
+                vm_page_xunbusy(p);
+        }
+        return false;
+}
+
+static
+int vm_phys_relocate_page(vm_page_t dst, vm_page_t src){
+        int error = 0;
+        vm_object_t obj = src->object;
+
+        vm_page_assert_xbusied(dst);
+        vm_page_assert_xbusied(src);
+        VM_OBJECT_ASSERT_WLOCKED(obj);
+
+        /* Unmap src page */
+        error = !vm_page_try_remove_all(src);
+        if(error)
+                goto unlock;
+
+        vm_page_replace(dst, src->object, src->pindex, src);
+
+ unlock:
+        VM_OBJECT_WUNLOCK(obj);
+        vm_page_xunbusy(dst);
+        vm_page_xunbusy(src);
+
+        return error;
+}
+
+static
+size_t vm_phys_defrag(vm_compact_region_t region){
+        vm_page_t free = region->start;
+        vm_page_t scan = region->start + region->npages;
+        size_t nrelocated = 0;
+
+        while(free < scan){
+                /* Find suitable destination page ("hole"). */
+                while(!vm_phys_defrag_page_free(free)){
+                        free++;
+                        if(__predict_false(free >= scan))
+                                goto out;
+                }
+
+                /* Find suitable relocation candidate. */
+                while(!vm_phys_defrag_page_relocatable(scan)){
+                        scan--;
+                        if(__predict_false(free >= scan)){
+                                vm_page_xunbusy(free);
+                                goto out;
+                        }
+                }
+
+                /* Swap the two pages and move "fingers". */
+                if(vm_phys_relocate_page(free, scan) == 0){
+                        nrelocated++;
+                }
+
+                scan--;
+                free++;
+        }
+ out:
+        return nrelocated;
+}
