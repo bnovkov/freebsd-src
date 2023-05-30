@@ -145,9 +145,6 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 void
 vm_compact_free_job(void *ctx)
 {
-	KASSERT(vm_compact_job_valid(ctx),
-	    ("Invalid compaction ctx pointer provided"));
-
 	free(ctx, M_VMCOMPACT);
 }
 
