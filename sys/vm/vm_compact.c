@@ -215,3 +215,13 @@ vm_compact_run(void *ctx)
 
 	return 0;
 }
+
+
+static void
+vm_compact_init(void *arg){
+        mtx_init(&compact_lock, "vm_compact", NULL, MTX_DEF);
+        for(int i=0; i<MAXMEMDOM; i++)
+                LIST_INIT(&active_compactions[i]);
+}
+
+SYSINIT(vm_compact, SI_SUB_VM_CONF, SI_ORDER_ANY, vm_compact_init, NULL);
