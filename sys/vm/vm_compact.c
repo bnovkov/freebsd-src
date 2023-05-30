@@ -61,7 +61,8 @@ struct vm_compact_ctx {
 	vm_compact_defrag_fn defrag_fn;
 	vm_compact_end_fn end_fn;
 
-	struct vm_compact_region region;
+  vm_paddr_t start;
+  vm_paddr_t end;
 
 	int order;
 	int domain;
@@ -114,8 +115,8 @@ static bool
 vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
     struct vm_compact_ctx *ctxp2)
 {
-        return (ctxp1->region.start <= (ctxp2->region.start + ctxp2->region.npages) &&
-                ctxp2->region.start <= (ctxp1->region.start + ctxp1->region.npages ));
+        return (ctxp1->start <= ctxp2->start &&
+                ctxp2->start <= ctxp1->end);
 }
 
 static bool
@@ -149,8 +150,8 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 	ctxp->search_fn = sfn;
 	ctxp->defrag_fn = dfn;
 	ctxp->end_fn = efn;
-	ctxp->region.start = PHYS_TO_VM_PAGE(start);
-	ctxp->region.npages = atop(start - end);
+	ctxp->start = start;
+	ctxp->end = end;
 	ctxp->order = order;
 	ctxp->domain = vm_page_domain(PHYS_TO_VM_PAGE(start));
 
@@ -206,7 +207,7 @@ vm_compact_run(void *ctx)
 		stop = ctxp->defrag_fn(&r);
 
 		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
-	} while (stop == 0 || (old_frag_idx - frag_idx) > 20 || frag_idx >= vm_phys_compact_thresh);
+	} while (!stop || (old_frag_idx - frag_idx) > 20 || frag_idx >= vm_phys_compact_thresh);
 
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);

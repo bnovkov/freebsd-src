@@ -2098,7 +2098,6 @@ static
 size_t vm_phys_defrag(vm_compact_region_t region){
         vm_page_t free = region->start;
         vm_page_t scan = region->start + region->npages;
-        size_t nrelocated = 0;
 
         while(free < scan){
                 /* Find suitable destination page ("hole"). */
@@ -2118,13 +2117,47 @@ size_t vm_phys_defrag(vm_compact_region_t region){
                 }
 
                 /* Swap the two pages and move "fingers". */
-                if(vm_phys_relocate_page(free, scan) == 0){
-                        nrelocated++;
-                }
+                vm_phys_relocate_page(free, scan);
 
                 scan--;
                 free++;
         }
  out:
-        return nrelocated;
+        return false;
+}
+
+static int sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_vm, OID_AUTO, phys_compact,
+           CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+           sysctl_vm_phys_compact, "A",
+           "Compact physical memory");
+
+static int
+sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
+{
+        struct sbuf sbuf;
+        void *cctx;
+        int error;
+
+        vm_paddr_t start, end;
+
+        start = vm_phys_segs[0].start;
+        end = vm_phys_segs[vm_phys_nsegs-1].end;
+        cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag, NULL, start, end, 9, &error);
+        KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
+
+        vm_compact_run(cctx);
+        vm_compact_free_job(cctx);
+
+        error = sysctl_wire_old_buffer(req, 0);
+        if (error != 0)
+                return (error);
+        sbuf_new_for_sysctl(&sbuf, NULL, 32, req);
+
+        sbuf_printf(&sbuf, "Done\n");
+
+        error = sbuf_finish(&sbuf);
+        sbuf_delete(&sbuf);
+
+        return (error);
 }
