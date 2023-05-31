@@ -2044,7 +2044,7 @@ bool vm_phys_defrag_page_free(vm_page_t p){
         if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
                 return false;
         if(vm_page_tryxbusy(p) != 0){
-                if (vm_page_queue(p) == PQ_NONE && p->object == NULL){
+                if (vm_page_queue(p) == PQ_NONE && p->object == NULL && vm_page_none_valid(p)){
                         return true;
                 }
                 vm_page_xunbusy(p);
@@ -2061,7 +2061,7 @@ bool vm_phys_defrag_page_relocatable(vm_page_t p){
         if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
                 return false;
         if(vm_page_tryxbusy(p) != 0){
-          if (vm_page_queue(p) != PQ_NONE){
+                if (vm_page_queue(p) != PQ_NONE){
                         VM_OBJECT_WLOCK(p->object);
                         if(p->object->type != OBJT_DEFAULT || vm_page_none_valid(p)){
                           VM_OBJECT_WUNLOCK(p->object);
