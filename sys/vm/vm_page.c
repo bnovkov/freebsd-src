@@ -167,7 +167,7 @@ static bool _vm_page_busy_sleep(vm_object_t obj, vm_page_t m,
     vm_pindex_t pindex, const char *wmesg, int allocflags, bool locked);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(vm_page_t m, uint8_t queue);
-static bool vm_page_free_prep(vm_page_t m);
+//static bool vm_page_free_prep(vm_page_t m);
 static void vm_page_free_toq(vm_page_t m);
 static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
@@ -1769,7 +1769,7 @@ vm_page_prev(vm_page_t m)
  * final ref and the caller does not hold a wire reference it may not
  * continue to access the page.
  */
-static bool
+bool
 vm_page_replace_hold(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex,
     vm_page_t mold)
 {
@@ -3888,7 +3888,7 @@ vm_page_enqueue(vm_page_t m, uint8_t queue)
  *	be xbusy.  Otherwise the page must be not busied.  A managed
  *	page must be unmapped.
  */
-static bool
+bool
 vm_page_free_prep(vm_page_t m)
 {
 

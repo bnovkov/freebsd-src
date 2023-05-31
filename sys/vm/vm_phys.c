@@ -2061,8 +2061,12 @@ bool vm_phys_defrag_page_relocatable(vm_page_t p){
         if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
                 return false;
         if(vm_page_tryxbusy(p) != 0){
-                if (vm_page_queue(p) != PQ_NONE){
+          if (vm_page_queue(p) != PQ_NONE){
                         VM_OBJECT_WLOCK(p->object);
+                        if(p->object->type != OBJT_DEFAULT || vm_page_none_valid(p)){
+                          VM_OBJECT_WUNLOCK(p->object);
+                          return false;
+                        }
                         return true;
                 }
                 vm_page_xunbusy(p);
@@ -2071,18 +2075,21 @@ bool vm_phys_defrag_page_relocatable(vm_page_t p){
 }
 
 static __noinline
-int vm_phys_relocate_page(vm_page_t src, vm_page_t dst){
+int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
         int error = 0;
+        struct vm_domain *vmd = VM_DOMAIN(domain);
         vm_object_t obj = src->object;
 
         vm_page_assert_xbusied(dst);
         vm_page_assert_xbusied(src);
         VM_OBJECT_ASSERT_WLOCKED(obj);
+        KASSERT(vm_page_domain(src) == domain, ("Source page is from a different domain"));
+        KASSERT(vm_page_domain(dst) == domain, ("Destination page is from a different domain"));
 
         /* Unmap src page */
-        error = !vm_page_try_remove_all(src);
-        if(error){
+        if(obj->ref_count != 0 && !vm_page_try_remove_all(src)){
                 vm_page_xunbusy(dst);
+                vm_page_xunbusy(src);
                 goto unlock;
         }
 
@@ -2097,17 +2104,24 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst){
         dst->dirty = src->dirty;
         src->flags &= ~PG_ZERO;
         vm_page_dequeue(src);
-        vm_page_replace(dst, obj, src->pindex, src);
 
+        if (vm_page_replace_hold(dst, obj, src->pindex, src) &&
+            vm_page_free_prep(src)){
+          vm_domain_free_lock(vmd);
+          vm_phys_free_pages(src, 0);
+          vm_domain_free_unlock(vmd);
+          vm_domain_freecnt_inc(vmd, 1);
+        }
+
+        vm_page_deactivate(dst);
  unlock:
         VM_OBJECT_WUNLOCK(obj);
-        vm_page_xunbusy(src);
 
         return error;
 }
 
 static
-size_t vm_phys_defrag(vm_compact_region_t region){
+size_t vm_phys_defrag(vm_compact_region_t region, int domain){
         vm_page_t free = region->start;
         vm_page_t scan = region->start + region->npages;
 
@@ -2129,7 +2143,7 @@ size_t vm_phys_defrag(vm_compact_region_t region){
                 }
 
                 /* Swap the two pages and move "fingers". */
-                vm_phys_relocate_page(scan, free);
+                vm_phys_relocate_page(scan, free, domain);
 
                 scan--;
                 free++;

@@ -48,7 +48,7 @@
 MALLOC_DECLARE(M_VMCOMPACT);
 MALLOC_DEFINE(M_VMCOMPACT, "vm_compact_ctx", "memory compaction context");
 
-static int vm_phys_compact_thresh = 500; /* 200 - 1000 */
+static int vm_phys_compact_thresh = 300; /* 200 - 1000 */
 static int sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS);
 SYSCTL_OID(_vm, OID_AUTO, phys_compact_thresh, CTLTYPE_INT | CTLFLAG_RW, NULL,
     0, sysctl_vm_phys_compact_thresh, "I",
@@ -185,7 +185,7 @@ vm_compact_run(void *ctx)
 		old_frag_idx = frag_idx;
 
 		ctxp->search_fn(&r);
-		stop = ctxp->defrag_fn(&r);
+		stop = ctxp->defrag_fn(&r, ctxp->domain);
 
     vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
