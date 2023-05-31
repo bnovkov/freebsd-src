@@ -2044,7 +2044,7 @@ bool vm_phys_defrag_page_free(vm_page_t p){
         if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
                 return false;
         if(vm_page_tryxbusy(p) != 0){
-                if (vm_page_queue(p) == PQ_NONE){
+                if (vm_page_queue(p) == PQ_INACTIVE){
                         return true;
                 }
                 vm_page_xunbusy(p);
