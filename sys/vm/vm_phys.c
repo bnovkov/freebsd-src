@@ -2039,12 +2039,12 @@ int vm_phys_compact_search(vm_compact_region_t result){
  * Determine whether a given page is eligible as a relocation destination.
  * A suitable page is left in a xbusied state.
  */
-static
+static __noinline
 bool vm_phys_defrag_page_free(vm_page_t p){
         if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
                 return false;
         if(vm_page_tryxbusy(p) != 0){
-                if (vm_page_queue(p) == PQ_INACTIVE){
+                if (vm_page_queue(p) == PQ_NONE && p->object == NULL){
                         return true;
                 }
                 vm_page_xunbusy(p);
@@ -2056,7 +2056,7 @@ bool vm_phys_defrag_page_free(vm_page_t p){
  * Determine whether a given page is eligible as a relocation destination.
  * A suitable page is left in a xbusied state and its object locked.
  */
-static
+static __noinline
 bool vm_phys_defrag_page_relocatable(vm_page_t p){
         if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
                 return false;
@@ -2070,8 +2070,8 @@ bool vm_phys_defrag_page_relocatable(vm_page_t p){
         return false;
 }
 
-static
-int vm_phys_relocate_page(vm_page_t dst, vm_page_t src){
+static __noinline
+int vm_phys_relocate_page(vm_page_t src, vm_page_t dst){
         int error = 0;
         vm_object_t obj = src->object;
 
@@ -2081,14 +2081,26 @@ int vm_phys_relocate_page(vm_page_t dst, vm_page_t src){
 
         /* Unmap src page */
         error = !vm_page_try_remove_all(src);
-        if(error)
+        if(error){
+                vm_page_xunbusy(dst);
                 goto unlock;
+        }
 
-        vm_page_replace(dst, src->object, src->pindex, src);
+        dst->a.flags = src->a.flags &
+          ~PGA_QUEUE_STATE_MASK;
+        KASSERT(dst->oflags == VPO_UNMANAGED,
+                ("page %p is managed", dst));
+
+        dst->oflags = 0;
+        pmap_copy_page(src, dst);
+        dst->valid = src->valid;
+        dst->dirty = src->dirty;
+        src->flags &= ~PG_ZERO;
+        vm_page_dequeue(src);
+        vm_page_replace(dst, obj, src->pindex, src);
 
  unlock:
         VM_OBJECT_WUNLOCK(obj);
-        vm_page_xunbusy(dst);
         vm_page_xunbusy(src);
 
         return error;
@@ -2117,7 +2129,7 @@ size_t vm_phys_defrag(vm_compact_region_t region){
                 }
 
                 /* Swap the two pages and move "fingers". */
-                vm_phys_relocate_page(free, scan);
+                vm_phys_relocate_page(scan, free);
 
                 scan--;
                 free++;
