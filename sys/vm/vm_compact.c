@@ -40,6 +40,7 @@
 #include <vm/vm_compact.h>
 #include <vm/vm_page.h>
 #include <vm/vm_phys.h>
+#include <vm/vm_pagequeue.h>
 
 #define VM_COMPACT_LOCK() mtx_lock(&compact_lock)
 #define VM_COMPACT_UNLOCK() mtx_unlock(&compact_lock)
