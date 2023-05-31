@@ -176,7 +176,7 @@ vm_compact_run(void *ctx)
 
 	/* No need to compact if fragmentation is below the threshold. */
 	if (old_frag_idx < vm_phys_compact_thresh) {
-		return 0;
+		goto cleanup;
 	}
 
 	/* Run compaction until the fragmentation metric stops improving. */
@@ -192,6 +192,7 @@ vm_compact_run(void *ctx)
     vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
 	} while (!stop || (old_frag_idx - frag_idx) > 20 || frag_idx >= vm_phys_compact_thresh);
 
+ cleanup:
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
