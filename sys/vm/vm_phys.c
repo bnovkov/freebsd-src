@@ -2037,19 +2037,10 @@ int vm_phys_compact_search(vm_compact_region_t result){
 
 /*
  * Determine whether a given page is eligible as a relocation destination.
- * A suitable page is left in a xbusied state.
  */
 static __noinline
 bool vm_phys_defrag_page_free(vm_page_t p){
-        if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
-                return false;
-        if(vm_page_tryxbusy(p) != 0){
-                if (vm_page_queue(p) == PQ_NONE && p->object == NULL && vm_page_none_valid(p)){
-                        return true;
-                }
-                vm_page_xunbusy(p);
-        }
-        return false;
+        return p->order != VM_NFREEORDER;
 }
 
 /*
@@ -2058,19 +2049,26 @@ bool vm_phys_defrag_page_free(vm_page_t p){
  */
 static __noinline
 bool vm_phys_defrag_page_relocatable(vm_page_t p){
-        if(p->flags & (PG_FICTITIOUS | PG_MARKER) || vm_page_wired(p))
+        vm_object_t obj;
+
+        if (p->order != VM_NFREEORDER ||
+            vm_page_wired(p) ||
+            (obj = atomic_load_ptr(&p->object)) == NULL)
                 return false;
-        if(vm_page_tryxbusy(p) != 0){
-                if (vm_page_queue(p) != PQ_NONE){
-                        VM_OBJECT_WLOCK(p->object);
-                        if(p->object->type != OBJT_DEFAULT || vm_page_none_valid(p)){
-                          VM_OBJECT_WUNLOCK(p->object);
-                          return false;
-                        }
-                        return true;
-                }
-                vm_page_xunbusy(p);
+
+
+        VM_OBJECT_WLOCK(obj);
+        if(obj != p->object || obj->type != OBJT_DEFAULT || vm_page_tryxbusy(p) == 0 ){
+                goto unlock;
         }
+
+        if(!vm_page_wired(p) && !vm_page_none_valid(p)){
+                return true;
+        }
+
+        vm_page_xunbusy(p);
+unlock:
+        VM_OBJECT_WUNLOCK(obj);
         return false;
 }
 
@@ -2080,16 +2078,19 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
         struct vm_domain *vmd = VM_DOMAIN(domain);
         vm_object_t obj = src->object;
 
-        vm_page_assert_xbusied(dst);
         vm_page_assert_xbusied(src);
+
         VM_OBJECT_ASSERT_WLOCKED(obj);
         KASSERT(vm_page_domain(src) == domain, ("Source page is from a different domain"));
         KASSERT(vm_page_domain(dst) == domain, ("Destination page is from a different domain"));
 
+        vm_domain_free_lock(vmd);
+        /* Try to busy the destination page and check if its still eligible. */
+        if(vm_page_tryxbusy(dst) == 0 || dst->order == VM_NFREEORDER)
+                goto unlock;
+
         /* Unmap src page */
         if(obj->ref_count != 0 && !vm_page_try_remove_all(src)){
-                vm_page_xunbusy(dst);
-                vm_page_xunbusy(src);
                 goto unlock;
         }
 
@@ -2100,6 +2101,7 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
 
         dst->oflags = 0;
         pmap_copy_page(src, dst);
+
         dst->valid = src->valid;
         dst->dirty = src->dirty;
         src->flags &= ~PG_ZERO;
@@ -2107,14 +2109,14 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
 
         if (vm_page_replace_hold(dst, obj, src->pindex, src) &&
             vm_page_free_prep(src)){
-          vm_domain_free_lock(vmd);
           vm_phys_free_pages(src, 0);
-          vm_domain_free_unlock(vmd);
           vm_domain_freecnt_inc(vmd, 1);
         }
 
         vm_page_deactivate(dst);
  unlock:
+        vm_page_xunbusy(src);
+        vm_domain_free_unlock(vmd);
         VM_OBJECT_WUNLOCK(obj);
 
         return error;
@@ -2128,14 +2130,15 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain){
         while(free < scan){
                 /* Find suitable destination page ("hole"). */
                 while(!vm_phys_defrag_page_free(free)){
-                        free++;
+                        // TODO: skip reservation, if any
+
                         if(__predict_false(free >= scan))
                                 goto out;
                 }
 
                 /* Find suitable relocation candidate. */
                 while(!vm_phys_defrag_page_relocatable(scan)){
-                        scan--;
+                        scan -= 1 << scan->order;
                         if(__predict_false(free >= scan)){
                                 vm_page_xunbusy(free);
                                 goto out;
@@ -2184,6 +2187,6 @@ sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
 
         error = sbuf_finish(&sbuf);
         sbuf_delete(&sbuf);
-        
+
         return (error);
 }
