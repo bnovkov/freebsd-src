@@ -2058,9 +2058,12 @@ bool vm_phys_defrag_page_relocatable(vm_page_t p){
 
 
         VM_OBJECT_WLOCK(obj);
-        if(obj != p->object || obj->type != OBJT_DEFAULT || vm_page_tryxbusy(p) == 0 ){
+        if(obj != p->object || obj->type != OBJT_DEFAULT){
                 goto unlock;
         }
+
+	if(vm_page_tryxbusy(p) == 0)
+		goto unlock;
 
         if(!vm_page_wired(p) && !vm_page_none_valid(p)){
                 return true;
@@ -2122,27 +2125,29 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
         return error;
 }
 
-static
+static __noinline
 size_t vm_phys_defrag(vm_compact_region_t region, int domain){
         vm_page_t free = region->start;
         vm_page_t scan = region->start + region->npages;
 
         while(free < scan){
                 /* Find suitable destination page ("hole"). */
-                while(!vm_phys_defrag_page_free(free)){
+                while(free < scan && !vm_phys_defrag_page_free(free)){
                         // TODO: skip reservation, if any
+			free++;
+                }
 
-                        if(__predict_false(free >= scan))
-                                break;
+                if(__predict_false(free >= scan)){
+                               break;
                 }
 
                 /* Find suitable relocation candidate. */
-                while(!vm_phys_defrag_page_relocatable(scan)){
+                while(free < scan && !vm_phys_defrag_page_relocatable(scan)){
                         scan -= 1 << scan->order;
-                        if(__predict_false(free >= scan)){
-                                vm_page_xunbusy(free);
-                                break;
-                        }
+                }
+
+                if(__predict_false(free >= scan)){
+                               break;
                 }
 
                 /* Swap the two pages and move "fingers". */
