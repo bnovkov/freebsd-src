@@ -152,7 +152,7 @@ vm_compact_free_job(void *ctx)
 int
 vm_compact_run(void *ctx)
 {
-  int old_frag_idx, frag_idx, stop;
+  int old_frag_idx, frag_idx;
 	struct vm_compact_region r;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
@@ -185,12 +185,12 @@ vm_compact_run(void *ctx)
 		old_frag_idx = frag_idx;
 
 		ctxp->search_fn(&r);
-		stop = ctxp->defrag_fn(&r, ctxp->domain);
+		ctxp->defrag_fn(&r, ctxp->domain);
 
     vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
     vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
-	} while (!stop || (old_frag_idx - frag_idx) > 20 || frag_idx >= vm_phys_compact_thresh);
+	} while ((old_frag_idx - frag_idx) > 20);
 
  cleanup:
 	VM_COMPACT_LOCK();

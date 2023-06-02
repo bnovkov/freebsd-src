@@ -2133,7 +2133,7 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain){
                         // TODO: skip reservation, if any
 
                         if(__predict_false(free >= scan))
-                                goto out;
+                                break;
                 }
 
                 /* Find suitable relocation candidate. */
@@ -2141,7 +2141,7 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain){
                         scan -= 1 << scan->order;
                         if(__predict_false(free >= scan)){
                                 vm_page_xunbusy(free);
-                                goto out;
+                                break;
                         }
                 }
 
@@ -2151,8 +2151,7 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain){
                 scan--;
                 free++;
         }
- out:
-        return false;
+        return 1;
 }
 
 static int sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS);
