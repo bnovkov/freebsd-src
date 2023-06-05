@@ -156,6 +156,7 @@ vm_compact_run(void *ctx)
 	struct vm_compact_region r;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
+  size_t nrelocated = 0;
 
 	VM_COMPACT_LOCK();
 	/* Check if the requested compaction overlaps with an existing one. */
@@ -179,12 +180,13 @@ vm_compact_run(void *ctx)
 		goto cleanup;
 	}
 
+
 	/* Run compaction until the fragmentation metric stops improving. */
 	do {
 		// TODO: rework to use end_fn later on
 		old_frag_idx = frag_idx;
 
-		ctxp->search_fn(&r);
+		nrelocated += ctxp->search_fn(&r);
 		ctxp->defrag_fn(&r, ctxp->domain);
 
     vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
@@ -197,6 +199,7 @@ vm_compact_run(void *ctx)
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
+  printf("%s: relocated %zu pages\n", __func__, nrelocated);
 	return 0;
 }
 

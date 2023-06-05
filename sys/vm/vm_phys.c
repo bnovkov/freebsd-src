@@ -2089,11 +2089,13 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
 
         vm_domain_free_lock(vmd);
         /* Try to busy the destination page and check if its still eligible. */
-        if(vm_page_tryxbusy(dst) == 0 || dst->order == VM_NFREEORDER)
+        if(vm_page_tryxbusy(dst) == 0 || dst->order == VM_NFREEORDER){
+                error = EBUSY;
                 goto unlock;
-
+        }
         /* Unmap src page */
         if(obj->ref_count != 0 && !vm_page_try_remove_all(src)){
+                error = -1;
                 goto unlock;
         }
 
@@ -2129,6 +2131,7 @@ static __noinline
 size_t vm_phys_defrag(vm_compact_region_t region, int domain){
         vm_page_t free = region->start;
         vm_page_t scan = region->start + region->npages;
+        size_t nrelocated = 0;
 
         while(free < scan){
                 /* Find suitable destination page ("hole"). */
@@ -2143,7 +2146,7 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain){
 
                 /* Find suitable relocation candidate. */
                 while(free < scan && !vm_phys_defrag_page_relocatable(scan)){
-                        scan -= 1 << scan->order;
+                        scan--;
                 }
 
                 if(__predict_false(free >= scan)){
@@ -2151,12 +2154,12 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain){
                 }
 
                 /* Swap the two pages and move "fingers". */
-                vm_phys_relocate_page(scan, free, domain);
-
+                if(vm_phys_relocate_page(scan, free, domain) == 0)
+                        nrelocated++;
                 scan--;
                 free++;
         }
-        return 1;
+        return nrelocated;
 }
 
 static int sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS);
