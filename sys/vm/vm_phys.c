@@ -2040,7 +2040,7 @@ int vm_phys_compact_search(vm_compact_region_t result){
  */
 static __noinline
 bool vm_phys_defrag_page_free(vm_page_t p){
-        return p->order != VM_NFREEORDER && vm_page_none_valid(p);
+        return p->order == 0 && vm_page_none_valid(p);
 }
 
 /*
@@ -2089,7 +2089,7 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
 
         vm_domain_free_lock(vmd);
         /* Try to busy the destination page and check if its still eligible. */
-        if(dst->order == VM_NFREEORDER || !vm_page_none_valid(dst)){
+        if(dst->order != 0 || !vm_page_none_valid(dst)){
                 error = EBUSY;
                 vm_page_xunbusy(src);
                 vm_domain_free_unlock(vmd);
