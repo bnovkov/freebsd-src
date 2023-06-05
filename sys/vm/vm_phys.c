@@ -2087,18 +2087,11 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
         KASSERT(vm_page_domain(src) == domain, ("Source page is from a different domain"));
         KASSERT(vm_page_domain(dst) == domain, ("Destination page is from a different domain"));
 
+
         vm_domain_free_lock(vmd);
         /* Try to busy the destination page and check if its still eligible. */
         if(dst->order != 0 || !vm_page_none_valid(dst)){
                 error = EBUSY;
-                vm_page_xunbusy(src);
-                vm_domain_free_unlock(vmd);
-                goto unlock;
-        }
-
-        /* Unmap src page */
-        if(obj->ref_count != 0 && !vm_page_try_remove_all(src)){
-                error = -1;
                 vm_page_xunbusy(src);
                 vm_domain_free_unlock(vmd);
                 goto unlock;
@@ -2123,11 +2116,21 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
                 }
         }
 
+        /* Unmap src page */
+        if(obj->ref_count != 0 && !vm_page_try_remove_all(src)){
+                error = -1;
+                vm_page_xunbusy(src);
+                vm_domain_free_unlock(vmd);
+                goto unlock;
+        }
+
+
         KASSERT(vm_page_xbusied(dst), ("free page %p not busied", dst));
 
         /* Remove dst page from page queue. */
         vm_page_dequeue(dst);
-        vm_phys_unfree_page(dst);
+        boolean_t ret = vm_phys_unfree_page(dst);
+        KASSERT(ret, ("page %p not in freelist", dst));
 
         /* Copy attrs */
         dst->a.flags = src->a.flags &

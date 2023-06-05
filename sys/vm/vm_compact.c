@@ -186,8 +186,8 @@ vm_compact_run(void *ctx)
 		// TODO: rework to use end_fn later on
 		old_frag_idx = frag_idx;
 
-		nrelocated += ctxp->search_fn(&r);
-		ctxp->defrag_fn(&r, ctxp->domain);
+		ctxp->search_fn(&r);
+		nrelocated += ctxp->defrag_fn(&r, ctxp->domain);
 
     vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
@@ -199,7 +199,8 @@ vm_compact_run(void *ctx)
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
-  printf("%s: relocated %zu pages\n", __func__, nrelocated);
+  printf("relocated %zu pages\n", nrelocated);
+
 	return 0;
 }
 
