@@ -2089,21 +2089,46 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
 
         vm_domain_free_lock(vmd);
         /* Try to busy the destination page and check if its still eligible. */
-        if(vm_page_tryxbusy(dst) == 0 || dst->order == VM_NFREEORDER){
+        if(dst->order == VM_NFREEORDER){
                 error = EBUSY;
+                vm_page_xunbusy(src);
+                vm_domain_free_unlock(vmd);
                 goto unlock;
         }
+
         /* Unmap src page */
         if(obj->ref_count != 0 && !vm_page_try_remove_all(src)){
                 error = -1;
+                vm_page_xunbusy(src);
+                vm_domain_free_unlock(vmd);
                 goto unlock;
         }
 
+        /* Initialize lock for VPB_FREED page. */
+        if(vm_page_busy_freed(dst)){
+                dst->busy_lock = VPB_UNBUSIED;
+                if(vm_page_tryxbusy(dst) == 0){
+                        vm_page_xunbusy(src);
+                        dst->busy_lock = VPB_FREED;
+                        vm_domain_free_unlock(vmd);
+                        goto unlock;
+                }
+        } else {
+                if(vm_page_tryxbusy(dst) == 0){
+                        vm_page_xunbusy(src);
+                        vm_domain_free_unlock(vmd);
+                        goto unlock;
+                }
+        }
+
+        KASSERT(vm_page_xbusied(dst), ("free page %p not busied", dst));
+
+        /* Remove dst page from page queue. */
+        vm_page_dequeue(dst);
+
+        /* Copy attrs */
         dst->a.flags = src->a.flags &
           ~PGA_QUEUE_STATE_MASK;
-        KASSERT(dst->oflags == VPO_UNMANAGED,
-                ("page %p is managed", dst));
-
         dst->oflags = 0;
         pmap_copy_page(src, dst);
 
@@ -2112,16 +2137,20 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
         src->flags &= ~PG_ZERO;
         vm_page_dequeue(src);
 
+        vm_domain_free_unlock(vmd);
         if (vm_page_replace_hold(dst, obj, src->pindex, src) &&
             vm_page_free_prep(src)){
+
+          vm_domain_free_lock(vmd);
           vm_phys_free_pages(src, 0);
+          vm_domain_free_unlock(vmd);
+
           vm_domain_freecnt_inc(vmd, 1);
         }
 
         vm_page_deactivate(dst);
+        vm_page_xunbusy(dst);
  unlock:
-        vm_page_xunbusy(src);
-        vm_domain_free_unlock(vmd);
         VM_OBJECT_WUNLOCK(obj);
 
         return error;
