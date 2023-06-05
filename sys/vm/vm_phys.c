@@ -2127,6 +2127,7 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
 
         /* Remove dst page from page queue. */
         vm_page_dequeue(dst);
+        vm_phys_unfree_page(dst);
 
         /* Copy attrs */
         dst->a.flags = src->a.flags &
