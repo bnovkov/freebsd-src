@@ -728,6 +728,8 @@ vm_page_startup(vm_offset_t vaddr)
 	 */
 	new_end = vm_reserv_startup(&vaddr, new_end);
 #endif
+
+
 #if defined(__aarch64__) || defined(__amd64__) || \
     defined(__riscv) || defined(__powerpc64__)
 	/*
@@ -737,6 +739,8 @@ vm_page_startup(vm_offset_t vaddr)
 		dump_add_page(pa);
 #endif
 	phys_avail[biggestone + 1] = new_end;
+
+  vm_phys_search_index_startup(&vaddr);
 
 	/*
 	 * Add physical memory segments corresponding to the available
