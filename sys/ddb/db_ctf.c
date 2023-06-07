@@ -31,64 +31,61 @@
 #include <sys/systm.h>
 #include <sys/ctype.h>
 #include <sys/linker.h>
+#include <sys/mutex.h>
+#include <sys/malloc.h>
 
 #include <ddb/db_ctf.h>
 #include <ddb/ddb.h>
 
-static struct ddb_ctf {
-	linker_ctf_t kernel_ctf;
-	bool loaded;
-} db_ctf;
+struct db_ctf {
+	linker_ctf_t *lc;
+  char *modname;
+  LIST_ENTRY(db_ctf) link;
+};
 
-static void
-db_ctf_init(void *arg)
+static LIST_HEAD(, db_ctf) ctf_table;
+static struct mtx db_ctf_mtx;
+MTX_SYSINIT(db_ctf, &db_ctf_mtx, "ddb module CTF data registry", MTX_DEF);
+
+static MALLOC_DEFINE(M_DBCTF, "ddb ctf", "ddb module ctf data");
+
+static struct db_ctf *
+db_ctf_lookup(char *modname)
 {
+  struct db_ctf *dcp;
 
-	int err;
-  const ctf_header_t *hp;
-
-	memset((void *)&db_ctf, 0, sizeof(db_ctf));
-  /*
-	err = linker_ctf_get_ddb(linker_kernel_file, &db_ctf.kernel_ctf);
-	if (err) {
-		printf("%s: linker_ctf_get_ddb error: %d\n", __func__, err);
-		return;
+  LIST_FOREACH(dcp, &ctf_table, link) {
+		if (dcp->modname != NULL && strcmp(modname, dcp->modname) == 0)
+			break;
 	}
 
-	printf("%s: loaded kernel CTF info\n", __func__);
-        */
-
-                err = linker_ctf_get(linker_kernel_file, &db_ctf.kernel_ctf);
-                if (err) {
-                        printf("%s: linker_ctf_get error: %d\n", __func__, err);
-                        return;
-                }
-
-                hp = (const ctf_header_t *)db_ctf.kernel_ctf.ctftab;
-
-                /* Sanity checks. */
-                if (db_ctf.kernel_ctf.symtab == NULL) {
-                        printf("%s: kernel symbol table missing\n", __func__);
-                        return;
-                }
-
-                if (hp->cth_version != CTF_VERSION_3) {
-                        printf("%s: CTF V2 data encountered\n", __func__);
-                        return;
-                }
-
-                printf("%s: loaded kernel CTF info\n", __func__);
-
-
-	db_ctf.loaded = true;
+  return (dcp);
 }
 
-SYSINIT(db_ctf, SI_SUB_LAST, SI_ORDER_ANY, db_ctf_init, NULL);
-
-bool
-db_ctf_loaded(void)
+int
+db_ctf_register(const char *modname, linker_ctf_t *lc)
 {
-	return db_ctf.loaded;
+  struct db_ctf *dcp;
+
+  mtx_lock(&db_ctf_mtx);
+  if(db_ctf_lookup(modname) != NULL){
+    mtx_unlock(&db_ctf_mtx);
+    printf("%s: ddb CTF data for module %s already loaded!\n",
+           __func__, modname);
+
+    return (EINVAL);
+  }
+  mtx_unlock(&db_ctf_mtx);
+
+  dcp = malloc(sizeof(struct db_ctf), M_DBCTF, M_WAITOK);
+  dcp->modname = strdup(modname, M_DBCTF);
+  dcp->lc = lc;
+
+  mtx_lock(&db_ctf_mtx);
+  LIST_INSERT_HEAD(&ctf_table, dcp, link);
+  mtx_unlock(&db_ctf_mtx);
+
+  return (0);
 }
 
 const ctf_header_t *

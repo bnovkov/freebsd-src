@@ -1,7 +1,7 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2022  <bojan.novkovic@kset.org>
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,31 +23,22 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-#ifndef _DDB_DB_CTF_H_
-#define _DDB_DB_CTF_H_
+#include <sys/cdefs.h>
 
-#include <sys/types.h>
-#include <sys/ctf.h>
+#define	KCTF_START	_kctf_start
+#define	KCTF_END	_kctf_end
 
-#include <ddb/ddb.h>
-#include <ddb/db_sym.h>
-
-#define DB_CTF_OBJTOFF_INVALID 0xffffffff
-
-int		db_ctf_register(const char *modname, linker_ctf_t *lc);
-int		db_ctf_unregister(const char *modname);
-
-struct db_ctf_sym_data{
-  linker_ctf_t *lc;
-  Elf_Sym *sym;
-};
-
-const ctf_header_t *db_ctf_fetch_cth(void);
-struct ctf_type_v3 *db_ctf_sym_to_type(const Elf_Sym *sym);
-struct ctf_type_v3 *db_ctf_typeid_to_type(uint32_t typeid);
-const char *db_ctf_stroff_to_str(uint32_t off);
-int db_ctf_find_symbol(db_expr_t addr, struct db_ctf_sym_data *sdp);
-
-#endif /* !_DDB_DB_CTF_H_ */
+	.section rodata, "a", %progbits
+	.globl	KCTF_START
+	.type	KCTF_START, %object
+KCTF_START:
+	.incbin	__XSTRING(KCTF_FILE)
+	.size KCTF_START, . - KCTF_START
+	.globl KCTF_END
+	.type	KCTF_END, %object
+KCTF_END:
+	.size	KCTF_END, . - KCTF_END
