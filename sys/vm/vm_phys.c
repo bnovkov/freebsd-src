@@ -2073,51 +2073,17 @@ STAILQ_HEAD(subseg_head, vm_phys_subseg);
 
 struct vm_phys_search_chunk {
         int holecnt;
+        int skipidx;
         struct subseg_head *shp;
 };
 
 struct vm_phys_search_index {
         struct vm_phys_search_chunk *chunks;
         int nchunks;
-        int idx_shift;
+        vm_paddr_t dom_start;
+        vm_paddr_t dom_end;
 };
 static struct vm_phys_search_index vm_phys_search_index[MAXMEMDOM];
-
-
-static void
-vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_start, vm_paddr_t hole_end){
-        struct vm_phys_subseg *ssp;
-
-        if(cp->shp == NULL){
-                vm_paddr_t chunk_start = hole_start & ~VM_PHYS_SEARCH_CHUNK_MASK;
-                cp->shp = malloc(sizeof(struct subseg_head), M_TEMP, M_ZERO | M_WAITOK);
-                STAILQ_INIT(cp->shp);
-                /* Split chunk into a subseg */
-                ssp = malloc(sizeof(struct vm_phys_subseg), M_TEMP, M_ZERO | M_WAITOK);
-                ssp->start = chunk_start;
-                ssp->end = chunk_start + VM_PHYS_SEARCH_CHUNK_SIZE;
-
-                STAILQ_INSERT_HEAD(cp->shp, ssp, entries);
-        }
-
-        /*
-         * Holes are ordered by paddr - hole registration will
-         * thus always affect the last subsegment in the list.
-         * Take last subseg and split it.
-         */
-        ssp = STAILQ_LAST(cp->shp, vm_phys_subseg, entries);
-        if(hole_start == ssp->start){
-                ssp->start = hole_end;
-        } else if(hole_end == ssp->end){
-                ssp->end = hole_start;
-        } else { /* Hole splits the subseg - create and enqueue new subseg */
-                struct vm_phys_subseg *nssp = malloc(sizeof(struct vm_phys_subseg), M_TEMP, M_ZERO | M_WAITOK);
-                nssp->start = hole_end;
-                nssp->end = ssp->end;
-                ssp->end = hole_start;
-                STAILQ_INSERT_TAIL(cp->shp, nssp, entries);
-        }
-}
 
 /*
  * Allocates physical memory required for the memory compaction search index.
@@ -2160,7 +2126,9 @@ vm_phys_search_index_startup(vm_offset_t *vaddr)
           cur_idx->chunks = (void *)(uintptr_t)pmap_map(vaddr, pa,  pa + alloc_size,
                                                         VM_PROT_READ | VM_PROT_WRITE);
           cur_idx->nchunks = dom_nsearch_chunks;
-          cur_idx->idx_shift = VM_PHYS_PADDR_TO_CHUNK_IDX(dom_start);
+          cur_idx->dom_start = dom_start;
+          cur_idx->dom_end = dom_end;
+
           if(cur_idx->chunks == NULL){
                   panic("Unable to allocate search index for domain %d\n", dom);
           }
@@ -2173,72 +2141,122 @@ void vm_phys_update_search_index(vm_page_t m, int order, bool alloc){
 
   struct vm_phys_search_index *sip = &vm_phys_search_index[vm_page_domain(m)];
   vm_paddr_t m_end = m->phys_addr + ptoa(1 << order);
-  int search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m->phys_addr) - sip->idx_shift;
-  int end_search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m_end)- sip->idx_shift;
+  int dom_start_idx =  VM_PHYS_PADDR_TO_CHUNK_IDX(sip->dom_start);
+  int search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m->phys_addr) - dom_start_idx;
+  int end_search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m_end) - dom_start_idx;
   int pgcnt = 1 << order;
 
   KASSERT(search_chunk_idx < sip->nchunks, ("%s: Attempting to access a nonexistent search chunk", __func__));
   KASSERT(end_search_chunk_idx < sip->nchunks, ("%s: page %p spans to a nonexistent search chunk", __func__, m));
 
   /* Check if page 'm' spans two search chunks. */
-  if(search_chunk_idx != end_search_chunk_idx){
-    int spill_pgcnt = atop(m_end  & VM_PHYS_SEARCH_CHUNK_MASK);
+  if(search_chunk_idx != end_search_chunk_idx && (m_end & VM_PHYS_SEARCH_CHUNK_MASK)){
+    int spill_pgcnt = atop(m_end & VM_PHYS_SEARCH_CHUNK_MASK);
 
     sip->chunks[end_search_chunk_idx].holecnt += alloc ? -spill_pgcnt : spill_pgcnt;
     pgcnt -= spill_pgcnt;
   }
 
-  sip->chunks[search_chunk_idx].holecnt += alloc ? -pgcnt : pgcnt;                                                          KASSERT(sip->chunks[search_chunk_idx].holecnt >=0, ("%s: inconsistent hole count: %d, m_start: %p, m_end: %p, pgcnt: %d", __func__, sip->chunks[search_chunk_idx].holecnt, (void *)m->phys_addr, (void *)m_end,  pgcnt));
+  sip->chunks[search_chunk_idx].holecnt += alloc ? -pgcnt : pgcnt;
+  KASSERT(sip->chunks[search_chunk_idx].holecnt >=0, ("%s: inconsistent hole count: %d, m_start: %p, m_end: %p, pgcnt: %d", __func__, sip->chunks[search_chunk_idx].holecnt, (void *)m->phys_addr, (void *)m_end,  pgcnt));
   KASSERT (sip->chunks[search_chunk_idx].holecnt <= VM_PHYS_SEARCH_CHUNK_NPAGES, ("%s: inconsistent hole count: %d, m_start: %p, m_end: %p, pgcnt: %d", __func__, sip->chunks[search_chunk_idx].holecnt, (void *)m->phys_addr, (void *)m_end, pgcnt));
 }
 
-/* static */
-/* void vm_phys_init_compact(void *arg){ */
-/*         /\* Determine hole map size *\/ */
-/*         vm_paddr_t phys_end = vm_phys_segs[vm_phys_nsegs - 1].end; */
-/*         struct vm_phys_search_chunk *start_chunk, *end_chunk; */
-/*         struct vm_phys_hole *hp; */
 
-/*         vm_phys_nsearch_chunks = (phys_end / VM_PHYS_SEARCH_CHUNK_NPAGES); */
-/*         if(phys_end % VM_PHYS_SEARCH_CHUNK_NPAGES){ */
-/*                 vm_phys_nsearch_chunks++; */
-/*         } */
+static void
+vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_start, vm_paddr_t hole_end){
+        struct vm_phys_subseg *ssp;
 
-/*         /\* Allocate search index. *\/ */
-/*         chunk_map = (struct vm_phys_search_chunk *)malloc(vm_phys_nsearch_chunks * sizeof(struct vm_phys_search_chunk), M_TEMP, M_ZERO | M_WAITOK); */
+        if(cp->shp == NULL){
+                vm_paddr_t chunk_start = hole_start & ~VM_PHYS_SEARCH_CHUNK_MASK;
+                cp->shp = malloc(sizeof(struct subseg_head), M_TEMP, M_ZERO | M_WAITOK);
+                STAILQ_INIT(cp->shp);
+                /* Split chunk into a subseg */
+                ssp = malloc(sizeof(struct vm_phys_subseg), M_TEMP, M_ZERO | M_WAITOK);
+                ssp->start = chunk_start;
+                ssp->end = chunk_start + VM_PHYS_SEARCH_CHUNK_SIZE;
 
-/*         /\* Populate search index with hole info *\/ */
-/*         for(int i=0; i<vm_phys_nholes; i++){ */
-/*                 hp = &vm_phys_holes[i]; */
+                STAILQ_INSERT_HEAD(cp->shp, ssp, entries);
+        }
 
-/*                 start_chunk = &chunk_map[VM_PHYS_PADDR_TO_CHUNK_IDX(hp->start)]; */
-/*                 end_chunk = &chunk_map[VM_PHYS_PADDR_TO_CHUNK_IDX(hp->end)]; */
+        /*
+         * Holes are ordered by paddr - hole registration will
+         * thus always affect the last subsegment in the list.
+         * Take last subseg and split it.
+         */
+        ssp = STAILQ_LAST(cp->shp, vm_phys_subseg, entries);
+        if(hole_start == ssp->start){
+                ssp->start = hole_end;
+        } else if(hole_end == ssp->end){
+                ssp->end = hole_start;
+        } else { /* Hole splits the subseg - create and enqueue new subseg */
+                struct vm_phys_subseg *nssp = malloc(sizeof(struct vm_phys_subseg), M_TEMP, M_ZERO | M_WAITOK);
+                nssp->start = hole_end;
+                nssp->end = ssp->end;
+                ssp->end = hole_start;
+                STAILQ_INSERT_TAIL(cp->shp, nssp, entries);
+        }
+}
 
-/*                 /\* Hole is completely inside this chunk *\/ */
-/*                 if(start_chunk == end_chunk){ */
-/*                         /\* Register hole in current chunk. *\/ */
-/*                         vm_phys_chunk_register_hole(start_chunk, hp->start, hp->end); */
-/*                 } else { /\* Hole spans multiple chunks *\/ */
-/*                         if(hp->start & VM_PHYS_SEARCH_CHUNK_MASK){ */
-/*                                 /\* Partial overlap - register hole in first chunk. *\/ */
-/*                                 vm_phys_chunk_register_hole(start_chunk, hp->start, (hp->start & ~VM_PHYS_SEARCH_CHUNK_MASK) + VM_PHYS_SEARCH_CHUNK_SIZE); */
-/*                                 start_chunk++; */
-/*                         } */
-/*                         /\* Mark all chunks that are completely covered by this hole as invalid. *\/ */
-/*                         while(start_chunk < end_chunk){ */
-/*                                 start_chunk->holecnt = -1; */
-/*                                 // TODO: setup skiplist */
-/*                                 start_chunk++; */
-/*                         } */
+/*
+ * Populates compaction search index with hole information.
+ */
+static
+void vm_phys_init_compact(void *arg){
+  int dom;
+  struct vm_phys_search_index *sip;
+  struct vm_phys_search_chunk *start_chunk, *end_chunk;
+  struct vm_phys_hole *hp;
+  int start_idx, end_idx;
 
-/*                         if(hp->end & VM_PHYS_SEARCH_CHUNK_MASK){ */
-/*                                 /\* Partial overlap - register hole in last chunk. *\/ */
-/*                                 vm_phys_chunk_register_hole(start_chunk, (hp->end & ~VM_PHYS_SEARCH_CHUNK_MASK), hp->end); */
-/*                         } */
-/*                 } */
-/*         } */
+  for(dom =0; dom<vm_ndomains; dom++){
+        sip = &vm_phys_search_index[dom];
 
-/* } */
+        /* Register holes at start and end of domain */
+        if(sip->dom_start & VM_PHYS_SEARCH_CHUNK_MASK){
+          vm_phys_chunk_register_hole(&sip->chunks[0], sip->dom_start & ~VM_PHYS_SEARCH_CHUNK_MASK, sip->dom_start);
+        }
+        if(sip->dom_end & VM_PHYS_SEARCH_CHUNK_MASK){
+          vm_phys_chunk_register_hole(&sip->chunks[sip->nchunks - 1], sip->dom_end, (sip->dom_end & ~VM_PHYS_SEARCH_CHUNK_MASK) + VM_PHYS_SEARCH_CHUNK_SIZE);
+        }
+        /* Add hole information to domain search chunks */
+        for(int i=0; i<vm_phys_nholes; i++){
+                hp = &vm_phys_holes[i];
+                if(hp->domain != dom)
+                  continue;
+
+                start_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(hp->start - (sip->dom_start & ~VM_PHYS_SEARCH_CHUNK_MASK));
+                end_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(hp->end - (sip->dom_start & ~VM_PHYS_SEARCH_CHUNK_MASK));
+                start_chunk = &sip->chunks[start_idx];
+                end_chunk = &sip->chunks[end_idx];
+
+                /* Hole is completely inside this chunk */
+                if(start_chunk == end_chunk){
+                        /* Register hole in current chunk. */
+                        vm_phys_chunk_register_hole(start_chunk, hp->start, hp->end);
+                } else { /* Hole spans multiple chunks */
+                        if(hp->start & VM_PHYS_SEARCH_CHUNK_MASK){
+                                /* Partial overlap - register hole in first chunk. */
+                                vm_phys_chunk_register_hole(start_chunk, hp->start, (hp->start & ~VM_PHYS_SEARCH_CHUNK_MASK) + VM_PHYS_SEARCH_CHUNK_SIZE);
+                                start_chunk++;
+                        }
+                        /* Mark all chunks that are completely covered by this hole as invalid. */
+                        while(start_chunk < end_chunk){
+                                start_chunk->skipidx = end_idx;
+                                start_chunk++;
+                        }
+
+                        if(hp->end & VM_PHYS_SEARCH_CHUNK_MASK){
+                                /* Partial overlap - register hole in last chunk. */
+                                vm_phys_chunk_register_hole(end_chunk, (hp->end & ~VM_PHYS_SEARCH_CHUNK_MASK), hp->end);
+                        }
+                }
+        }
+  }
+
+}
+
+SYSINIT(vm_phys_search_holes, SI_SUB_KMEM + 1, SI_ORDER_ANY, vm_phys_init_compact, NULL);
 
 static
 int vm_phys_compact_search(vm_compact_region_t result){
@@ -2253,7 +2271,6 @@ int vm_phys_compact_search(vm_compact_region_t result){
         result->npages = atop(max->end - max->start);
         return 0;
 }
-
 /*
  * Determine whether a given page is eligible as a relocation destination.
  */
