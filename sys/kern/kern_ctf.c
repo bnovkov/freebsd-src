@@ -295,7 +295,7 @@ static int
 link_elf_init_kernel_ctf(linker_file_t lf, const char *ctf_start, size_t size)
 {
 #ifdef DDB_CTF
-	ctf_header_t *hp;
+	const ctf_header_t *hp;
 	uint8_t *ctftab;
 	size_t ctfcnt;
 	int error;
@@ -314,7 +314,7 @@ link_elf_init_kernel_ctf(linker_file_t lf, const char *ctf_start, size_t size)
 	ef->ctftab = 0;
 	ef->ctfcnt = 0;
 
-	hp = (ctf_header_t *)ctf_start;
+	hp = (const ctf_header_t *)ctf_start;
 
 	/* Sanity check. */
 	if (hp->cth_magic != CTF_MAGIC) {
@@ -341,7 +341,7 @@ link_elf_init_kernel_ctf(linker_file_t lf, const char *ctf_start, size_t size)
 
 		/* Decompress rest of CTF data */
 		error = uncompress(ctftab + sizeof(ctf_header_t), &decomp_size,
-		    (uint8_t *)sunw_addr + sizeof(ctf_header_t),
+		    (const uint8_t *)ctf_start + sizeof(ctf_header_t),
 		    ctfcnt - sizeof(ctf_header_t));
 		if (error != Z_OK) {
 			printf("%s(%d): zlib uncompress returned %d\n",

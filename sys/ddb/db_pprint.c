@@ -345,12 +345,8 @@ void
 db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 {
 	int t = 0;
-	Elf_Sym *sym;
 	db_expr_t off;
-
-	if (!db_ctf_loaded()) {
-		db_error("Kernel CTF data not present\n");
-	}
+  struct db_ctf_sym_data sym_data;
 
   /* Set default depth */
   max_depth = DB_PPRINT_DEFAULT_DEPTH;
@@ -381,17 +377,17 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 	}
 
 	addr = db_tok_number;
+  if(db_ctf_find_symbol(addr, &sym_data)){
+    db_error("Symbol not found\n");
+  }
 
-	sym = __DECONST(Elf_Sym *, db_search_symbol(addr, DB_STGY_ANY, &off));
-	if (sym == NULL) {
-		db_error("Symbol not found\n");
-	}
 
-	if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT) {
+
+	if (ELF_ST_TYPE(sym_data.sym->st_info) != STT_OBJECT) {
 		db_error("Symbol is not a variable\n");
 	}
 
-	if (db_pprint_symbol(sym)) {
+	if (db_pprint_symbol(sym_data.sym)) {
 		db_error("");
 	}
 }

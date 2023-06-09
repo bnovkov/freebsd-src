@@ -50,7 +50,7 @@ MTX_SYSINIT(db_ctf, &db_ctf_mtx, "ddb module CTF data registry", MTX_DEF);
 static MALLOC_DEFINE(M_DBCTF, "ddb ctf", "ddb module ctf data");
 
 static struct db_ctf *
-db_ctf_lookup(char *modname)
+db_ctf_lookup(const char *modname)
 {
   struct db_ctf *dcp;
 
@@ -88,17 +88,17 @@ db_ctf_register(const char *modname, linker_ctf_t *lc)
   return (0);
 }
 
-const ctf_header_t *
-db_ctf_fetch_cth(void)
+static const ctf_header_t *
+db_ctf_fetch_cth(linker_ctf_t *lc)
 {
-	return (const ctf_header_t *)db_ctf.kernel_ctf.ctftab;
+	return (const ctf_header_t *)lc->ctftab;
 }
 
 static uint32_t
-sym_to_objtoff(const Elf_Sym *sym, const Elf_Sym *symtab,
+sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
     const Elf_Sym *symtab_end)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth();
+	const ctf_header_t *hp = db_ctf_fetch_cth(lc);
 	uint32_t objtoff = hp->cth_objtoff;
 	const size_t idwidth = 4;
 
@@ -143,9 +143,9 @@ sym_to_objtoff(const Elf_Sym *sym, const Elf_Sym *symtab,
 }
 
 struct ctf_type_v3 *
-db_ctf_typeid_to_type(uint32_t typeid)
+db_ctf_typeid_to_type(linker_ctf_t *lc, uint32_t typeid)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth();
+	const ctf_header_t *hp = db_ctf_fetch_cth(lc);
 	const uint8_t *ctfstart = (const uint8_t *)hp + sizeof(ctf_header_t);
 
 	uint32_t typeoff = hp->cth_typeoff;
@@ -222,9 +222,9 @@ db_ctf_typeid_to_type(uint32_t typeid)
 }
 
 const char *
-db_ctf_stroff_to_str(uint32_t off)
+db_ctf_stroff_to_str(linker_ctf_t *lc, uint32_t off)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth();
+	const ctf_header_t *hp = db_ctf_fetch_cth(lc);
 	uint32_t stroff = hp->cth_stroff + off;
 
 	if (stroff >= (hp->cth_stroff + hp->cth_strlen)) {
@@ -240,7 +240,7 @@ db_ctf_stroff_to_str(uint32_t off)
 }
 
 struct ctf_type_v3 *
-db_ctf_sym_to_type(const Elf_Sym *sym)
+db_ctf_sym_to_type(linker_ctf_t *lc, const Elf_Sym *sym)
 {
 	uint32_t objtoff, typeid;
 	const Elf_Sym *symtab, *symtab_end;
@@ -249,18 +249,25 @@ db_ctf_sym_to_type(const Elf_Sym *sym)
 		return (NULL);
 	}
 
-	symtab = db_ctf.kernel_ctf.symtab;
-	symtab_end = symtab + db_ctf.kernel_ctf.nsym;
+	symtab = lc->symtab;
+	symtab_end = symtab + lc->nsym;
 
-	objtoff = sym_to_objtoff(sym, symtab, symtab_end);
+	objtoff = sym_to_objtoff(lc, sym, symtab, symtab_end);
 	/* Sanity check - should not happen */
 	if (objtoff == DB_CTF_OBJTOFF_INVALID) {
 		db_printf("Could not find CTF object offset.");
 		return (NULL);
 	}
 
-	typeid = *(const uint32_t *)(db_ctf.kernel_ctf.ctftab +
+	typeid = *(const uint32_t *)(lc->ctftab +
 	    sizeof(ctf_header_t) + objtoff);
 
-	return db_ctf_typeid_to_type(typeid);
+	return db_ctf_typeid_to_type(lc, typeid);
+}
+
+int db_ctf_find_symbol(db_expr_t addr, struct db_ctf_sym_data *sdp){
+
+  sym = __DECONST(Elf_Sym *, db_search_symbol(addr, DB_STGY_ANY, &off));
+	if (sym == NULL) {
+	}
 }
