@@ -117,17 +117,16 @@ MALLOC_DEFINE(M_FICT_PAGES, "vm_fictitious", "Fictitious VM pages");
 
 
 struct vm_phys_hole {
-        RB_ENTRY(vm_phys_hole) node;
         /* Memory hole region data */
         vm_paddr_t	start;
         vm_paddr_t	end;
         int domain;
 };
 /*  */
-static struct vm_phys_hole __read_mostly vm_phys_holes[VM_PHYSSEG_MAX];
-static int __read_mostly vm_phys_nholes;
+static struct vm_phys_hole vm_phys_holes[VM_PHYSSEG_MAX];
+static int vm_phys_nholes;
 
-
+static void vm_phys_update_search_index(vm_page_t m, int order, bool alloc);
 
 static struct vm_freelist __aligned(CACHE_LINE_SIZE)
     vm_phys_free_queues[MAXMEMDOM][VM_NFREELIST][VM_NFREEPOOL]
@@ -559,6 +558,7 @@ vm_freelist_add(struct vm_freelist *fl, vm_page_t m, int order, int tail)
 	else
 		TAILQ_INSERT_HEAD(&fl[order].pl, m, listq);
 	fl[order].lcnt++;
+  vm_phys_update_search_index(m, order, false);
 }
 
 static void
@@ -568,6 +568,7 @@ vm_freelist_rem(struct vm_freelist *fl, vm_page_t m, int order)
 	TAILQ_REMOVE(&fl[order].pl, m, listq);
 	fl[order].lcnt--;
 	m->order = VM_NFREEORDER;
+  vm_phys_update_search_index(m, order, true);
 }
 
 /*
@@ -2057,10 +2058,10 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 }
 #endif
 
-#define VM_PHYS_SEARCH_CHUNK_NPAGES (VM_NFREEORDER - 1)
-#define VM_PHYS_SEARCH_CHUNK_SIZE (1 <<(VM_PHYS_SEARCH_CHUNK_NPAGES + (PAGE_SHIFT)))
+#define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_NFREEORDER - 1))
+#define VM_PHYS_SEARCH_CHUNK_SIZE (VM_PHYS_SEARCH_CHUNK_NPAGES << (PAGE_SHIFT))
 #define VM_PHYS_SEARCH_CHUNK_MASK (VM_PHYS_SEARCH_CHUNK_SIZE - 1)
-#define VM_PHYS_PADDR_TO_CHUNK_IDX(p) (((p) & ~VM_PHYS_SEARCH_CHUNK_MASK) >> (VM_PHYS_SEARCH_CHUNK_NPAGES + PAGE_SHIFT))
+#define VM_PHYS_PADDR_TO_CHUNK_IDX(p) (((p) & ~VM_PHYS_SEARCH_CHUNK_MASK) >> ((VM_NFREEORDER - 1) + PAGE_SHIFT))
 
 struct vm_phys_subseg {
         vm_paddr_t start;
@@ -2071,13 +2072,14 @@ struct vm_phys_subseg {
 STAILQ_HEAD(subseg_head, vm_phys_subseg);
 
 struct vm_phys_search_chunk {
-        uint16_t holecnt;
+        int holecnt;
         struct subseg_head *shp;
 };
 
 struct vm_phys_search_index {
         struct vm_phys_search_chunk *chunks;
         int nchunks;
+        int idx_shift;
 };
 static struct vm_phys_search_index vm_phys_search_index[MAXMEMDOM];
 
@@ -2118,32 +2120,39 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_sta
 }
 
 /*
- * Allocates the virtual and physical memory required for the memory compaction search index.
+ * Allocates physical memory required for the memory compaction search index.
  */
 void
 vm_phys_search_index_startup(vm_offset_t *vaddr)
 {
 	vm_paddr_t pa;
-	size_t seg_pgcnt, alloc_size;
+	size_t alloc_size;
   int dom_nsearch_chunks;
 
   struct vm_phys_search_index *cur_idx;
+  vm_paddr_t dom_start, dom_end;
 
   for(int dom=0; dom < vm_ndomains; dom++){
           cur_idx = &vm_phys_search_index[dom];
           dom_nsearch_chunks = 0;
-
           /* Calculate number of of search index chunks for current domain */
           for (int i = 0; mem_affinity[i].end != 0; i++) {
                   if(mem_affinity[i].domain == dom){
-                          seg_pgcnt = atop(round_page(mem_affinity[i].end - mem_affinity[i].start));
-                          dom_nsearch_chunks += seg_pgcnt / VM_PHYS_SEARCH_CHUNK_NPAGES;
-                          if(seg_pgcnt % VM_PHYS_SEARCH_CHUNK_NPAGES){
-                                  dom_nsearch_chunks++;
-                          }
+                    dom_start = mem_affinity[i].start;
+                    while(mem_affinity[i].domain == dom){
+                      i++;
+                    }
+                    dom_end = mem_affinity[i-1].end;
                   }
           }
           /* Allocate search index for current domain */
+          dom_nsearch_chunks = atop(dom_end - dom_start) / VM_PHYS_SEARCH_CHUNK_NPAGES;
+          /* Add additional chunks if beginning and start aren't search chunk-aligned. */
+          if(dom_start & VM_PHYS_SEARCH_CHUNK_MASK)
+            dom_nsearch_chunks++;
+          if(dom_end & VM_PHYS_SEARCH_CHUNK_MASK)
+            dom_nsearch_chunks++;
+
           alloc_size = round_page(dom_nsearch_chunks * sizeof(struct vm_phys_search_chunk));
           pa = vm_phys_early_alloc(dom, alloc_size);
 
@@ -2151,11 +2160,36 @@ vm_phys_search_index_startup(vm_offset_t *vaddr)
           cur_idx->chunks = (void *)(uintptr_t)pmap_map(vaddr, pa,  pa + alloc_size,
                                                         VM_PROT_READ | VM_PROT_WRITE);
           cur_idx->nchunks = dom_nsearch_chunks;
+          cur_idx->idx_shift = VM_PHYS_PADDR_TO_CHUNK_IDX(dom_start);
           if(cur_idx->chunks == NULL){
                   panic("Unable to allocate search index for domain %d\n", dom);
           }
           bzero(cur_idx->chunks, alloc_size);
   }
+}
+
+static
+void vm_phys_update_search_index(vm_page_t m, int order, bool alloc){
+
+  struct vm_phys_search_index *sip = &vm_phys_search_index[vm_page_domain(m)];
+  vm_paddr_t m_end = m->phys_addr + ptoa(1 << order);
+  int search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m->phys_addr) - sip->idx_shift;
+  int end_search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m_end)- sip->idx_shift;
+  int pgcnt = 1 << order;
+
+  KASSERT(search_chunk_idx < sip->nchunks, ("%s: Attempting to access a nonexistent search chunk", __func__));
+  KASSERT(end_search_chunk_idx < sip->nchunks, ("%s: page %p spans to a nonexistent search chunk", __func__, m));
+
+  /* Check if page 'm' spans two search chunks. */
+  if(search_chunk_idx != end_search_chunk_idx){
+    int spill_pgcnt = atop(m_end  & VM_PHYS_SEARCH_CHUNK_MASK);
+
+    sip->chunks[end_search_chunk_idx].holecnt += alloc ? -spill_pgcnt : spill_pgcnt;
+    pgcnt -= spill_pgcnt;
+  }
+
+  sip->chunks[search_chunk_idx].holecnt += alloc ? -pgcnt : pgcnt;                                                          KASSERT(sip->chunks[search_chunk_idx].holecnt >=0, ("%s: inconsistent hole count: %d, m_start: %p, m_end: %p, pgcnt: %d", __func__, sip->chunks[search_chunk_idx].holecnt, (void *)m->phys_addr, (void *)m_end,  pgcnt));
+  KASSERT (sip->chunks[search_chunk_idx].holecnt <= VM_PHYS_SEARCH_CHUNK_NPAGES, ("%s: inconsistent hole count: %d, m_start: %p, m_end: %p, pgcnt: %d", __func__, sip->chunks[search_chunk_idx].holecnt, (void *)m->phys_addr, (void *)m_end, pgcnt));
 }
 
 /* static */
