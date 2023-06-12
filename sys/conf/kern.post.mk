@@ -203,8 +203,6 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 	@${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${SYSTEM_OBJS} vers.o
 # Dump merged CTF data into a file and build the db_kctf module
 	@${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} kctf.raw
-	CFLAGS+= -DKCTF_FILE=kctf_raw
-	@${MAKE} -C ${SRCTOP}/sys/modules/db_kctf
 .endif
 .if !defined(DEBUG)
 	${OBJCOPY} --strip-debug ${.TARGET}

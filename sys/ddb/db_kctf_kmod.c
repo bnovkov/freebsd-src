@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/module.h>
 #include <ddb/ddb.h>
+#include <ddb/db_ctf.h>
 
 extern int _kctf_start;
 extern int _kctf_end;
@@ -51,12 +52,12 @@ db_kctf_modevent(module_t mod, int type, void *unused)
         switch (type) {
         case MOD_LOAD:
           kctf_size = (vm_offset_t)&_kctf_end - (vm_offset_t)&_kctf_start;
-          error = linker_init_kernel_ctf(linker_kernel_file, (const char*)&_kctf_start, kctf_size, &klc));
+          error = linker_init_kernel_ctf(linker_kernel_file, (const char*)&_kctf_start, kctf_size);
           if(error){
             return (EINVAL);
           }
-
-          db_ctf_register(linker_kernel_file->filename, klc);
+          linker_ctf_get(linker_kernel_file, &klc);
+          db_ctf_register(linker_kernel_file->filename, &klc);
 
 
                 return (0);

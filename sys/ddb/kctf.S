@@ -32,7 +32,7 @@
 #define	KCTF_START	_kctf_start
 #define	KCTF_END	_kctf_end
 
-	.section rodata, "a", %progbits
+	.section .rodata, "a", %progbits
 	.globl	KCTF_START
 	.type	KCTF_START, %object
 KCTF_START:

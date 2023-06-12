@@ -44,6 +44,8 @@ static void db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type,
     u_int depth);
 
 static u_int max_depth = DB_PPRINT_DEFAULT_DEPTH;
+static struct db_ctf_sym_data sym_data;
+
 
 static inline void
 db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
@@ -106,11 +108,11 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 				return;
 			}
 
-			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(
+			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(&sym_data,
 			    mp->ctm_type);
 			db_addr_t maddr = addr + mp->ctm_offset;
 
-			mname = db_ctf_stroff_to_str(mp->ctm_name);
+			mname = db_ctf_stroff_to_str(&sym_data, mp->ctm_name);
 			if (mname) {
 				db_printf("%s = ", mname);
 			}
@@ -129,11 +131,11 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 				return;
 			}
 
-			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(
+			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(&sym_data,
 			    mp->ctlm_type);
 			db_addr_t maddr = addr + CTF_LMEM_OFFSET(mp);
 
-			mname = db_ctf_stroff_to_str(mp->ctlm_name);
+			mname = db_ctf_stroff_to_str(&sym_data, mp->ctlm_name);
 			if (mname) {
 				db_printf("%s = ", mname);
 			}
@@ -157,7 +159,7 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 		sizeof(struct ctf_stype_v3));
 
 	arr = (struct ctf_array_v3 *)((db_addr_t)type + type_struct_size);
-	elem_type = db_ctf_typeid_to_type(arr->cta_contents);
+	elem_type = db_ctf_typeid_to_type(&sym_data, arr->cta_contents);
 	elem_size = ((elem_type->ctt_size == CTF_V3_LSIZE_SENT) ?
 		CTF_TYPE_LSIZE(elem_type) :
 		elem_type->ctt_size);
@@ -200,7 +202,7 @@ db_pprint_enum(db_addr_t addr, struct ctf_type_v3 *type)
 
 	for (; ep < endp; ep++) {
 		if (val == ep->cte_value) {
-			valname = db_ctf_stroff_to_str(ep->cte_name);
+			valname = db_ctf_stroff_to_str(&sym_data, ep->cte_name);
 			if (valname) {
 				db_printf("%s ", valname);
 			}
@@ -220,7 +222,7 @@ db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	u_int kind;
 	db_addr_t val;
 
-	ref_type = db_ctf_typeid_to_type(type->ctt_type);
+	ref_type = db_ctf_typeid_to_type(&sym_data, type->ctt_type);
 	kind = CTF_V3_INFO_KIND(ref_type->ctt_info);
 
 	switch (kind) {
@@ -243,7 +245,7 @@ db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 		db_pprint_type(addr, ref_type, depth + 1);
 	} else {
 
-		name = db_ctf_stroff_to_str(ref_type->ctt_name);
+		name = db_ctf_stroff_to_str(&sym_data, ref_type->ctt_name);
 		if (name) {
 			db_printf("(%s%s *)", qual, name);
 		}
@@ -284,7 +286,7 @@ db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	case CTF_K_VOLATILE:
 	case CTF_K_RESTRICT:
 	case CTF_K_CONST: {
-		struct ctf_type_v3 *ref_type = db_ctf_typeid_to_type(
+		struct ctf_type_v3 *ref_type = db_ctf_typeid_to_type(&sym_data,
 		    type->ctt_type);
 		db_pprint_type(addr, ref_type, depth);
 		break;
@@ -303,9 +305,9 @@ db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 }
 
 static int
-db_pprint_symbol(const Elf_Sym *sym)
+db_pprint_symbol(void)
 {
-	db_addr_t addr = sym->st_value;
+	db_addr_t addr = sym_data.sym->st_value;
 	struct ctf_type_v3 *type = NULL;
 	db_expr_t _val;
 
@@ -316,14 +318,14 @@ db_pprint_symbol(const Elf_Sym *sym)
 		return -1;
 	}
 
-	type = db_ctf_sym_to_type(sym);
+	type = db_ctf_sym_to_type(&sym_data);
 	if (!type) {
 		db_printf("Cant find CTF type info\n");
 		return -1;
 	}
 
-	db_symbol_values((c_db_sym_t)sym, &sym_name, &_val);
-	type_name = db_ctf_stroff_to_str(type->ctt_name);
+	db_symbol_values((c_db_sym_t)sym_data.sym, &sym_name, &_val);
+	type_name = db_ctf_stroff_to_str(&sym_data, type->ctt_name);
 
 	if (type_name) {
 		db_printf("%s ", type_name);
@@ -345,8 +347,6 @@ void
 db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 {
 	int t = 0;
-	db_expr_t off;
-  struct db_ctf_sym_data sym_data;
 
   /* Set default depth */
   max_depth = DB_PPRINT_DEFAULT_DEPTH;
@@ -381,13 +381,11 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
     db_error("Symbol not found\n");
   }
 
-
-
 	if (ELF_ST_TYPE(sym_data.sym->st_info) != STT_OBJECT) {
 		db_error("Symbol is not a variable\n");
 	}
 
-	if (db_pprint_symbol(sym_data.sym)) {
+	if (db_pprint_symbol()) {
 		db_error("");
 	}
 }

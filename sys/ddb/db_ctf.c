@@ -88,6 +88,30 @@ db_ctf_register(const char *modname, linker_ctf_t *lc)
   return (0);
 }
 
+int	db_ctf_unregister(const char *modname){
+  struct db_ctf *dcp;
+
+  mtx_lock(&db_ctf_mtx);
+  dcp = db_ctf_lookup(modname);
+  if(dcp != NULL){
+    mtx_unlock(&db_ctf_mtx);
+    printf("%s: ddb CTF data for module %s already loaded!\n",
+           __func__, modname);
+
+    return (EINVAL);
+  }
+  mtx_unlock(&db_ctf_mtx);
+
+  mtx_lock(&db_ctf_mtx);
+  LIST_REMOVE(dcp, link);
+  mtx_unlock(&db_ctf_mtx);
+
+  free(dcp, M_DBCTF);
+
+  return (0);
+}
+
+
 static const ctf_header_t *
 db_ctf_fetch_cth(linker_ctf_t *lc)
 {
@@ -143,9 +167,9 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 }
 
 struct ctf_type_v3 *
-db_ctf_typeid_to_type(linker_ctf_t *lc, uint32_t typeid)
+db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth(lc);
+	const ctf_header_t *hp = db_ctf_fetch_cth(sd->lc);
 	const uint8_t *ctfstart = (const uint8_t *)hp + sizeof(ctf_header_t);
 
 	uint32_t typeoff = hp->cth_typeoff;
@@ -222,9 +246,9 @@ db_ctf_typeid_to_type(linker_ctf_t *lc, uint32_t typeid)
 }
 
 const char *
-db_ctf_stroff_to_str(linker_ctf_t *lc, uint32_t off)
+db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth(lc);
+	const ctf_header_t *hp = db_ctf_fetch_cth(sd->lc);
 	uint32_t stroff = hp->cth_stroff + off;
 
 	if (stroff >= (hp->cth_stroff + hp->cth_strlen)) {
@@ -240,34 +264,46 @@ db_ctf_stroff_to_str(linker_ctf_t *lc, uint32_t off)
 }
 
 struct ctf_type_v3 *
-db_ctf_sym_to_type(linker_ctf_t *lc, const Elf_Sym *sym)
+db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 {
 	uint32_t objtoff, typeid;
 	const Elf_Sym *symtab, *symtab_end;
 
-	if (sym == NULL) {
+	if (sd->sym == NULL) {
 		return (NULL);
 	}
 
-	symtab = lc->symtab;
-	symtab_end = symtab + lc->nsym;
+	symtab = sd->lc->symtab;
+	symtab_end = symtab + sd->lc->nsym;
 
-	objtoff = sym_to_objtoff(lc, sym, symtab, symtab_end);
+	objtoff = sym_to_objtoff(sd->lc, sd->sym, symtab, symtab_end);
 	/* Sanity check - should not happen */
 	if (objtoff == DB_CTF_OBJTOFF_INVALID) {
 		db_printf("Could not find CTF object offset.");
 		return (NULL);
 	}
 
-	typeid = *(const uint32_t *)(lc->ctftab +
+	typeid = *(const uint32_t *)(sd->lc->ctftab +
 	    sizeof(ctf_header_t) + objtoff);
 
-	return db_ctf_typeid_to_type(lc, typeid);
+	return db_ctf_typeid_to_type(sd, typeid);
 }
 
-int db_ctf_find_symbol(db_expr_t addr, struct db_ctf_sym_data *sdp){
+int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd){
+  db_expr_t off;
+  struct db_ctf *dcp;
 
-  sym = __DECONST(Elf_Sym *, db_search_symbol(addr, DB_STGY_ANY, &off));
-	if (sym == NULL) {
+  sd->sym = __DECONST(Elf_Sym *, db_search_symbol(addr, DB_STGY_ANY, &off));
+	if (sd->sym == NULL) {
+    return (ENOENT);
 	}
+
+  dcp = db_ctf_lookup(linker_kernel_file->filename);
+	if (dcp == NULL) {
+    return (ENOENT);
+	}
+
+  sd->lc = dcp->lc;
+
+  return (0);
 }

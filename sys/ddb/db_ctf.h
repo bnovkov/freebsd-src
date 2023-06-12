@@ -44,9 +44,11 @@ struct db_ctf_sym_data{
   Elf_Sym *sym;
 };
 
-struct ctf_type_v3 *db_ctf_sym_to_type(linker_ctf_t *lc, const Elf_Sym *sym);
-struct ctf_type_v3 *db_ctf_typeid_to_type(linker_ctf_t *lc, uint32_t typeid);
-const char *db_ctf_stroff_to_str(linker_ctf_t *lc, uint32_t off);
-int db_ctf_find_symbol(db_expr_t addr, struct db_ctf_sym_data *sdp);
+typedef struct db_ctf_sym_data *db_ctf_sym_data_t;
+
+struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);
+struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid);
+const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
+int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd);
 
 #endif /* !_DDB_DB_CTF_H_ */
