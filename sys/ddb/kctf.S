@@ -33,12 +33,12 @@
 #define	KCTF_END	_kctf_end
 
 	.section .rodata, "a", %progbits
-	.globl	KCTF_START
+	.globl KCTF_START
 	.type	KCTF_START, %object
+  .size KCTF_START, 0
 KCTF_START:
 	.incbin	__XSTRING(KCTF_FILE)
-	.size KCTF_START, . - KCTF_START
 	.globl KCTF_END
 	.type	KCTF_END, %object
+  .size	KCTF_END, 0
 KCTF_END:
-	.size	KCTF_END, . - KCTF_END

@@ -201,8 +201,12 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 .if ${MK_CTF} != "no"
 	@echo ${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ...
 	@${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${SYSTEM_OBJS} vers.o
+# objdump won't dump a non-SHF_ALLOC'd section
+	@${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ${.TARGET}
 # Dump merged CTF data into a file and build the db_kctf module
 	@${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} kctf.raw
+	@${OBJCOPY} --set-section-flags .SUNW_ctf= ${.TARGET}
+
 .endif
 .if !defined(DEBUG)
 	${OBJCOPY} --strip-debug ${.TARGET}

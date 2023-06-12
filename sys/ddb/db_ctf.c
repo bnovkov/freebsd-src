@@ -93,7 +93,7 @@ int	db_ctf_unregister(const char *modname){
 
   mtx_lock(&db_ctf_mtx);
   dcp = db_ctf_lookup(modname);
-  if(dcp != NULL){
+  if(dcp == NULL){
     mtx_unlock(&db_ctf_mtx);
     printf("%s: ddb CTF data for module %s already loaded!\n",
            __func__, modname);
