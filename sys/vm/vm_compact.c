@@ -31,7 +31,6 @@
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
-#include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/queue.h>
 #include <sys/sysctl.h>
@@ -45,7 +44,6 @@
 #define VM_COMPACT_LOCK() mtx_lock(&compact_lock)
 #define VM_COMPACT_UNLOCK() mtx_unlock(&compact_lock)
 
-MALLOC_DECLARE(M_VMCOMPACT);
 MALLOC_DEFINE(M_VMCOMPACT, "vm_compact_ctx", "memory compaction context");
 
 static int vm_phys_compact_thresh = 300; /* 200 - 1000 */
@@ -60,13 +58,14 @@ static LIST_HEAD(, vm_compact_ctx) active_compactions[MAXMEMDOM];
 struct vm_compact_ctx {
 	vm_compact_search_fn search_fn;
 	vm_compact_defrag_fn defrag_fn;
-	vm_compact_end_fn end_fn;
 
   vm_paddr_t start;
   vm_paddr_t end;
 
 	int order;
 	int domain;
+
+  void *p_data;
 
 	LIST_ENTRY(vm_compact_ctx) entries;
 };
@@ -113,7 +112,7 @@ vm_compact_check_range_domain(vm_paddr_t start, vm_paddr_t end)
 
 void *
 vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
-    vm_compact_end_fn efn, vm_paddr_t start, vm_paddr_t end, int order, int *error)
+    vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order, int *error)
 {
 	struct vm_compact_ctx *ctxp;
 
@@ -134,11 +133,11 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 
 	ctxp->search_fn = sfn;
 	ctxp->defrag_fn = dfn;
-	ctxp->end_fn = efn;
 	ctxp->start = start;
-	ctxp->end = end;
 	ctxp->order = order;
 	ctxp->domain = vm_page_domain(PHYS_TO_VM_PAGE(start));
+
+  ctxfn(&ctxp->p_data);
 
 	return ((void *)ctxp);
 }
@@ -186,8 +185,8 @@ vm_compact_run(void *ctx)
 		// TODO: rework to use end_fn later on
 		old_frag_idx = frag_idx;
 
-		ctxp->search_fn(&r);
-		nrelocated += ctxp->defrag_fn(&r, ctxp->domain);
+		ctxp->search_fn(&r, ctxp->domain, ctxp->p_data);
+		nrelocated += ctxp->defrag_fn(&r, ctxp->domain, ctxp->p_data);
 
     vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
