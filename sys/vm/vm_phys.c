@@ -2062,19 +2062,14 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 #define VM_PHYS_SEARCH_CHUNK_SIZE (VM_PHYS_SEARCH_CHUNK_NPAGES << (PAGE_SHIFT))
 #define VM_PHYS_SEARCH_CHUNK_MASK (VM_PHYS_SEARCH_CHUNK_SIZE - 1)
 #define VM_PHYS_PADDR_TO_CHUNK_IDX(p) (((p) & ~VM_PHYS_SEARCH_CHUNK_MASK) >> ((VM_NFREEORDER - 1) + PAGE_SHIFT))
-
-struct vm_phys_subseg {
-        vm_paddr_t start;
-        vm_paddr_t end;
-        STAILQ_ENTRY(vm_phys_subseg) entries;
-};
-
-STAILQ_HEAD(subseg_head, vm_phys_subseg);
+#define VM_PHYS_HOLECNT_HI ((VM_PHYS_SEARCH_CHUNK_NPAGES * 3) / 4)
+#define VM_PHYS_HOLECNT_LO  (VM_PHYS_SEARCH_CHUNK_NPAGES / 4)
+#define VM_PHYS_SEARCH_IDX_TO_PADDR(i) ((i)  << ((VM_NFREEORDER - 1) + PAGE_SHIFT))
 
 struct vm_phys_search_chunk {
         int holecnt;
         int skipidx;
-        struct subseg_head *shp;
+        struct vm_compact_region_head *shp;
 };
 
 struct vm_phys_search_index {
@@ -2165,14 +2160,14 @@ void vm_phys_update_search_index(vm_page_t m, int order, bool alloc){
 
 static void
 vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_start, vm_paddr_t hole_end){
-        struct vm_phys_subseg *ssp;
+        vm_compact_region_t ssp;
 
         if(cp->shp == NULL){
                 vm_paddr_t chunk_start = hole_start & ~VM_PHYS_SEARCH_CHUNK_MASK;
-                cp->shp = malloc(sizeof(struct subseg_head), M_TEMP, M_ZERO | M_WAITOK);
+                cp->shp = malloc(sizeof(*cp->shp), M_TEMP, M_ZERO | M_WAITOK);
                 STAILQ_INIT(cp->shp);
                 /* Split chunk into a subseg */
-                ssp = malloc(sizeof(struct vm_phys_subseg), M_TEMP, M_ZERO | M_WAITOK);
+                ssp = malloc(sizeof(*ssp), M_TEMP, M_ZERO | M_WAITOK);
                 ssp->start = chunk_start;
                 ssp->end = chunk_start + VM_PHYS_SEARCH_CHUNK_SIZE;
 
@@ -2184,13 +2179,13 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_sta
          * thus always affect the last subsegment in the list.
          * Take last subseg and split it.
          */
-        ssp = STAILQ_LAST(cp->shp, vm_phys_subseg, entries);
+        ssp = STAILQ_LAST(cp->shp, vm_compact_region, entries);
         if(hole_start == ssp->start){
                 ssp->start = hole_end;
         } else if(hole_end == ssp->end){
                 ssp->end = hole_start;
         } else { /* Hole splits the subseg - create and enqueue new subseg */
-                struct vm_phys_subseg *nssp = malloc(sizeof(struct vm_phys_subseg), M_TEMP, M_ZERO | M_WAITOK);
+                vm_compact_region_t nssp = malloc(sizeof(*nssp), M_TEMP, M_ZERO | M_WAITOK);
                 nssp->start = hole_end;
                 nssp->end = ssp->end;
                 ssp->end = hole_start;
@@ -2258,18 +2253,41 @@ void vm_phys_init_compact(void *arg){
 
 SYSINIT(vm_phys_search_holes, SI_SUB_KMEM + 1, SI_ORDER_ANY, vm_phys_init_compact, NULL);
 
-static
-int vm_phys_compact_search(vm_compact_region_t result){
-        struct  vm_phys_seg *max = &vm_phys_segs[0];
-        for(int i =1; i<vm_phys_nsegs; i++){
-                if((max->end - max->start) < (vm_phys_segs[i].end - vm_phys_segs[i].start)){
-                        max = &vm_phys_segs[i];
-                }
-        }
+struct vm_phys_compact_ctx {
+  int last_idx;
+  struct vm_compact_region region;
+};
 
-        result->start = max->first_page;
-        result->npages = atop(max->end - max->start);
-        return 0;
+static
+void vm_phys_compact_ctx_init(void **p_data){
+  *p_data = (void *)malloc(sizeof(struct vm_phys_compact_ctx), M_VMCOMPACT, M_ZERO | M_WAITOK);
+}
+
+
+static
+int vm_phys_compact_search(vm_compact_region_t r, int domain, void *p_data){
+  struct vm_phys_compact_ctx *ctx = (struct vm_phys_compact_ctx *)p_data;
+  struct vm_phys_search_index *sip = &vm_phys_search_index[domain];
+  struct vm_phys_search_chunk *scp;
+
+  int idx;
+
+  for(idx = ctx->last_idx; idx < (sip->nchunks-1); idx++){
+    scp = &sip->chunks[idx];
+    if(scp->shp){
+      continue;
+    }
+
+    if(scp->holecnt >= VM_PHYS_HOLECNT_LO && scp->holecnt <= VM_PHYS_HOLECNT_HI){
+      ctx->region.start = VM_PHYS_SEARCH_IDX_TO_PADDR(idx);
+      ctx->region.end = VM_PHYS_SEARCH_IDX_TO_PADDR(idx+1);
+      r = &ctx->region;
+      break;
+    }
+  }
+
+  ctx->last_idx = (idx + 1) % (sip->nchunks -1);
+  return 0;
 }
 /*
  * Determine whether a given page is eligible as a relocation destination.
@@ -2386,9 +2404,9 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
 }
 
 static __noinline
-size_t vm_phys_defrag(vm_compact_region_t region, int domain){
-        vm_page_t free = region->start;
-        vm_page_t scan = region->start + region->npages;
+size_t vm_phys_defrag(vm_compact_region_t region, int domain, void *p_data){
+  vm_page_t free = PHYS_TO_VM_PAGE(region->start);
+  vm_page_t scan = PHYS_TO_VM_PAGE(region->end - PAGE_SIZE);
         size_t nrelocated = 0;
         printf("%s: start scan %p, free %p\n", __func__, scan, free);
 
@@ -2421,6 +2439,7 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain){
 
                 printf("%s: scan %p, free %p\n", __func__, scan, free);
         }
+
         return nrelocated;
 }
 
@@ -2445,8 +2464,8 @@ sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
         sbuf_new_for_sysctl(&sbuf, NULL, 32, req);
         start = vm_phys_segs[0].start;
 
-        end = vm_phys_segs[vm_phys_nsegs-1].end - PAGE_SIZE;
-        cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag, NULL, start, end, 9, &error);
+        end = vm_phys_segs[5].end - PAGE_SIZE;
+        cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag, vm_phys_compact_ctx_init, start, end, 9, &error);
         KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
 
         vm_compact_run(cctx);
