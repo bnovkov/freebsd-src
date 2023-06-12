@@ -106,7 +106,7 @@ vm_compact_check_range_domain(vm_paddr_t start, vm_paddr_t end)
         vm_page_t m1 = PHYS_TO_VM_PAGE(start);
         vm_page_t m2 = PHYS_TO_VM_PAGE(end);
 
-        KASSERT(!(m1->flags & (PG_FICTITIOUS | PG_MARKER)) && !(m2->flags & (PG_FICTITIOUS | PG_MARKER)), ("Passed fictitious page in compaction range"));
+        KASSERT(!(m1->flags & (PG_FICTITIOUS | PG_MARKER)) && !(m2->flags & (PG_FICTITIOUS | PG_MARKER)), ("Passed fictitious page in compaction range")); 
         return vm_page_domain(m1) == vm_page_domain(m2);
 }
 
@@ -152,7 +152,7 @@ int
 vm_compact_run(void *ctx)
 {
   int old_frag_idx, frag_idx;
-	struct vm_compact_region r;
+	vm_compact_region_t r;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
   size_t nrelocated = 0;
@@ -186,12 +186,12 @@ vm_compact_run(void *ctx)
 		old_frag_idx = frag_idx;
 
 		ctxp->search_fn(&r, ctxp->domain, ctxp->p_data);
-		nrelocated += ctxp->defrag_fn(&r, ctxp->domain, ctxp->p_data);
+		nrelocated += ctxp->defrag_fn(r, ctxp->domain, ctxp->p_data);
 
     vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
     vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
-	} while ((old_frag_idx - frag_idx) > 20);
+	} while ((old_frag_idx - frag_idx) > 20 || nrelocated == 0);
 
  cleanup:
 	VM_COMPACT_LOCK();
