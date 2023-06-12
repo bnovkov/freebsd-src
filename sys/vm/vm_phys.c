@@ -2265,7 +2265,7 @@ void vm_phys_compact_ctx_init(void **p_data){
 
 
 static
-int vm_phys_compact_search(vm_compact_region_t r, int domain, void *p_data){
+int vm_phys_compact_search(vm_compact_region_t *r, int domain, void *p_data){
   struct vm_phys_compact_ctx *ctx = (struct vm_phys_compact_ctx *)p_data;
   struct vm_phys_search_index *sip = &vm_phys_search_index[domain];
   struct vm_phys_search_chunk *scp;
@@ -2277,16 +2277,16 @@ int vm_phys_compact_search(vm_compact_region_t r, int domain, void *p_data){
     if(scp->shp){
       continue;
     }
-
     if(scp->holecnt >= VM_PHYS_HOLECNT_LO && scp->holecnt <= VM_PHYS_HOLECNT_HI){
       ctx->region.start = VM_PHYS_SEARCH_IDX_TO_PADDR(idx);
       ctx->region.end = VM_PHYS_SEARCH_IDX_TO_PADDR(idx+1);
-      r = &ctx->region;
+      *r = &ctx->region;
       break;
     }
   }
-
+  printf("%s: chunk holecnt: %d\n", __func__, scp->holecnt);
   ctx->last_idx = (idx + 1) % (sip->nchunks -1);
+
   return 0;
 }
 /*
@@ -2329,6 +2329,10 @@ bool vm_phys_defrag_page_relocatable(vm_page_t p){
         return false;
 }
 
+/*
+ * Tries to move 'src' into 'dst'.
+ * Returns 0 on success, 1 if the error was caused by the src page, 2 if caused by the dst page.
+ */
 static __noinline
 int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
         int error = 0;
@@ -2408,6 +2412,7 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain, void *p_data){
   vm_page_t free = PHYS_TO_VM_PAGE(region->start);
   vm_page_t scan = PHYS_TO_VM_PAGE(region->end - PAGE_SIZE);
         size_t nrelocated = 0;
+        int error;
         printf("%s: start scan %p, free %p\n", __func__, scan, free);
 
         while(free < scan){
@@ -2432,12 +2437,19 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain, void *p_data){
                 }
 
                 /* Swap the two pages and move "fingers". */
-                if(vm_phys_relocate_page(scan, free, domain) == 0)
+                error = vm_phys_relocate_page(scan, free, domain);
+                 if (error == 0){
                         nrelocated++;
-                scan--;
-                free++;
+                        scan--;
+                        free++;
+                 } else if (error == 1){
+                   scan--;
+                 } else {
+                   free++;
+                 }
 
-                printf("%s: scan %p, free %p\n", __func__, scan, free);
+
+                //printf("%s: scan %p, free %p\n", __func__, scan, free);
         }
 
         return nrelocated;
