@@ -27,15 +27,16 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <vm/vm.h>
 #include <sys/malloc.h>
+
+#include <vm/vm.h>
 
 MALLOC_DECLARE(M_VMCOMPACT);
 
 struct vm_compact_region {
 	vm_paddr_t start;
 	vm_paddr_t end;
-  SLIST_ENTRY(vm_compact_region) entries;
+	SLIST_ENTRY(vm_compact_region) entries;
 };
 typedef struct vm_compact_region *vm_compact_region_t;
 
@@ -46,8 +47,8 @@ typedef size_t (*vm_compact_defrag_fn)(vm_compact_region_t, int, void *);
 typedef bool (*vm_compact_end_fn)(void);
 typedef void (*vm_compact_ctx_init_fn)(void **);
 
-
 void *vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
-                            vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order, int *error);
+    vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order,
+    int *error);
 void vm_compact_free_job(void *ctx);
 int vm_compact_run(void *ctx);

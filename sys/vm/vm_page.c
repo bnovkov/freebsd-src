@@ -167,7 +167,7 @@ static bool _vm_page_busy_sleep(vm_object_t obj, vm_page_t m,
     vm_pindex_t pindex, const char *wmesg, int allocflags, bool locked);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(vm_page_t m, uint8_t queue);
-//static bool vm_page_free_prep(vm_page_t m);
+// static bool vm_page_free_prep(vm_page_t m);
 static void vm_page_free_toq(vm_page_t m);
 static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
@@ -729,7 +729,6 @@ vm_page_startup(vm_offset_t vaddr)
 	new_end = vm_reserv_startup(&vaddr, new_end);
 #endif
 
-
 #if defined(__aarch64__) || defined(__amd64__) || \
     defined(__riscv) || defined(__powerpc64__)
 	/*
@@ -740,7 +739,7 @@ vm_page_startup(vm_offset_t vaddr)
 #endif
 	phys_avail[biggestone + 1] = new_end;
 
-  vm_phys_search_index_startup(&vaddr);
+	vm_phys_search_index_startup(&vaddr);
 
 	/*
 	 * Add physical memory segments corresponding to the available

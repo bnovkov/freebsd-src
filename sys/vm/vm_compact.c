@@ -38,8 +38,8 @@
 #include <vm/vm.h>
 #include <vm/vm_compact.h>
 #include <vm/vm_page.h>
-#include <vm/vm_phys.h>
 #include <vm/vm_pagequeue.h>
+#include <vm/vm_phys.h>
 
 #define VM_COMPACT_LOCK() mtx_lock(&compact_lock)
 #define VM_COMPACT_UNLOCK() mtx_unlock(&compact_lock)
@@ -59,13 +59,13 @@ struct vm_compact_ctx {
 	vm_compact_search_fn search_fn;
 	vm_compact_defrag_fn defrag_fn;
 
-  vm_paddr_t start;
-  vm_paddr_t end;
+	vm_paddr_t start;
+	vm_paddr_t end;
 
 	int order;
 	int domain;
 
-  void *p_data;
+	void *p_data;
 
 	LIST_ENTRY(vm_compact_ctx) entries;
 };
@@ -96,23 +96,25 @@ static bool
 vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
     struct vm_compact_ctx *ctxp2)
 {
-        return (ctxp1->start <= ctxp2->start &&
-                ctxp2->start <= ctxp1->end);
+	return (ctxp1->start <= ctxp2->start && ctxp2->start <= ctxp1->end);
 }
 
-static  bool
+static bool
 vm_compact_check_range_domain(vm_paddr_t start, vm_paddr_t end)
 {
-        vm_page_t m1 = PHYS_TO_VM_PAGE(start);
-        vm_page_t m2 = PHYS_TO_VM_PAGE(end);
+	vm_page_t m1 = PHYS_TO_VM_PAGE(start);
+	vm_page_t m2 = PHYS_TO_VM_PAGE(end);
 
-        KASSERT(!(m1->flags & (PG_FICTITIOUS | PG_MARKER)) && !(m2->flags & (PG_FICTITIOUS | PG_MARKER)), ("Passed fictitious page in compaction range")); 
-        return vm_page_domain(m1) == vm_page_domain(m2);
+	KASSERT(!(m1->flags & (PG_FICTITIOUS | PG_MARKER)) &&
+		!(m2->flags & (PG_FICTITIOUS | PG_MARKER)),
+	    ("Passed fictitious page in compaction range"));
+	return vm_page_domain(m1) == vm_page_domain(m2);
 }
 
 void *
 vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
-    vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order, int *error)
+    vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order,
+    int *error)
 {
 	struct vm_compact_ctx *ctxp;
 
@@ -137,7 +139,7 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 	ctxp->order = order;
 	ctxp->domain = vm_page_domain(PHYS_TO_VM_PAGE(start));
 
-  ctxfn(&ctxp->p_data);
+	ctxfn(&ctxp->p_data);
 
 	return ((void *)ctxp);
 }
@@ -151,11 +153,11 @@ vm_compact_free_job(void *ctx)
 int
 vm_compact_run(void *ctx)
 {
-  int old_frag_idx, frag_idx;
+	int old_frag_idx, frag_idx;
 	vm_compact_region_t r;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
-  size_t nrelocated = 0;
+	size_t nrelocated = 0;
 
 	VM_COMPACT_LOCK();
 	/* Check if the requested compaction overlaps with an existing one. */
@@ -169,16 +171,15 @@ vm_compact_run(void *ctx)
 	LIST_INSERT_HEAD(&active_compactions[ctxp->domain], ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
-  vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
+	vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 	frag_idx = old_frag_idx = vm_phys_fragmentation_index(ctxp->order,
 	    ctxp->domain);
-  vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
+	vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
 
 	/* No need to compact if fragmentation is below the threshold. */
 	if (old_frag_idx < vm_phys_compact_thresh) {
 		goto cleanup;
 	}
-
 
 	/* Run compaction until the fragmentation metric stops improving. */
 	do {
@@ -188,27 +189,28 @@ vm_compact_run(void *ctx)
 		ctxp->search_fn(&r, ctxp->domain, ctxp->p_data);
 		nrelocated += ctxp->defrag_fn(r, ctxp->domain, ctxp->p_data);
 
-    vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
-		frag_idx = vm_phys_fragmentation_index(ctxp->order, ctxp->domain);
-    vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
+		vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
+		frag_idx = vm_phys_fragmentation_index(ctxp->order,
+		    ctxp->domain);
+		vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
 	} while ((old_frag_idx - frag_idx) > 20 || nrelocated == 0);
 
- cleanup:
+cleanup:
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
-  printf("relocated %zu pages\n", nrelocated);
+	printf("relocated %zu pages\n", nrelocated);
 
 	return 0;
 }
 
-
 static void
-vm_compact_init(void *arg){
-        mtx_init(&compact_lock, "vm_compact", NULL, MTX_DEF);
-        for(int i=0; i<MAXMEMDOM; i++)
-                LIST_INIT(&active_compactions[i]);
+vm_compact_init(void *arg)
+{
+	mtx_init(&compact_lock, "vm_compact", NULL, MTX_DEF);
+	for (int i = 0; i < MAXMEMDOM; i++)
+		LIST_INIT(&active_compactions[i]);
 }
 
 SYSINIT(vm_compact, SI_SUB_VM_CONF, SI_ORDER_ANY, vm_compact_init, NULL);
