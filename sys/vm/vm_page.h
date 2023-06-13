@@ -682,10 +682,9 @@ bool vm_page_remove_xbusy(vm_page_t);
 int vm_page_rename(vm_page_t, vm_object_t, vm_pindex_t);
 void vm_page_replace(vm_page_t mnew, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mold);
-bool vm_page_replace_hold(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex,
-                     vm_page_t mold);
-bool
-vm_page_free_prep(vm_page_t m);
+bool vm_page_replace_hold(vm_page_t mnew, vm_object_t object,
+    vm_pindex_t pindex, vm_page_t mold);
+bool vm_page_free_prep(vm_page_t m);
 int vm_page_sbusied(vm_page_t m);
 vm_page_t vm_page_scan_contig(u_long npages, vm_page_t m_start,
     vm_page_t m_end, u_long alignment, vm_paddr_t boundary, int options);
