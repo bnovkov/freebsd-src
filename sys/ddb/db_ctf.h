@@ -30,6 +30,7 @@
 
 #include <sys/types.h>
 #include <sys/ctf.h>
+#include <sys/linker.h>
 
 #include <ddb/ddb.h>
 #include <ddb/db_sym.h>
@@ -50,5 +51,6 @@ struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);
 struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid);
 const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
 int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd);
+int db_ctf_init_kctf(linker_file_t lf, const char *ctf_start, size_t size);
 
 #endif /* !_DDB_DB_CTF_H_ */

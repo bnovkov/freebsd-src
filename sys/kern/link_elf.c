@@ -68,6 +68,8 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/link_elf.h>
 
+#include <ddb/db_ctf.h>
+
 #include "linker_if.h"
 
 #define MAXSEGS 4
@@ -495,6 +497,22 @@ link_elf_init(void* arg)
 	r_debug.r_map = NULL;
 	r_debug.r_brk = r_debug_state;
 	r_debug.r_state = RT_CONSISTENT;
+#endif
+
+#ifdef DDB_CTF
+  uint8_t *fileaddr;
+  size_t len;
+  void *mod;
+
+  mod = preload_search_by_type("ddb_kctf");
+  if(mod != NULL){
+    fileaddr = preload_fetch_addr(mod);
+    len = preload_fetch_size(mod);
+
+    if(db_ctf_init_kctf(linker_kernel_file, fileaddr, len) == 0){
+      printf("%s: loaded kernel CTF data\n", __func__);
+    }
+  }
 #endif
 
 	(void)link_elf_link_common_finish(linker_kernel_file);
