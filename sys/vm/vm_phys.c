@@ -2061,10 +2061,10 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 #define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_NFREEORDER - 1))
 #define VM_PHYS_SEARCH_CHUNK_SIZE (VM_PHYS_SEARCH_CHUNK_NPAGES << (PAGE_SHIFT))
 #define VM_PHYS_SEARCH_CHUNK_MASK (VM_PHYS_SEARCH_CHUNK_SIZE - 1)
+#define VM_PHYS_SEARCH_IDX_TO_PADDR(i) ((i)  << ((VM_NFREEORDER - 1) + PAGE_SHIFT))
 #define VM_PHYS_PADDR_TO_CHUNK_IDX(p) (((p) & ~VM_PHYS_SEARCH_CHUNK_MASK) >> ((VM_NFREEORDER - 1) + PAGE_SHIFT))
 #define VM_PHYS_HOLECNT_HI ((VM_PHYS_SEARCH_CHUNK_NPAGES * 3) / 4)
 #define VM_PHYS_HOLECNT_LO  (VM_PHYS_SEARCH_CHUNK_NPAGES / 4)
-#define VM_PHYS_SEARCH_IDX_TO_PADDR(i) ((i)  << ((VM_NFREEORDER - 1) + PAGE_SHIFT))
 
 struct vm_phys_search_chunk {
         int holecnt;
@@ -2086,18 +2086,19 @@ static struct vm_phys_search_index vm_phys_search_index[MAXMEMDOM];
 void
 vm_phys_search_index_startup(vm_offset_t *vaddr)
 {
-	vm_paddr_t pa;
+  struct vm_phys_search_index *cur_idx;
+  vm_paddr_t pa;
+  vm_paddr_t dom_start, dom_end;
 	size_t alloc_size;
   int dom_nsearch_chunks;
-
-  struct vm_phys_search_index *cur_idx;
-  vm_paddr_t dom_start, dom_end;
+  int i;
 
   for(int dom=0; dom < vm_ndomains; dom++){
           cur_idx = &vm_phys_search_index[dom];
           dom_nsearch_chunks = 0;
           /* Calculate number of of search index chunks for current domain */
-          for (int i = 0; mem_affinity[i].end != 0; i++) {
+#ifdef NUMA
+          for (i = 0; mem_affinity[i].end != 0; i++) {
                   if(mem_affinity[i].domain == dom){
                     dom_start = mem_affinity[i].start;
                     while(mem_affinity[i].domain == dom){
@@ -2106,6 +2107,14 @@ vm_phys_search_index_startup(vm_offset_t *vaddr)
                     dom_end = mem_affinity[i-1].end;
                   }
           }
+#else
+          dom_start = phys_avail[0];
+          i = 1;
+          while(phys_avail[i + 1] != 0){
+                 i++;
+          }
+          dom_end = phys_avail[i];
+#endif
           /* Allocate search index for current domain */
           dom_nsearch_chunks = atop(dom_end - dom_start) / VM_PHYS_SEARCH_CHUNK_NPAGES;
           /* Add additional chunks if beginning and start aren't search chunk-aligned. */
@@ -2165,13 +2174,13 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_sta
         if(cp->shp == NULL){
                 vm_paddr_t chunk_start = hole_start & ~VM_PHYS_SEARCH_CHUNK_MASK;
                 cp->shp = malloc(sizeof(*cp->shp), M_TEMP, M_ZERO | M_WAITOK);
-                STAILQ_INIT(cp->shp);
+                SLIST_INIT(cp->shp);
                 /* Split chunk into a subseg */
                 ssp = malloc(sizeof(*ssp), M_TEMP, M_ZERO | M_WAITOK);
                 ssp->start = chunk_start;
                 ssp->end = chunk_start + VM_PHYS_SEARCH_CHUNK_SIZE;
 
-                STAILQ_INSERT_HEAD(cp->shp, ssp, entries);
+                SLIST_INSERT_HEAD(cp->shp, ssp, entries);
         }
 
         /*
@@ -2179,7 +2188,11 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_sta
          * thus always affect the last subsegment in the list.
          * Take last subseg and split it.
          */
-        ssp = STAILQ_LAST(cp->shp, vm_compact_region, entries);
+        ssp = SLIST_FIRST(cp->shp);
+        while (SLIST_NEXT(ssp, entries)){
+                ssp = SLIST_NEXT(ssp, entries);
+        }
+
         if(hole_start == ssp->start){
                 ssp->start = hole_end;
         } else if(hole_end == ssp->end){
@@ -2189,7 +2202,7 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp, vm_paddr_t hole_sta
                 nssp->start = hole_end;
                 nssp->end = ssp->end;
                 ssp->end = hole_start;
-                STAILQ_INSERT_TAIL(cp->shp, nssp, entries);
+                SLIST_INSERT_AFTER(ssp, nssp, entries);
         }
 }
 
@@ -2250,7 +2263,6 @@ void vm_phys_init_compact(void *arg){
   }
 
 }
-
 SYSINIT(vm_phys_search_holes, SI_SUB_KMEM + 1, SI_ORDER_ANY, vm_phys_init_compact, NULL);
 
 struct vm_phys_compact_ctx {
@@ -2266,23 +2278,27 @@ void vm_phys_compact_ctx_init(void **p_data){
 
 static
 int vm_phys_compact_search(vm_compact_region_t *r, int domain, void *p_data){
-  struct vm_phys_compact_ctx *ctx = (struct vm_phys_compact_ctx *)p_data;
-  struct vm_phys_search_index *sip = &vm_phys_search_index[domain];
-  struct vm_phys_search_chunk *scp;
-
-  int idx;
+        struct vm_phys_search_chunk *scp;
+        struct vm_phys_compact_ctx *ctx = (struct vm_phys_compact_ctx *)p_data;
+        struct vm_phys_search_index *sip = &vm_phys_search_index[domain];
+        int idx;
 
   for(idx = ctx->last_idx; idx < (sip->nchunks-1); idx++){
-    scp = &sip->chunks[idx];
-    if(scp->shp){
-      continue;
-    }
-    if(scp->holecnt >= VM_PHYS_HOLECNT_LO && scp->holecnt <= VM_PHYS_HOLECNT_HI){
-      ctx->region.start = VM_PHYS_SEARCH_IDX_TO_PADDR(idx);
-      ctx->region.end = VM_PHYS_SEARCH_IDX_TO_PADDR(idx+1);
-      *r = &ctx->region;
-      break;
-    }
+          scp = &sip->chunks[idx];
+          if(scp->shp){
+                  continue;
+          }
+          if(scp->skipidx){
+                  idx = scp->skipidx -1;
+                  continue;
+          }
+
+          if(scp->holecnt >= VM_PHYS_HOLECNT_LO && scp->holecnt <= VM_PHYS_HOLECNT_HI){
+                  ctx->region.start = VM_PHYS_SEARCH_IDX_TO_PADDR(idx);
+                  ctx->region.end = VM_PHYS_SEARCH_IDX_TO_PADDR(idx+1);
+                  *r = &ctx->region;
+                  break;
+          }
   }
   printf("%s: chunk holecnt: %d\n", __func__, scp->holecnt);
   ctx->last_idx = (idx + 1) % (sip->nchunks -1);
@@ -2356,9 +2372,7 @@ int vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain){
         }
 
         vm_page_dequeue(dst);
-        boolean_t ret = vm_phys_unfree_page(dst);
-        KASSERT(ret, ("page %p not in freelist", dst));
-
+        vm_phys_unfree_page(dst);
         vm_domain_free_unlock(vmd);
         vm_domain_freecnt_inc(vmd, -1);
 
@@ -2447,9 +2461,6 @@ size_t vm_phys_defrag(vm_compact_region_t region, int domain, void *p_data){
                  } else {
                    free++;
                  }
-
-
-                //printf("%s: scan %p, free %p\n", __func__, scan, free);
         }
 
         return nrelocated;
