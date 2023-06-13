@@ -2099,24 +2099,24 @@ vm_phys_search_index_startup(vm_offset_t *vaddr)
 		dom_nsearch_chunks = 0;
 		/* Calculate number of of search index chunks for current domain
 		 */
-#ifdef NUMA
-		for (i = 0; mem_affinity[i].end != 0; i++) {
-			if (mem_affinity[i].domain == dom) {
-				dom_start = mem_affinity[i].start;
-				while (mem_affinity[i].domain == dom) {
-					i++;
-				}
-				dom_end = mem_affinity[i - 1].end;
-			}
-		}
-#else
-		dom_start = phys_avail[0];
-		i = 1;
-		while (phys_avail[i + 1] != 0) {
-			i++;
-		}
-		dom_end = phys_avail[i];
-#endif
+    if(mem_affinity != NULL){
+            for (i = 0; mem_affinity[i].end != 0; i++) {
+                    if (mem_affinity[i].domain == dom) {
+                            dom_start = mem_affinity[i].start;
+                            while (mem_affinity[i].domain == dom) {
+                                    i++;
+                            }
+                            dom_end = mem_affinity[i - 1].end;
+                    }
+            }
+    } else {
+            dom_start = phys_avail[0];
+            i = 1;
+            while (phys_avail[i + 1] != 0) {
+                    i++;
+            }
+            dom_end = phys_avail[i];
+    }
 		/* Allocate search index for current domain */
 		dom_nsearch_chunks = atop(dom_end - dom_start) /
 		    VM_PHYS_SEARCH_CHUNK_NPAGES;
