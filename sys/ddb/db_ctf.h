@@ -52,5 +52,6 @@ struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
 int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd);
 void db_ctf_init_kctf(vm_offset_t ksymtab, vm_offset_t kstrtab,  vm_offset_t ksymtab_size);
+linker_ctf_t * db_ctf_fetch_kctf(void);
 
 #endif /* !_DDB_DB_CTF_H_ */

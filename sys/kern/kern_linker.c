@@ -778,12 +778,6 @@ linker_ctf_get(linker_file_t file, linker_ctf_t *lc)
 	return (LINKER_CTF_GET(file, lc));
 }
 
-int
-linker_init_kernel_ctf(linker_file_t file, const char *data, size_t size)
-{
-	return (LINKER_INIT_KERNEL_CTF(file, data, size));
-}
-
 static int
 linker_file_add_dependency(linker_file_t file, linker_file_t dep)
 {

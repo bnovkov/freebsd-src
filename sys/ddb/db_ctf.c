@@ -331,7 +331,6 @@ void db_ctf_init_kctf(vm_offset_t ksymtab, vm_offset_t kstrtab,  vm_offset_t ksy
 
   ctf_start = preload_fetch_addr(mod);
   size = preload_fetch_size(mod);
-  printf("%s: fileaddr: %p, size: %zu\n", __func__, ctf_start, size);
   bzero(&kctf.lc, sizeof(kctf.lc));
 	hp = (const ctf_header_t *)ctf_start;
 
@@ -360,4 +359,10 @@ void db_ctf_init_kctf(vm_offset_t ksymtab, vm_offset_t kstrtab,  vm_offset_t ksy
   kctf.modname = "kernel";
 
   LIST_INSERT_HEAD(&ctf_table, &kctf, link);
+}
+
+linker_ctf_t *
+db_ctf_fetch_kctf(void)
+{
+  return (kctf.modname != NULL ? &kctf.lc : NULL);
 }
