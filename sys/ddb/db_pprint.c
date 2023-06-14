@@ -376,6 +376,7 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 		db_error("No address supplied\n");
 	}
 
+  bzero(&sym_data, sizeof(sym_data));
 	addr = db_tok_number;
   if(db_ctf_find_symbol(addr, &sym_data)){
     db_error("Symbol not found\n");
