@@ -499,24 +499,15 @@ link_elf_init(void* arg)
 	r_debug.r_state = RT_CONSISTENT;
 #endif
 
-#ifdef DDB_CTF
-  uint8_t *fileaddr;
-  size_t len;
-  void *mod;
-
-  mod = preload_search_by_type("ddb_kctf");
-  if(mod != NULL){
-    fileaddr = preload_fetch_addr(mod);
-    len = preload_fetch_size(mod);
-
-    if(db_ctf_init_kctf(linker_kernel_file, fileaddr, len) == 0){
-      printf("%s: loaded kernel CTF data\n", __func__);
-    }
-  }
-#endif
-
 	(void)link_elf_link_common_finish(linker_kernel_file);
 	linker_kernel_file->flags |= LINKER_FILE_LINKED;
+
+
+#ifdef DDB_CTF
+  // TODO: lookup kctf data in ddb
+#endif
+  
+
 	TAILQ_INIT(&set_pcpu_list);
 #ifdef VIMAGE
 	TAILQ_INIT(&set_vnet_list);

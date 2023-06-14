@@ -33,21 +33,25 @@
 #include <sys/linker.h>
 #include <sys/mutex.h>
 #include <sys/malloc.h>
+#include <contrib/zlib/zlib.h>
 
-#include <ddb/db_ctf.h>
 #include <ddb/ddb.h>
+#include <ddb/db_ctf.h>
 
 struct db_ctf {
-	linker_ctf_t *lc;
+	linker_ctf_t lc;
   char *modname;
   LIST_ENTRY(db_ctf) link;
 };
 
-static LIST_HEAD(, db_ctf) ctf_table;
+static LIST_HEAD(, db_ctf) ctf_table = SLIST_HEAD_INITIALIZER(ctf_table);
 static struct mtx db_ctf_mtx;
 MTX_SYSINIT(db_ctf, &db_ctf_mtx, "ddb module CTF data registry", MTX_DEF);
 
 static MALLOC_DEFINE(M_DBCTF, "ddb ctf", "ddb module ctf data");
+
+/* Used to register kernel CTF data before SUB_KLD. */
+static struct db_ctf kctf;
 
 static struct db_ctf *
 db_ctf_lookup(const char *modname)
@@ -63,9 +67,10 @@ db_ctf_lookup(const char *modname)
 }
 
 int
-db_ctf_register(const char *modname, linker_ctf_t *lc)
+db_ctf_register(linker_file_t mod)
 {
   struct db_ctf *dcp;
+  char *modname = mod->filename;
 
   mtx_lock(&db_ctf_mtx);
   if(db_ctf_lookup(modname) != NULL){
@@ -78,8 +83,11 @@ db_ctf_register(const char *modname, linker_ctf_t *lc)
   mtx_unlock(&db_ctf_mtx);
 
   dcp = malloc(sizeof(struct db_ctf), M_DBCTF, M_WAITOK);
+  if(linker_ctf_get(mod, &dcp->lc) != 0){
+    free(dcp, M_DBCTF);
+    return (EINVAL);
+  }
   dcp->modname = strdup(modname, M_DBCTF);
-  dcp->lc = lc;
 
   mtx_lock(&db_ctf_mtx);
   LIST_INSERT_HEAD(&ctf_table, dcp, link);
@@ -88,8 +96,9 @@ db_ctf_register(const char *modname, linker_ctf_t *lc)
   return (0);
 }
 
-int	db_ctf_unregister(const char *modname){
+int	db_ctf_unregister(linker_file_t mod){
   struct db_ctf *dcp;
+  char *modname = mod->filename;
 
   mtx_lock(&db_ctf_mtx);
   dcp = db_ctf_lookup(modname);
@@ -106,11 +115,11 @@ int	db_ctf_unregister(const char *modname){
   LIST_REMOVE(dcp, link);
   mtx_unlock(&db_ctf_mtx);
 
+  free(dcp->modname, M_TEMP);
   free(dcp, M_DBCTF);
 
   return (0);
 }
-
 
 static const ctf_header_t *
 db_ctf_fetch_cth(linker_ctf_t *lc)
@@ -303,76 +312,52 @@ int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd){
     return (ENOENT);
 	}
 
-  sd->lc = dcp->lc;
+  sd->lc = &dcp->lc;
 
   return (0);
 }
 
-int db_ctf_init_kctf(linker_file_t lf, const char *ctf_start, size_t size)
+void db_ctf_init_kctf(vm_offset_t ksymtab, vm_offset_t kstrtab,  vm_offset_t ksymtab_size)
 {
-#ifdef DDB_CTF
 	const ctf_header_t *hp;
-	uint8_t *ctftab;
-	size_t ctfcnt;
-	int error;
-  elf_file_t ef;
+	uint8_t *ctf_start;
+	size_t size;
+  void *mod;
 
-  if(lf != linker_kernel_file){
-    return (EINVAL);
+  mod = preload_search_by_type("ddb_kctf");
+  if(mod == NULL){
+    return;
   }
 
-  /* Check whether the ctftab is already loaded. */
-  ef = (elf_file_t) lf;
-  if(ef->ctftab != NULL || ef->ctfcnt !=0){
-    return (EINVAL);
-  }
-
-	ef->ctftab = 0;
-	ef->ctfcnt = 0;
-
+  ctf_start = preload_fetch_addr(mod);
+  size = preload_fetch_size(mod);
+  printf("%s: fileaddr: %p, size: %zu\n", __func__, ctf_start, size);
+  bzero(&kctf.lc, sizeof(kctf.lc));
 	hp = (const ctf_header_t *)ctf_start;
 
 	/* Sanity check. */
 	if (hp->cth_magic != CTF_MAGIC) {
 		printf("%s: bad kernel CTF magic value\n", __func__);
-		return (EINVAL);
+		return;
 	}
 
 	if (hp->cth_version != CTF_VERSION_3) {
 		printf("%s: CTF V2 data encountered\n", __func__);
-		return (EINVAL);
+		return;
 	}
 
-	ctfcnt = size;
-	/* Uncompress if necessary */
+	/* We only deal with uncompressed data */
 	if (hp->cth_flags & CTF_F_COMPRESS) {
-		size_t decomp_size = hp->cth_stroff + hp->cth_strlen;
-
-		/* Allocate memory for the CTF header + decompressed data */
-		ctftab = malloc(decomp_size + sizeof(ctf_header_t), M_LINKER,
-		    M_WAITOK);
-
-		/* Copy the ctf header into the buffer */
-		bcopy(hp, ctftab, sizeof(ctf_header_t));
-
-		/* Decompress rest of CTF data */
-		error = uncompress(ctftab + sizeof(ctf_header_t), &decomp_size,
-		    (const uint8_t *)ctf_start + sizeof(ctf_header_t),
-		    ctfcnt - sizeof(ctf_header_t));
-		if (error != Z_OK) {
-			printf("%s(%d): zlib uncompress returned %d\n",
-			    __func__, __LINE__, error);
-			return (EINVAL);
-		}
-	} else {
-		ctftab = malloc(ctfcnt, M_LINKER, M_WAITOK);
+    printf("%s: kernel CTF data is compressed\n", __func__);
+    return;
 	}
 
-	ef->ctftab = ctftab;
-	ef->ctfcnt = ctfcnt;
+	kctf.lc.ctftab = ctf_start;
+	kctf.lc.ctfcnt = size;
+  kctf.lc.symtab = (const Elf_Sym *)ksymtab;
+  kctf.lc.nsym = ksymtab_size / sizeof(Elf_Sym);
+  kctf.lc.strtab = (const char *)kstrtab;
+  kctf.modname = "kernel";
 
-  return (0);
-#else
-  return (EOPNOTSUPP);
-#endif
+  LIST_INSERT_HEAD(&ctf_table, &kctf, link);
 }

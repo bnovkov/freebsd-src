@@ -37,8 +37,8 @@
 
 #define DB_CTF_OBJTOFF_INVALID 0xffffffff
 
-int		db_ctf_register(const char *modname, linker_ctf_t *lc);
-int		db_ctf_unregister(const char *modname);
+int		db_ctf_register(linker_file_t module);
+int		db_ctf_unregister(linker_file_t module);
 
 struct db_ctf_sym_data{
   linker_ctf_t *lc;
@@ -51,6 +51,6 @@ struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);
 struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid);
 const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
 int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd);
-int db_ctf_init_kctf(linker_file_t lf, const char *ctf_start, size_t size);
+void db_ctf_init_kctf(vm_offset_t ksymtab, vm_offset_t kstrtab,  vm_offset_t ksymtab_size);
 
 #endif /* !_DDB_DB_CTF_H_ */
