@@ -172,7 +172,6 @@ static kobj_method_t link_elf_methods[] = {
 	KOBJMETHOD(linker_ctf_get,		link_elf_ctf_get),
 	KOBJMETHOD(linker_symtab_get, 		link_elf_symtab_get),
 	KOBJMETHOD(linker_strtab_get, 		link_elf_strtab_get),
-  KOBJMETHOD(linker_init_kernel_ctf,	 link_elf_init_kernel_ctf),
 	KOBJMETHOD_END
 };
 

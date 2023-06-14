@@ -116,11 +116,6 @@ METHOD int ctf_get {
 	linker_ctf_t	*lc;
 };
 
-METHOD int init_kernel_ctf {
-  linker_file_t file;
-  const char *ctf_start;
-  size_t size;
-};
 #
 # Get the symbol table, returning it in **symtab.  Return the 
 # number of symbols, otherwise zero.

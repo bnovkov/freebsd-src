@@ -68,8 +68,6 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/link_elf.h>
 
-#include <ddb/db_ctf.h>
-
 #include "linker_if.h"
 
 #define MAXSEGS 4
@@ -181,7 +179,6 @@ static kobj_method_t link_elf_methods[] = {
 	KOBJMETHOD(linker_ctf_get,		link_elf_ctf_get),
 	KOBJMETHOD(linker_symtab_get,		link_elf_symtab_get),
 	KOBJMETHOD(linker_strtab_get,		link_elf_strtab_get),
-  KOBJMETHOD(linker_init_kernel_ctf,	 link_elf_init_kernel_ctf),
 	KOBJMETHOD_END
 };
 
@@ -501,13 +498,6 @@ link_elf_init(void* arg)
 
 	(void)link_elf_link_common_finish(linker_kernel_file);
 	linker_kernel_file->flags |= LINKER_FILE_LINKED;
-
-
-#ifdef DDB_CTF
-  // TODO: lookup kctf data in ddb
-#endif
-  
-
 	TAILQ_INIT(&set_pcpu_list);
 #ifdef VIMAGE
 	TAILQ_INIT(&set_vnet_list);
