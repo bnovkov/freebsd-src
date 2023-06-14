@@ -54,6 +54,10 @@ MKMODULESENV+=	GCOV_CFLAGS="${GCOV_CFLAGS}"
 MKMODULESENV+=	COMPAT_FREEBSD32_ENABLED="yes"
 .endif
 
+.if ${MK_CTF} != "no"
+KCTF_FILE= "kctf.raw"
+.endif
+
 # Allow overriding the kernel debug directory, so kernel and user debug may be
 # installed in different directories. Setting it to "" restores the historical
 # behavior of installing debug files in the kernel directory.
@@ -201,12 +205,11 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 .if ${MK_CTF} != "no"
 	@echo ${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ...
 	@${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${SYSTEM_OBJS} vers.o
-# objdump won't dump a non-SHF_ALLOC'd section
-	@${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ${.TARGET}
-# Dump merged CTF data into a file and build the db_kctf module
+# Dump merged CTF data into a file and uncompress it
+	@${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load ${.TARGET}
 	@${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} kctf.bin
-	@${OBJCOPY} --set-section-flags .SUNW_ctf= ${.TARGET}
-	@${CTFDUMP} -u kctf.raw kctf.bin
+	@${OBJCOPY} --set-section-flags .SUNW_ctf=readonly ${.TARGET}
+	@${CTFDUMP} -u ${KCTF_FILE} kctf.bin
 	@rm kctf.bin
 
 .endif
@@ -432,7 +435,7 @@ kernel-install: .PHONY
 	mkdir -p ${DESTDIR}${KODIR}
 	${INSTALL} -p -m 555 -o ${KMODOWN} -g ${KMODGRP} ${KERNEL_KO} ${DESTDIR}${KODIR}/
 .if ${MK_CTF} != "no"
-	${INSTALL} -p -m 555 -o ${KMODOWN} -g ${KMODGRP} kctf.raw ${DESTDIR}${KODIR}/
+	${INSTALL} -p -m 555 -o ${KMODOWN} -g ${KMODGRP} ${KCTF_FILE} ${DESTDIR}${KODIR}/
 .endif
 .if defined(DEBUG) && !defined(INSTALL_NODEBUG) && ${MK_KERNEL_SYMBOLS} != "no"
 	mkdir -p ${DESTDIR}${KERN_DEBUGDIR}${KODIR}

@@ -504,12 +504,12 @@ link_elf_init(void* arg)
 	linker_kernel_file->flags |= LINKER_FILE_LINKED;
 
 #ifdef DDB_CTF
-  /* Check if ddb already loaded kernel CTF data. */
-  linker_ctf_t *lc = db_ctf_fetch_kctf();
-  if(lc != NULL){
-    ef->ctftab =  __DECONST(uint8_t *, lc->ctftab) ;
-    ef->ctfcnt = lc->ctfcnt;
-  }
+	/* Check if ddb already loaded kernel CTF data. */
+	linker_ctf_t *lc = db_ctf_fetch_kctf();
+	if (lc != NULL) {
+		ef->ctftab = __DECONST(uint8_t *, lc->ctftab);
+		ef->ctfcnt = lc->ctfcnt;
+	}
 #endif
 
 	TAILQ_INIT(&set_pcpu_list);
