@@ -204,8 +204,10 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 # objdump won't dump a non-SHF_ALLOC'd section
 	@${OBJCOPY} --set-section-flags .SUNW_ctf=alloc,load,readonly ${.TARGET}
 # Dump merged CTF data into a file and build the db_kctf module
-	@${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} kctf.raw
+	@${OBJCOPY} -O binary -j ".SUNW_ctf" ${.TARGET} kctf.bin
 	@${OBJCOPY} --set-section-flags .SUNW_ctf= ${.TARGET}
+	@${CTFDUMP} -u kctf.raw kctf.bin
+	@rm kctf.bin
 
 .endif
 .if !defined(DEBUG)
@@ -429,6 +431,9 @@ kernel-install: .PHONY
 .endif
 	mkdir -p ${DESTDIR}${KODIR}
 	${INSTALL} -p -m 555 -o ${KMODOWN} -g ${KMODGRP} ${KERNEL_KO} ${DESTDIR}${KODIR}/
+.if ${MK_CTF} != "no"
+	${INSTALL} -p -m 555 -o ${KMODOWN} -g ${KMODGRP} kctf.raw ${DESTDIR}${KODIR}/
+.endif
 .if defined(DEBUG) && !defined(INSTALL_NODEBUG) && ${MK_KERNEL_SYMBOLS} != "no"
 	mkdir -p ${DESTDIR}${KERN_DEBUGDIR}${KODIR}
 	${INSTALL} -p -m 555 -o ${KMODOWN} -g ${KMODGRP} ${KERNEL_KO}.debug ${DESTDIR}${KERN_DEBUGDIR}${KODIR}/
