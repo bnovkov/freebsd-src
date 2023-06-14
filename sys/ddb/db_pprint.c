@@ -32,11 +32,11 @@
 #include <sys/ctype.h>
 #include <sys/linker.h>
 
-#include <ddb/ddb.h>
 #include <ddb/db_access.h>
 #include <ddb/db_ctf.h>
 #include <ddb/db_lex.h>
 #include <ddb/db_sym.h>
+#include <ddb/ddb.h>
 
 #define DB_PPRINT_DEFAULT_DEPTH 1
 
@@ -45,7 +45,6 @@ static void db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type,
 
 static u_int max_depth = DB_PPRINT_DEFAULT_DEPTH;
 static struct db_ctf_sym_data sym_data;
-
 
 static inline void
 db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
@@ -60,7 +59,7 @@ db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type)
 	boolean_t sign = !!(CTF_INT_ENCODING(data) & CTF_INT_SIGNED);
 
 	if (db_pager_quit) {
-          return;
+		return;
 	}
 
 	if (bits > 64) {
@@ -108,8 +107,8 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 				return;
 			}
 
-			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(&sym_data,
-			    mp->ctm_type);
+			struct ctf_type_v3 *mtype =
+			    db_ctf_typeid_to_type(&sym_data, mp->ctm_type);
 			db_addr_t maddr = addr + mp->ctm_offset;
 
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctm_name);
@@ -131,8 +130,8 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 				return;
 			}
 
-			struct ctf_type_v3 *mtype = db_ctf_typeid_to_type(&sym_data,
-			    mp->ctlm_type);
+			struct ctf_type_v3 *mtype =
+			    db_ctf_typeid_to_type(&sym_data, mp->ctlm_type);
 			db_addr_t maddr = addr + CTF_LMEM_OFFSET(mp);
 
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctlm_name);
@@ -348,8 +347,8 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 {
 	int t = 0;
 
-  /* Set default depth */
-  max_depth = DB_PPRINT_DEFAULT_DEPTH;
+	/* Set default depth */
+	max_depth = DB_PPRINT_DEFAULT_DEPTH;
 
 	/* Parse print modifiers */
 	t = db_read_token();
@@ -376,11 +375,11 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 		db_error("No address supplied\n");
 	}
 
-  bzero(&sym_data, sizeof(sym_data));
+	bzero(&sym_data, sizeof(sym_data));
 	addr = db_tok_number;
-  if(db_ctf_find_symbol(addr, &sym_data)){
-    db_error("Symbol not found\n");
-  }
+	if (db_ctf_find_symbol(addr, &sym_data)) {
+		db_error("Symbol not found\n");
+	}
 
 	if (ELF_ST_TYPE(sym_data.sym->st_info) != STT_OBJECT) {
 		db_error("Symbol is not a variable\n");
