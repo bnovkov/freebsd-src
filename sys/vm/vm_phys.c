@@ -108,8 +108,8 @@ static struct rwlock_padalign vm_phys_fictitious_reg_lock;
 MALLOC_DEFINE(M_FICT_PAGES, "vm_fictitious", "Fictitious VM pages");
 
 struct vm_phys_info {
-        uint64_t free_pages;
-        uint64_t free_blocks;
+	uint64_t free_pages;
+	uint64_t free_blocks;
 };
 
 static struct vm_freelist __aligned(CACHE_LINE_SIZE)
@@ -135,7 +135,6 @@ static int __read_mostly vm_nfreelists;
  */
 vm_paddr_t phys_avail[PHYS_AVAIL_COUNT];
 vm_paddr_t dump_avail[PHYS_AVAIL_COUNT];
-
 
 /*
  * Provides the mapping from VM_FREELIST_* to free list indices (flind).
@@ -165,8 +164,7 @@ SYSCTL_OID(_vm, OID_AUTO, phys_free,
 static int sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS);
 SYSCTL_OID(_vm, OID_AUTO, phys_frag_idx,
     CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
-    sysctl_vm_phys_frag_idx, "A",
-    "Phys Frag Info");
+    sysctl_vm_phys_frag_idx, "A", "Phys Frag Info");
 
 static int sysctl_vm_phys_segs(SYSCTL_HANDLER_ARGS);
 SYSCTL_OID(_vm, OID_AUTO, phys_segs,
@@ -306,11 +304,11 @@ sysctl_vm_phys_free(SYSCTL_HANDLER_ARGS)
 static void
 vm_phys_get_info(struct vm_phys_info *info, int domain)
 {
-        struct vm_freelist *fl;
+	struct vm_freelist *fl;
 	int pind, oind, flind;
 
 	/* Calculate total number of free pages and blocks */
-        info->free_pages = info->free_blocks = 0;
+	info->free_pages = info->free_blocks = 0;
 	for (flind = 0; flind < vm_nfreelists; flind++) {
 		for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
 			for (pind = 0; pind < VM_NFREEPOOL; pind++) {
@@ -325,7 +323,7 @@ vm_phys_get_info(struct vm_phys_info *info, int domain)
 static int
 vm_phys_fragmentation_index(int order, int domain)
 {
-  struct vm_phys_info info;
+	struct vm_phys_info info;
 
 	vm_domain_free_assert_locked(VM_DOMAIN(domain));
 	vm_phys_get_info(&info, domain);
@@ -342,12 +340,12 @@ static int
 sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf sbuf;
-  int64_t idx;
-  int oind, dom, error;
+	int64_t idx;
+	int oind, dom, error;
 
-  error = sysctl_wire_old_buffer(req, 0);
+	error = sysctl_wire_old_buffer(req, 0);
 	if (error != 0)
-          return (error);
+		return (error);
 	sbuf_new_for_sysctl(&sbuf, NULL, 128 * vm_ndomains, req);
 
 	for (dom = 0; dom < vm_ndomains; dom++) {
@@ -356,7 +354,7 @@ sysctl_vm_phys_frag_idx(SYSCTL_HANDLER_ARGS)
 		sbuf_printf(&sbuf, "\n  ORDER (SIZE) |  FMFI\n");
 		sbuf_printf(&sbuf, "--\n");
 
-    vm_domain_free_lock(VM_DOMAIN(dom));
+		vm_domain_free_lock(VM_DOMAIN(dom));
 		for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
 			idx = vm_phys_fragmentation_index(oind, dom);
 			sbuf_printf(&sbuf, "  %2d (%6dK) ", oind,
