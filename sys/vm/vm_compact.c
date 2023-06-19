@@ -52,6 +52,13 @@ SYSCTL_OID(_vm, OID_AUTO, phys_compact_thresh, CTLTYPE_INT | CTLFLAG_RW, NULL,
     0, sysctl_vm_phys_compact_thresh, "I",
     "Fragmentation index threshold for memory compaction");
 
+static int vm_phys_compact_run_max_relocated = 25600; /* 100 MB */
+static int sysctl_vm_phys_compact_run_max_relocated(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_vm, OID_AUTO, phys_compact_run_max_relocated, CTLTYPE_INT | CTLFLAG_RW, NULL,
+           0, sysctl_vm_phys_compact_run_max_relocated, "I",
+           "Maximum number of relocated pages per-compaction run");
+
+
 static struct mtx compact_lock;
 static LIST_HEAD(, vm_compact_ctx) active_compactions[MAXMEMDOM];
 
@@ -64,6 +71,7 @@ struct vm_compact_ctx {
 
 	int order;
 	int domain;
+  struct vm_compact_region_head regions;
 
 	void *p_data;
 
@@ -91,6 +99,27 @@ sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS)
 
 	return (0);
 }
+
+static int
+sysctl_vm_phys_compact_run_max_relocated(SYSCTL_HANDLER_ARGS)
+{
+        int error;
+        int new = vm_phys_compact_thresh;
+
+        error = sysctl_handle_int(oidp, &new, 0, req);
+        if (error != 0 || req->newptr == NULL)
+                return (error);
+
+        if (new != vm_phys_compact_thresh) {
+                if (new < 0) {
+                        new = 0;
+                } 
+                vm_phys_compact_thresh = new;
+        }
+
+        return (0);
+}
+
 
 static bool
 vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
@@ -138,6 +167,7 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 	ctxp->start = start;
 	ctxp->order = order;
 	ctxp->domain = vm_page_domain(PHYS_TO_VM_PAGE(start));
+  SLIST_INIT(&ctxp->regions);
 
 	ctxfn(&ctxp->p_data);
 
@@ -153,11 +183,10 @@ vm_compact_free_job(void *ctx)
 int
 vm_compact_run(void *ctx)
 {
-	int old_frag_idx, frag_idx;
-	vm_compact_region_t r;
+        int old_frag_idx, frag_idx, nretries = 0;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
-	size_t nrelocated = 0;
+	size_t run_nrelocated, nrelocated = 0;
 
 	VM_COMPACT_LOCK();
 	/* Check if the requested compaction overlaps with an existing one. */
@@ -183,17 +212,30 @@ vm_compact_run(void *ctx)
 
 	/* Run compaction until the fragmentation metric stops improving. */
 	do {
-		// TODO: rework to use end_fn later on
 		old_frag_idx = frag_idx;
+    ctxp->regions.slh_first = NULL;
 
-		ctxp->search_fn(&r, ctxp->domain, ctxp->p_data);
-		nrelocated += ctxp->defrag_fn(r, ctxp->domain, ctxp->p_data);
-
+		ctxp->search_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
+		run_nrelocated = ctxp->defrag_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
+    if(run_nrelocated == 0 && nretries < 10){
+            nretries++;
+            continue;
+    }
+    nrelocated += run_nrelocated;
 		vm_domain_free_lock(VM_DOMAIN(ctxp->domain));
 		frag_idx = vm_phys_fragmentation_index(ctxp->order,
 		    ctxp->domain);
 		vm_domain_free_unlock(VM_DOMAIN(ctxp->domain));
-	} while ((old_frag_idx - frag_idx) > 20 || nrelocated == 0);
+
+    if(frag_idx < vm_phys_compact_thresh){
+            break;
+    }
+
+    if(old_frag_idx > frag_idx ||  nrelocated < vm_phys_compact_run_max_relocated){
+            break;
+    }
+    nretries = 0;
+	} while (1);
 
 cleanup:
 	VM_COMPACT_LOCK();
