@@ -42,8 +42,8 @@ typedef struct vm_compact_region *vm_compact_region_t;
 
 SLIST_HEAD(vm_compact_region_head, vm_compact_region);
 
-typedef int (*vm_compact_search_fn)(vm_compact_region_t *, int, void *);
-typedef size_t (*vm_compact_defrag_fn)(vm_compact_region_t, int, void *);
+typedef int (*vm_compact_search_fn)(struct vm_compact_region_head *, int, void *);
+typedef size_t (*vm_compact_defrag_fn)(struct vm_compact_region_head *, int, void *);
 typedef bool (*vm_compact_end_fn)(void);
 typedef void (*vm_compact_ctx_init_fn)(void **);
 
