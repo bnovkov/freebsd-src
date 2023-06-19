@@ -242,7 +242,7 @@ cleanup:
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
-	printf("relocated %zu pages\n", nrelocated);
+	printf("%s: relocated %zu pages\n", __func__, nrelocated);
 
 	return 0;
 }
@@ -255,4 +255,4 @@ vm_compact_init(void *arg)
 		LIST_INIT(&active_compactions[i]);
 }
 
-SYSINIT(vm_compact, SI_SUB_VM_CONF, SI_ORDER_ANY, vm_compact_init, NULL);
+SYSINIT(vm_compact, SI_SUB_KMEM + 2, SI_ORDER_ANY, vm_compact_init, NULL);
