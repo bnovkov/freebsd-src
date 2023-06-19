@@ -56,6 +56,8 @@
 #include <sys/sysctl.h>
 #include <sys/tree.h>
 #include <sys/vmmeter.h>
+#include <sys/kthread.h>
+#include <sys/eventhandler.h>
 
 #include <vm/vm.h>
 #include <vm/vm_compact.h>
@@ -2241,9 +2243,8 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp,
  * Populates compaction search index with hole information.
  */
 static void
-vm_phys_init_compact(void *arg)
-{
-	int dom;
+vm_phys_compact_init_holes(void){
+        int dom;
 	struct vm_phys_search_index *sip;
 	struct vm_phys_search_chunk *start_chunk, *end_chunk;
 	struct vm_phys_hole *hp;
@@ -2300,7 +2301,16 @@ vm_phys_init_compact(void *arg)
 		}
 	}
 }
-SYSINIT(vm_phys_search_holes, SI_SUB_KMEM + 1, SI_ORDER_ANY,
+
+
+/* Initializes holes and starts compaction kthread. */
+static void
+vm_phys_init_compact(void *arg)
+{
+        vm_phys_compact_init_holes();
+}
+
+SYSINIT(vm_phys_compact, SI_SUB_KMEM + 1, SI_ORDER_ANY,
     vm_phys_init_compact, NULL);
 
 #define VM_PHYS_COMPACT_SEARCH_REGIONS 10
@@ -2522,6 +2532,42 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
 	return nrelocated;
 }
 
+
+static struct thread *compactthread;
+
+static void vm_phys_compact_daemon(void){
+        void *cctx;
+        int error;
+
+        vm_paddr_t start, end;
+
+        start = vm_phys_segs[0].start;
+        end = vm_phys_segs[5].end - PAGE_SIZE;
+        cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag,
+                                     vm_phys_compact_ctx_init, start, end, 9, &error);
+        KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
+
+        EVENTHANDLER_REGISTER(shutdown_pre_sync, kthread_shutdown,
+                              compactthread, SHUTDOWN_PRI_LAST);
+        printf("%s: compaction daemon started\n", __func__);
+        
+        for(;;){
+                tsleep(vm_phys_compact_daemon, PCATCH | PNOLOCK, "compact sleep", 0);
+                kthread_suspend_check();
+                vm_compact_run(cctx);
+        }
+        vm_compact_free_job(cctx);
+}
+
+static struct kthread_desc compact_kp = {
+        "compactdaemon",
+        vm_phys_compact_daemon,
+        &compactthread
+};
+SYSINIT(compactdaemon, SI_SUB_KTHREAD_VM, SI_ORDER_ANY, kthread_start,
+        &compact_kp);
+
+
 static int sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS);
 SYSCTL_OID(_vm, OID_AUTO, phys_compact, CTLTYPE_STRING | CTLFLAG_RD, NULL, 0,
     sysctl_vm_phys_compact, "A", "Compact physical memory");
@@ -2530,26 +2576,16 @@ static int
 sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf sbuf;
-	void *cctx;
 	int error;
-
-	vm_paddr_t start, end;
 
 	error = sysctl_wire_old_buffer(req, 0);
 	if (error != 0)
 		return (error);
 	sbuf_new_for_sysctl(&sbuf, NULL, 32, req);
-	start = vm_phys_segs[0].start;
 
-	end = vm_phys_segs[5].end - PAGE_SIZE;
-	cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag,
-	    vm_phys_compact_ctx_init, start, end, 9, &error);
-	KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
+  wakeup_one(vm_phys_compact_daemon);
 
-	vm_compact_run(cctx);
-	vm_compact_free_job(cctx);
-
-	sbuf_printf(&sbuf, "Done\n");
+	sbuf_printf(&sbuf, "Kicked compaction daemon\n");
 
 	error = sbuf_finish(&sbuf);
 	sbuf_delete(&sbuf);
