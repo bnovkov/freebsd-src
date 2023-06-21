@@ -328,6 +328,10 @@ vm_phys_fragmentation_index(int order, int domain)
 	vm_domain_free_assert_locked(VM_DOMAIN(domain));
 	vm_phys_get_info(&info, domain);
 
+	if (info.free_blocks == 0) {
+		return (0);
+	}
+
 	return (1000 -
 	    ((info.free_pages * 1000) / (1 << order) / info.free_blocks));
 }
