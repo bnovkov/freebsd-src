@@ -377,8 +377,12 @@ vm_phys_fragmentation_index(int order, int domain)
 	vm_domain_free_assert_locked(VM_DOMAIN(domain));
 	vm_phys_get_info(&info, domain);
 
+  if(info.free_blocks == 0){
+    return (0);
+  }
+
 	return (1000 -
-	    ((info.free_pages * 1000) / (1 << order) / info.free_blocks));
+                                 ((info.free_pages * 1000) / (1 << order) / info.free_blocks));
 }
 
 static int
@@ -2313,7 +2317,7 @@ vm_phys_init_compact(void *arg)
 SYSINIT(vm_phys_compact, SI_SUB_KMEM + 1, SI_ORDER_ANY,
     vm_phys_init_compact, NULL);
 
-#define VM_PHYS_COMPACT_SEARCH_REGIONS 10
+#define VM_PHYS_COMPACT_SEARCH_REGIONS 20
 struct vm_phys_compact_ctx {
 	int last_idx;
 	struct vm_compact_region region[VM_PHYS_COMPACT_SEARCH_REGIONS];
@@ -2542,7 +2546,7 @@ static void vm_phys_compact_daemon(void){
         vm_paddr_t start, end;
 
         start = vm_phys_segs[0].start;
-        end = vm_phys_segs[5].end - PAGE_SIZE;
+        end = vm_phys_segs[4].end - PAGE_SIZE;
         cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag,
                                      vm_phys_compact_ctx_init, start, end, 9, &error);
         KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
@@ -2550,7 +2554,7 @@ static void vm_phys_compact_daemon(void){
         EVENTHANDLER_REGISTER(shutdown_pre_sync, kthread_shutdown,
                               compactthread, SHUTDOWN_PRI_LAST);
         printf("%s: compaction daemon started\n", __func__);
-        
+
         for(;;){
                 tsleep(vm_phys_compact_daemon, PCATCH | PNOLOCK, "compact sleep", 0);
                 kthread_suspend_check();
