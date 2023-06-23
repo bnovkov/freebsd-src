@@ -2072,6 +2072,9 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 	    ((VM_NFREEORDER - 1) + PAGE_SHIFT))
 #define VM_PHYS_HOLECNT_HI (3968)
 #define VM_PHYS_HOLECNT_LO (64)
+#define VM_PHYS_CHUNK_FULL_SCORE 0
+#define VM_PHYS_CHUNK_EMPTY_SCORE 1
+
 
 struct vm_phys_subseg {
        struct vm_compact_region region;
@@ -2081,6 +2084,7 @@ SLIST_HEAD(vm_phys_subseg_head, vm_phys_subseg);
 
 struct vm_phys_search_chunk {
 	int holecnt;
+  int score;
 	int skipidx;
 	struct vm_phys_subseg_head *shp;
 };
@@ -2154,6 +2158,7 @@ vm_phys_search_index_startup(vm_offset_t *vaddr)
 			panic("Unable to allocate search index for domain %d\n",
 			    dom);
 		}
+    /* Chunk scores are initialized to VM_PHYS_CHUNK_FULL_SCORE, a.k.a zero. */
 		bzero(cur_idx->chunks, alloc_size);
 	}
 }
@@ -2164,40 +2169,63 @@ vm_phys_update_search_index(vm_page_t m, int order, bool alloc)
 
 	struct vm_phys_search_index *sip =
 	    &vm_phys_search_index[vm_page_domain(m)];
-	vm_paddr_t m_end = m->phys_addr + ptoa(1 << order);
 	int dom_start_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(sip->dom_start);
 	int search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m->phys_addr) -
 	    dom_start_idx;
-	int end_search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m_end) -
-	    dom_start_idx;
 	int pgcnt = 1 << order;
+  bool left_allocd = true;
+  bool right_allocd = true;
+  int val = alloc ? 1 : -1;
 
 	KASSERT(search_chunk_idx < sip->nchunks,
 	    ("%s: Attempting to access a nonexistent search chunk", __func__));
-	KASSERT(end_search_chunk_idx < sip->nchunks,
-	    ("%s: page %p spans to a nonexistent search chunk", __func__, m));
 
-	/* Check if page 'm' spans two search chunks. */
-	if (search_chunk_idx != end_search_chunk_idx &&
-	    (m_end & VM_PHYS_SEARCH_CHUNK_MASK)) {
-		int spill_pgcnt = atop(m_end & VM_PHYS_SEARCH_CHUNK_MASK);
-
-		sip->chunks[end_search_chunk_idx].holecnt += alloc ?
-		    -spill_pgcnt :
-		    spill_pgcnt;
-		pgcnt -= spill_pgcnt;
-	}
-
+  /* Update chunk hole count */
 	sip->chunks[search_chunk_idx].holecnt += alloc ? -pgcnt : pgcnt;
 	KASSERT(sip->chunks[search_chunk_idx].holecnt >= 0,
-	    ("%s: inconsistent hole count: %d, m_start: %p, m_end: %p, pgcnt: %d",
+	    ("%s: inconsistent hole count: %d, m_start: %p, pgcnt: %d",
 		__func__, sip->chunks[search_chunk_idx].holecnt,
-		(void *)m->phys_addr, (void *)m_end, pgcnt));
+		(void *)m->phys_addr, pgcnt));
 	KASSERT(sip->chunks[search_chunk_idx].holecnt <=
 		VM_PHYS_SEARCH_CHUNK_NPAGES,
-	    ("%s: inconsistent hole count: %d, m_start: %p, m_end: %p, pgcnt: %d",
+	    ("%s: inconsistent hole count: %d, m_start: %p, pgcnt: %d",
 		__func__, sip->chunks[search_chunk_idx].holecnt,
-		(void *)m->phys_addr, (void *)m_end, pgcnt));
+		(void *)m->phys_addr, pgcnt));
+
+  if(m->order != 0)
+          return;
+  /* Update chunk fragmentation score */
+  if((m->phys_addr & ((PAGE_SIZE * 2)-1)) == 0){
+          /* Lower half of 1-order run */
+          /* Check state of right neighbour. */
+          right_allocd = (m + 1)->order == VM_NFREEORDER;
+          /* Check state of left neighbour, if any. */
+          if((m - 2) >= vm_page_array){
+                  if((m - 1)->order == VM_NFREEORDER){
+                          /* Check whether the left neighbour belongs to a 1-order run */
+                          left_allocd = (m - 2)->order != 1;
+                  } else {
+                          /* Order is 0, page is free */
+                          left_allocd = false;
+                  }
+          }
+  }else {
+          /* Upper half of 1-order run */
+          /* Check state of left neighbour. */
+          if((m - 1) >= vm_page_array){
+                  left_allocd = (m - 1)->order == VM_NFREEORDER;
+          }
+          /* Check state of right neighbour, if any. */
+          if((m + 1) <= &vm_page_array[vm_page_array_size]){
+                  right_allocd = (m + 1)->order == VM_NFREEORDER;
+          }
+  }
+
+  if(left_allocd && right_allocd){
+          sip->chunks[search_chunk_idx].score -= val;
+  } else if (!left_allocd && !right_allocd){
+          sip->chunks[search_chunk_idx].score += val;
+  }
 }
 
 static void
@@ -2499,7 +2527,7 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
   SLIST_FOREACH(rp, headp, entries){
           vm_page_t free = PHYS_TO_VM_PAGE(rp->start);
           vm_page_t scan = PHYS_TO_VM_PAGE(rp->end - PAGE_SIZE);
- 
+
           while (free < scan) {
                   /* Find suitable destination page ("hole"). */
                   while (free < scan && !vm_phys_defrag_page_free(free)) {
@@ -2518,6 +2546,9 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
                   if (__predict_false(free >= scan)) {
                           break;
                   }
+
+                  // TODO: speed things up by skipping over "order" pages
+                  // Be sure to memorize free page order before relocation;
 
                   /* Swap the two pages and move "fingers". */
                   error = vm_phys_relocate_page(scan, free, domain);
