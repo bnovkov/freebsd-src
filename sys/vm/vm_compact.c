@@ -215,7 +215,10 @@ vm_compact_run(void *ctx)
 		old_frag_idx = frag_idx;
     ctxp->regions.slh_first = NULL;
 
-		ctxp->search_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
+		if(ctxp->search_fn(&ctxp->regions, ctxp->domain, ctxp->p_data)){
+            printf("%s: no eligible chunks have been found\n", __func__);
+            break;
+    }
 		run_nrelocated = ctxp->defrag_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
     if(run_nrelocated == 0 && nretries < 10){
             nretries++;
@@ -241,8 +244,6 @@ cleanup:
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
-
-	printf("%s: relocated %zu pages\n", __func__, nrelocated);
 
 	return 0;
 }

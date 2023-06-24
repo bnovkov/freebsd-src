@@ -58,6 +58,8 @@
 #include <sys/vmmeter.h>
 #include <sys/kthread.h>
 #include <sys/eventhandler.h>
+#include <sys/sdt.h>
+
 
 #include <vm/vm.h>
 #include <vm/vm_compact.h>
@@ -2062,18 +2064,16 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 }
 #endif
 
-#define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_NFREEORDER - 1))
+#define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_NFREEORDER -1))
 #define VM_PHYS_SEARCH_CHUNK_SIZE (VM_PHYS_SEARCH_CHUNK_NPAGES << (PAGE_SHIFT))
 #define VM_PHYS_SEARCH_CHUNK_MASK (VM_PHYS_SEARCH_CHUNK_SIZE - 1)
 #define VM_PHYS_SEARCH_IDX_TO_PADDR(i) \
-	((i) << ((VM_NFREEORDER - 1) + PAGE_SHIFT))
+        ((i) << ((VM_NFREEORDER -1) + PAGE_SHIFT))
 #define VM_PHYS_PADDR_TO_CHUNK_IDX(p)          \
 	(((p) & ~VM_PHYS_SEARCH_CHUNK_MASK) >> \
-	    ((VM_NFREEORDER - 1) + PAGE_SHIFT))
-#define VM_PHYS_HOLECNT_HI (3968)
+   ((VM_NFREEORDER -1) + PAGE_SHIFT))
+#define VM_PHYS_HOLECNT_HI (16350)
 #define VM_PHYS_HOLECNT_LO (64)
-#define VM_PHYS_CHUNK_FULL_SCORE 0
-#define VM_PHYS_CHUNK_EMPTY_SCORE 1
 
 
 struct vm_phys_subseg {
@@ -2173,9 +2173,6 @@ vm_phys_update_search_index(vm_page_t m, int order, bool alloc)
 	int search_chunk_idx = VM_PHYS_PADDR_TO_CHUNK_IDX(m->phys_addr) -
 	    dom_start_idx;
 	int pgcnt = 1 << order;
-  bool left_allocd = true;
-  bool right_allocd = true;
-  int val = alloc ? 1 : -1;
 
 	KASSERT(search_chunk_idx < sip->nchunks,
 	    ("%s: Attempting to access a nonexistent search chunk", __func__));
@@ -2192,39 +2189,9 @@ vm_phys_update_search_index(vm_page_t m, int order, bool alloc)
 		__func__, sip->chunks[search_chunk_idx].holecnt,
 		(void *)m->phys_addr, pgcnt));
 
-  if(m->order != 0)
-          return;
   /* Update chunk fragmentation score */
-  if((m->phys_addr & ((PAGE_SIZE * 2)-1)) == 0){
-          /* Lower half of 1-order run */
-          /* Check state of right neighbour. */
-          right_allocd = (m + 1)->order == VM_NFREEORDER;
-          /* Check state of left neighbour, if any. */
-          if((m - 2) >= vm_page_array){
-                  if((m - 1)->order == VM_NFREEORDER){
-                          /* Check whether the left neighbour belongs to a 1-order run */
-                          left_allocd = (m - 2)->order != 1;
-                  } else {
-                          /* Order is 0, page is free */
-                          left_allocd = false;
-                  }
-          }
-  }else {
-          /* Upper half of 1-order run */
-          /* Check state of left neighbour. */
-          if((m - 1) >= vm_page_array){
-                  left_allocd = (m - 1)->order == VM_NFREEORDER;
-          }
-          /* Check state of right neighbour, if any. */
-          if((m + 1) <= &vm_page_array[vm_page_array_size]){
-                  right_allocd = (m + 1)->order == VM_NFREEORDER;
-          }
-  }
-
-  if(left_allocd && right_allocd){
-          sip->chunks[search_chunk_idx].score -= val;
-  } else if (!left_allocd && !right_allocd){
-          sip->chunks[search_chunk_idx].score += val;
+  if(order == 0){
+          sip->chunks[search_chunk_idx].score += alloc ? -1 : 1;
   }
 }
 
@@ -2367,51 +2334,62 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain, void *p
   struct vm_phys_subseg *ssegp;
 	int idx, region_cnt = 0;
   int ctx_region_cnt = 0;
+  int chunks_scanned = 0;
 
-	for(idx = ctx->last_idx; idx < sip->nchunks-1 && region_cnt < VM_PHYS_COMPACT_SEARCH_REGIONS;  idx++) {
-		scp = &sip->chunks[idx];
-		if (scp->shp) {
-            /* Enqueue subsegments in chunks with holes. */
-            SLIST_FOREACH(ssegp, scp->shp, link){
-                    SLIST_INSERT_HEAD(headp, &ssegp->region, entries);
-                    region_cnt++;
-            }
-            continue;
-		}
+  idx = ctx->last_idx;
+  while(chunks_scanned < sip->nchunks && region_cnt < VM_PHYS_COMPACT_SEARCH_REGIONS) {
+          for(; chunks_scanned < sip->nchunks && idx < sip->nchunks-1 && region_cnt < VM_PHYS_COMPACT_SEARCH_REGIONS; chunks_scanned++,  idx++) {
+                  scp = &sip->chunks[idx];
 
-		if (scp->skipidx) {
-			idx = scp->skipidx-1;
-			continue;
-		}
+                  if (scp->skipidx) {
+                          idx = scp->skipidx-1;
+                          chunks_scanned += (scp->skipidx -1) - idx;
+                          continue;
+                  }
 
-		if (scp->holecnt >= VM_PHYS_HOLECNT_LO &&
-		    scp->holecnt <= VM_PHYS_HOLECNT_HI) {
-			ctx_region_cnt++;
-      region_cnt++;
-      ctx->region[ctx_region_cnt -1].start = VM_PHYS_SEARCH_IDX_TO_PADDR(idx);
-			ctx->region[ctx_region_cnt -1].end = VM_PHYS_SEARCH_IDX_TO_PADDR(idx + 1);
-      SLIST_INSERT_HEAD(headp, &ctx->region[ctx_region_cnt -1], entries);
-		}
-	}
+                  if (scp->score > 1 && scp->holecnt >= VM_PHYS_HOLECNT_LO &&
+                      scp->holecnt <= VM_PHYS_HOLECNT_HI) {
+                          if (scp->shp) {
+                                  /* Enqueue subsegments in chunks with holes. */
+                                  SLIST_FOREACH(ssegp, scp->shp, link){
+                                          SLIST_INSERT_HEAD(headp, &ssegp->region, entries);
+                                          region_cnt++;
+                                  }
+                          } else {
+                                  vm_paddr_t start = VM_PHYS_SEARCH_IDX_TO_PADDR(idx);
+                                  vm_paddr_t end = VM_PHYS_SEARCH_IDX_TO_PADDR(idx + 1);
 
+                                          ctx_region_cnt++;
+                                          region_cnt++;
+                                          ctx->region[ctx_region_cnt -1].start = start;
+                                          ctx->region[ctx_region_cnt -1].end = end; 
+                                          SLIST_INSERT_HEAD(headp, &ctx->region[ctx_region_cnt -1], entries);                                
+                          }
+                  }
+          }
+
+          idx = (idx + 1) % (sip->nchunks - 1);
+  }
   ctx->last_idx = (idx + 1) % (sip->nchunks - 1);
 
-	return 0;
+
+
+	return SLIST_EMPTY(headp);
 }
 /*
  * Determine whether a given page is eligible as a relocation destination.
  */
-static bool
+static __noinline bool
 vm_phys_defrag_page_free(vm_page_t p)
 {
-        return (p->order == 0);
+        return (p->order == 0 || p->order == 1);
 }
 
 /*
  * Determine whether a given page is eligible to be relocated.
  * A suitable page is left in a xbusied state and its object is locked.
  */
-static bool
+static __noinline bool
 vm_phys_defrag_page_relocatable(vm_page_t p)
 {
 	vm_object_t obj;
@@ -2428,7 +2406,7 @@ vm_phys_defrag_page_relocatable(vm_page_t p)
   if (vm_page_tryxbusy(p) == 0)
 		goto unlock;
 
-	if (!vm_page_wired(p) && !vm_page_none_valid(p)) {
+	if (!vm_page_wired(p)) {
 		return true;
 	}
 
@@ -2443,7 +2421,7 @@ unlock:
  * Returns 0 on success, 1 if the error was caused by the src page, 2 if caused
  * by the dst page.
  */
-static int
+static __noinline int
 vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain)
 {
 	int error = 0;
@@ -2461,12 +2439,13 @@ vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain)
 	vm_domain_free_lock(vmd);
 	/* Check if the dst page is still eligible and remove it from the
 	 * freelist. */
-	if (dst->order != 0 || !vm_page_none_valid(dst)) {
+	if (!(dst->order == 0 || dst->order == 1)  || !vm_page_none_valid(dst)) {
 		error = 2;
 		vm_page_xunbusy(src);
 		vm_domain_free_unlock(vmd);
 		goto unlock;
 	}
+
 
 	vm_page_dequeue(dst);
 	vm_phys_unfree_page(dst);
@@ -2547,9 +2526,6 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
                           break;
                   }
 
-                  // TODO: speed things up by skipping over "order" pages
-                  // Be sure to memorize free page order before relocation;
-
                   /* Swap the two pages and move "fingers". */
                   error = vm_phys_relocate_page(scan, free, domain);
                   if (error == 0) {
@@ -2568,38 +2544,51 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
 }
 
 
-static struct thread *compactthread;
+static struct proc *compactproc;
+static struct thread *compact_threads[MAXMEMDOM - 1];
 
-static void vm_phys_compact_daemon(void){
+static void vm_phys_compact_thread(void *arg){
         void *cctx;
+        size_t domain = (size_t)arg;
+        void *chan = (void *)((vm_offset_t)vm_phys_compact_thread + domain);
         int error;
 
         vm_paddr_t start, end;
 
-        start = vm_phys_segs[0].start;
-        end = vm_phys_segs[4].end - PAGE_SIZE;
+        start = vm_phys_search_index[domain].dom_start;
+        end = vm_phys_search_index[domain].dom_end - PAGE_SIZE;
         cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag,
                                      vm_phys_compact_ctx_init, start, end, 9, &error);
         KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
 
-        EVENTHANDLER_REGISTER(shutdown_pre_sync, kthread_shutdown,
-                              compactthread, SHUTDOWN_PRI_LAST);
-        printf("%s: compaction daemon started\n", __func__);
-
         for(;;){
-                tsleep(vm_phys_compact_daemon, PCATCH | PNOLOCK, "compact sleep", 0);
+                tsleep(chan, PPAUSE | PCATCH | PNOLOCK, "compact sleep", hz);
                 kthread_suspend_check();
                 vm_compact_run(cctx);
         }
         vm_compact_free_job(cctx);
 }
 
-static struct kthread_desc compact_kp = {
+static void vm_phys_compact_daemon(void){
+        int error;
+
+        for(size_t i=1; i< vm_ndomains; i++){
+                error = kproc_kthread_add(vm_phys_compact_thread, (void *)i, &compactproc, &compact_threads[i-1], 0, 0, "compactdaemon", "compactdaemonthr%zu", i);
+                if(error){
+                        panic("%s: cannot start compaction thread, error: %d", __func__, error);
+                }
+        }
+
+        printf("%s: compaction daemon started\n", __func__);
+        vm_phys_compact_thread((void *)0);
+}
+
+static struct kproc_desc compact_kp = {
         "compactdaemon",
         vm_phys_compact_daemon,
-        &compactthread
+        &compactproc
 };
-SYSINIT(compactdaemon, SI_SUB_KTHREAD_VM, SI_ORDER_ANY, kthread_start,
+SYSINIT(compactdaemon, SI_SUB_KTHREAD_VM, SI_ORDER_ANY, kproc_start,
         &compact_kp);
 
 
@@ -2618,7 +2607,10 @@ sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
 		return (error);
 	sbuf_new_for_sysctl(&sbuf, NULL, 32, req);
 
-  wakeup_one(vm_phys_compact_daemon);
+  for(int i=0; i < vm_ndomains; i++){
+          void *chan = (void *)((vm_offset_t)vm_phys_compact_thread + i);
+          wakeup_one(chan);
+  }
 
 	sbuf_printf(&sbuf, "Kicked compaction daemon\n");
 
