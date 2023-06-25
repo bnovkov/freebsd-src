@@ -2064,9 +2064,9 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 }
 #endif
 
-#define VM_PHYS_SEARCH_CHUNK_ORDER (14)
+#define VM_PHYS_SEARCH_CHUNK_ORDER (12)
 #define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_PHYS_SEARCH_CHUNK_ORDER))
-#define VM_PHYS_SEARCH_CHUNK_SIZE (VM_PHYS_SEARCH_CHUNK_NPAGES << (PAGE_SHIFT))
+#define VM_PHYS_SEARCH_CHUNK_SIZE (1 << (PAGE_SHIFT + VM_PHYS_SEARCH_CHUNK_ORDER))
 #define VM_PHYS_SEARCH_CHUNK_MASK (VM_PHYS_SEARCH_CHUNK_SIZE - 1)
 #define VM_PHYS_SEARCH_IDX_TO_PADDR(i) \
         ((i) << ((VM_PHYS_SEARCH_CHUNK_ORDER) + PAGE_SHIFT))
@@ -2356,11 +2356,11 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain, void *p
                                   vm_paddr_t start = VM_PHYS_SEARCH_IDX_TO_PADDR(idx);
                                   vm_paddr_t end = VM_PHYS_SEARCH_IDX_TO_PADDR(idx + 1);
 
-                                          ctx_region_cnt++;
                                           region_cnt++;
-                                          ctx->region[ctx_region_cnt -1].start = start;
-                                          ctx->region[ctx_region_cnt -1].end = end;
-                                          SLIST_INSERT_HEAD(headp, &ctx->region[ctx_region_cnt -1], entries);
+                                          ctx->region[ctx_region_cnt].start = start;
+                                          ctx->region[ctx_region_cnt].end = end;
+                                          SLIST_INSERT_HEAD(headp, &ctx->region[ctx_region_cnt], entries);
+                                          ctx_region_cnt++;
                           }
                   }
           }
@@ -2503,6 +2503,9 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
   SLIST_FOREACH(rp, headp, entries){
           vm_page_t free = PHYS_TO_VM_PAGE(rp->start);
           vm_page_t scan = PHYS_TO_VM_PAGE(rp->end - PAGE_SIZE);
+
+          KASSERT(free && scan, ("%s: pages are null %p, %p, start: %p, end: %p", __func__, free, scan, (void *)rp->start, (void *)rp->end));
+          KASSERT(free->phys_addr && scan->phys_addr, ("%s: pages have null paddr %p, %p", __func__, (void *)free->phys_addr, (void*)scan->phys_addr));
 
           while (free < scan) {
                   /* Find suitable destination page ("hole"). */
