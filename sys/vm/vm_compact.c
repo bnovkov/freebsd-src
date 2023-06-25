@@ -245,6 +245,8 @@ cleanup:
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
+  printf("%s: relocated %zu pages\n", __func__, nrelocated);
+
 	return 0;
 }
 
