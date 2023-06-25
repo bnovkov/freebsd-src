@@ -2064,16 +2064,17 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 }
 #endif
 
-#define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_NFREEORDER -1))
+#define VM_PHYS_SEARCH_CHUNK_ORDER (14)
+#define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_PHYS_SEARCH_CHUNK_ORDER))
 #define VM_PHYS_SEARCH_CHUNK_SIZE (VM_PHYS_SEARCH_CHUNK_NPAGES << (PAGE_SHIFT))
 #define VM_PHYS_SEARCH_CHUNK_MASK (VM_PHYS_SEARCH_CHUNK_SIZE - 1)
 #define VM_PHYS_SEARCH_IDX_TO_PADDR(i) \
-        ((i) << ((VM_NFREEORDER -1) + PAGE_SHIFT))
+        ((i) << ((VM_PHYS_SEARCH_CHUNK_ORDER) + PAGE_SHIFT))
 #define VM_PHYS_PADDR_TO_CHUNK_IDX(p)          \
 	(((p) & ~VM_PHYS_SEARCH_CHUNK_MASK) >> \
-   ((VM_NFREEORDER -1) + PAGE_SHIFT))
-#define VM_PHYS_HOLECNT_HI (16350)
-#define VM_PHYS_HOLECNT_LO (64)
+   ((VM_PHYS_SEARCH_CHUNK_ORDER) + PAGE_SHIFT))
+#define VM_PHYS_HOLECNT_HI ((1 << (VM_PHYS_SEARCH_CHUNK_ORDER)) - 100)
+#define VM_PHYS_HOLECNT_LO (16)
 
 
 struct vm_phys_subseg {
@@ -2158,7 +2159,6 @@ vm_phys_search_index_startup(vm_offset_t *vaddr)
 			panic("Unable to allocate search index for domain %d\n",
 			    dom);
 		}
-    /* Chunk scores are initialized to VM_PHYS_CHUNK_FULL_SCORE, a.k.a zero. */
 		bzero(cur_idx->chunks, alloc_size);
 	}
 }
@@ -2179,19 +2179,16 @@ vm_phys_update_search_index(vm_page_t m, int order, bool alloc)
 
   /* Update chunk hole count */
 	sip->chunks[search_chunk_idx].holecnt += alloc ? -pgcnt : pgcnt;
-	KASSERT(sip->chunks[search_chunk_idx].holecnt >= 0,
-	    ("%s: inconsistent hole count: %d, m_start: %p, pgcnt: %d",
-		__func__, sip->chunks[search_chunk_idx].holecnt,
-		(void *)m->phys_addr, pgcnt));
-	KASSERT(sip->chunks[search_chunk_idx].holecnt <=
-		VM_PHYS_SEARCH_CHUNK_NPAGES,
-	    ("%s: inconsistent hole count: %d, m_start: %p, pgcnt: %d",
-		__func__, sip->chunks[search_chunk_idx].holecnt,
-		(void *)m->phys_addr, pgcnt));
+	KASSERT(sip->chunks[search_chunk_idx].holecnt >= 0 && sip->chunks[search_chunk_idx].holecnt <=
+          VM_PHYS_SEARCH_CHUNK_NPAGES,
+	    ("%s: inconsistent hole count: %d",
+       __func__, sip->chunks[search_chunk_idx].holecnt));
 
   /* Update chunk fragmentation score */
   if(order == 0){
           sip->chunks[search_chunk_idx].score += alloc ? -1 : 1;
+          if(sip->chunks[search_chunk_idx].score < 0)
+                  sip->chunks[search_chunk_idx].score = 0;
   }
 }
 
@@ -2312,7 +2309,7 @@ vm_phys_init_compact(void *arg)
 SYSINIT(vm_phys_compact, SI_SUB_KMEM + 1, SI_ORDER_ANY,
     vm_phys_init_compact, NULL);
 
-#define VM_PHYS_COMPACT_SEARCH_REGIONS 20
+#define VM_PHYS_COMPACT_SEARCH_REGIONS 5
 struct vm_phys_compact_ctx {
 	int last_idx;
 	struct vm_compact_region region[VM_PHYS_COMPACT_SEARCH_REGIONS];
@@ -2362,8 +2359,8 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain, void *p
                                           ctx_region_cnt++;
                                           region_cnt++;
                                           ctx->region[ctx_region_cnt -1].start = start;
-                                          ctx->region[ctx_region_cnt -1].end = end; 
-                                          SLIST_INSERT_HEAD(headp, &ctx->region[ctx_region_cnt -1], entries);                                
+                                          ctx->region[ctx_region_cnt -1].end = end;
+                                          SLIST_INSERT_HEAD(headp, &ctx->region[ctx_region_cnt -1], entries);
                           }
                   }
           }
@@ -2382,7 +2379,7 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain, void *p
 static __noinline bool
 vm_phys_defrag_page_free(vm_page_t p)
 {
-        return (p->order == 0 || p->order == 1);
+        return (p->order == 0);
 }
 
 /*
@@ -2439,7 +2436,7 @@ vm_phys_relocate_page(vm_page_t src, vm_page_t dst, int domain)
 	vm_domain_free_lock(vmd);
 	/* Check if the dst page is still eligible and remove it from the
 	 * freelist. */
-	if (!(dst->order == 0 || dst->order == 1)  || !vm_page_none_valid(dst)) {
+	if (dst->order == 0 || !vm_page_none_valid(dst)) {
 		error = 2;
 		vm_page_xunbusy(src);
 		vm_domain_free_unlock(vmd);
