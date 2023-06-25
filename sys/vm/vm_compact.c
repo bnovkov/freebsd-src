@@ -72,6 +72,7 @@ struct vm_compact_ctx {
 	int order;
 	int domain;
   struct vm_compact_region_head regions;
+  bool stop;
 
 	void *p_data;
 
@@ -212,6 +213,9 @@ vm_compact_run(void *ctx)
 
 	/* Run compaction until the fragmentation metric stops improving. */
 	do {
+          if(ctxp->stop){
+                  break;
+          }
 		old_frag_idx = frag_idx;
     ctxp->regions.slh_first = NULL;
 
@@ -244,8 +248,6 @@ cleanup:
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
-
-  printf("%s: relocated %zu pages\n", __func__, nrelocated);
 
 	return 0;
 }
