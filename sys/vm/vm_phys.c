@@ -2431,8 +2431,9 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain, void *p
                                   /* Enqueue subsegments in chunks with holes. */
                                   SLIST_FOREACH(ssegp, scp->shp, link){
                                           SLIST_INSERT_HEAD(headp, &ssegp->region, entries);
-                                          region_cnt++;
                                   }
+                                  region_cnt++;
+
                           } else {
                                   vm_paddr_t start = vm_phys_search_idx_to_paddr(idx, domain);
                                   vm_paddr_t end = vm_phys_search_idx_to_paddr(idx + 1, domain);
@@ -2582,7 +2583,8 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
  vm_compact_region_t rp;
 	size_t nrelocated = 0;
 	int error;
-  SLIST_FOREACH(rp, headp, entries){
+  while(!SLIST_EMPTY(headp)){
+    rp = SLIST_FIRST(headp);
 
           vm_page_t free = PHYS_TO_VM_PAGE(rp->start);
           vm_page_t scan = PHYS_TO_VM_PAGE(rp->end - PAGE_SIZE);
@@ -2622,29 +2624,79 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
                           free++;
                   }
           }
+          SLIST_REMOVE_HEAD(headp, entries);
   }
   printf("%s: relocated %zu pages\n", __func__, nrelocated);
 
 	return nrelocated;
 }
 
+
+static int vm_phys_compact_thresh = 300; /* 200 - 1000 */
+static int sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_vm, OID_AUTO, phys_compact_thresh, CTLTYPE_INT | CTLFLAG_RW, NULL,
+           0, sysctl_vm_phys_compact_thresh, "I",
+           "Fragmentation index threshold for memory compaction");
+
+static int
+sysctl_vm_phys_compact_thresh(SYSCTL_HANDLER_ARGS)
+{
+	int error;
+	int new = vm_phys_compact_thresh;
+
+	error = sysctl_handle_int(oidp, &new, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	if (new != vm_phys_compact_thresh) {
+		if (new < 200) {
+			new = 200;
+		} else if (new > 1000) {
+			new = 1000;
+		}
+		vm_phys_compact_thresh = new;
+	}
+
+	return (0);
+}
+
+
+/* static int vm_phys_compact_run_max_relocated = 25600; /\* 100 MB *\/ */
+/* static int sysctl_vm_phys_compact_run_max_relocated(SYSCTL_HANDLER_ARGS); */
+/* SYSCTL_OID(_vm, OID_AUTO, phys_compact_run_max_relocated, CTLTYPE_INT | CTLFLAG_RW, NULL, */
+/*            0, sysctl_vm_phys_compact_run_max_relocated, "I", */
+/*            "Maximum number of relocated pages per-compaction run"); */
+
 static void vm_phys_compact_thread(void *arg){
         void *cctx;
         size_t domain = (size_t)arg;
         void *chan = (void *)((vm_offset_t)vm_phys_compact_thread + domain);
         int error;
+        int frag_idx;
 
         vm_paddr_t start, end;
 
         start = vm_phys_search_index[domain].dom_start;
-        end = vm_phys_search_index[domain].dom_end - PAGE_SIZE;
+        end = vm_phys_search_index[domain].dom_end;
         cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag,
                                      vm_phys_compact_ctx_init, start, end, 9, domain, &error);
         KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
 
         for(;;){
                 tsleep(chan, PPAUSE | PCATCH | PNOLOCK, "compact sleep", hz);
+             
                 kproc_suspend_check(compactproc);
+
+                vm_domain_free_lock(VM_DOMAIN(domain));
+                frag_idx = vm_phys_fragmentation_index(9,
+                                                                      domain);
+                vm_domain_free_unlock(VM_DOMAIN(domain));
+
+                /* No need to compact if fragmentation is below the threshold. */
+                if (frag_idx < vm_phys_compact_thresh) {
+                  continue;
+                }
+
                 vm_compact_run(cctx);
         }
         vm_compact_free_job(cctx);
