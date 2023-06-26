@@ -124,8 +124,31 @@ struct vm_phys_hole {
 	vm_paddr_t end;
 	int domain;
 };
+
+
+struct vm_phys_subseg {
+  struct vm_compact_region region;
+  SLIST_ENTRY(vm_phys_subseg) link;
+};
+SLIST_HEAD(vm_phys_subseg_head, vm_phys_subseg);
+
+struct vm_phys_search_chunk {
+	int holecnt;
+  int score;
+	int skipidx;
+	struct vm_phys_subseg_head *shp;
+};
+
+struct vm_phys_search_index {
+	struct vm_phys_search_chunk *chunks;
+	int nchunks;
+	vm_paddr_t dom_start;
+	vm_paddr_t dom_end;
+};
+
+static struct vm_phys_search_index vm_phys_search_index[MAXMEMDOM];
 /*  */
-static struct vm_phys_hole vm_phys_holes[VM_PHYSSEG_MAX];
+static struct vm_phys_hole vm_phys_holes[VM_PHYSSEG_MAX *2];
 static int vm_phys_nholes;
 
 static void vm_phys_update_search_index(vm_page_t m, int order, bool alloc);
@@ -816,12 +839,40 @@ vm_phys_init(void)
 		vm_phys_nholes++;
 	}
 
+  struct vm_phys_search_index *sip;
+
 	for (int i = 0; i < (vm_phys_nsegs - 1); i++, vm_phys_nholes++) {
 		hp = &vm_phys_holes[vm_phys_nholes];
 		hp->start = vm_phys_segs[i].end;
 		hp->end = vm_phys_segs[i + 1].start;
 		hp->domain = vm_phys_segs[i].domain;
+
+    /* Does this hole span two domains? */
+    if(vm_phys_segs[i].domain != vm_phys_segs[i + 1].domain && hp->end > sip->dom_end){
+      /* Clamp end of current hole to domain end */
+      sip = &vm_phys_search_index[hp->domain];
+      hp->end = sip->dom_end;
+      /* Add new hole at beginning of subsequent domain */
+      i++;
+      vm_phys_nholes++;
+      hp = &vm_phys_holes[vm_phys_nholes];
+      hp->domain = vm_phys_segs[i].domain;
+      sip = &vm_phys_search_index[hp->domain];
+      /* Hole starts at domain start and ends at the start of the first segment. */
+      hp->start = sip->dom_start;
+      hp->end =  vm_phys_segs[i].start;
+    }
 	}
+
+  /* Register hole at end of last segment */
+  sip = &vm_phys_search_index[vm_phys_segs[vm_phys_nsegs-1].domain];
+  if(vm_phys_segs[vm_phys_nsegs-1].end < sip->dom_end){
+    hp = &vm_phys_holes[vm_phys_nholes];
+		hp->start = vm_phys_segs[vm_phys_nsegs-1].end;
+		hp->end = sip->dom_end;
+		hp->domain = vm_phys_segs[vm_phys_nsegs-1].domain;
+    vm_phys_nholes++;
+  }
 
 	rw_init(&vm_phys_fictitious_reg_lock, "vmfctr");
 }
@@ -2076,26 +2127,6 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 #define VM_PHYS_HOLECNT_LO (16)
 
 
-struct vm_phys_subseg {
-       struct vm_compact_region region;
-        SLIST_ENTRY(vm_phys_subseg) link;
-};
-SLIST_HEAD(vm_phys_subseg_head, vm_phys_subseg);
-
-struct vm_phys_search_chunk {
-	int holecnt;
-  int score;
-	int skipidx;
-	struct vm_phys_subseg_head *shp;
-};
-
-struct vm_phys_search_index {
-	struct vm_phys_search_chunk *chunks;
-	int nchunks;
-	vm_paddr_t dom_start;
-	vm_paddr_t dom_end;
-};
-static struct vm_phys_search_index vm_phys_search_index[MAXMEMDOM];
 
 static __inline vm_paddr_t
 vm_phys_search_idx_to_paddr(int idx, int domain){
@@ -2122,7 +2153,7 @@ vm_phys_paddr_to_chunk_idx(vm_paddr_t paddr, int domain){
 
 static __inline struct vm_phys_search_chunk *
 vm_phys_search_get_chunk(struct vm_phys_search_index *sip, int idx){
-        KASSERT(idx >=0 && idx < sip->nchunks, ("%s: search index out-of-bounds access, idx: %d", __func__, idx));
+  KASSERT(idx >=0 && idx < sip->nchunks, ("%s: search index out-of-bounds access, idx: %d, dom_start: %p, dom_end: %p, nchunks: %d", __func__, idx, (void *)sip->dom_start, (void *)sip->dom_end, sip->nchunks));
 
         return (&sip->chunks[idx]);
 }
@@ -2286,7 +2317,7 @@ vm_phys_compact_init_holes(void){
 			hp = &vm_phys_holes[i];
 			if (hp->domain != dom)
 				continue;
-
+      printf("%s: hole start: %p, hole end: %p, domain: %d\n", __func__, (void *)hp->start, (void *)hp->end, dom);
 			start_idx = vm_phys_paddr_to_chunk_idx(hp->start, dom);
 			end_idx = vm_phys_paddr_to_chunk_idx(hp->end, dom);
 
@@ -2326,8 +2357,9 @@ vm_phys_compact_init_holes(void){
 				}
 			}
 		}
-    /* Register holes at domain end */
+    /* Register search index holes at domain end */
     if (sip->dom_end & VM_PHYS_SEARCH_CHUNK_MASK) {
+      end_idx = vm_phys_paddr_to_chunk_idx(sip->dom_end, dom);
             end_chunk = vm_phys_paddr_to_search_chunk(sip->dom_end, dom);
 
             vm_phys_chunk_register_hole(end_chunk,
