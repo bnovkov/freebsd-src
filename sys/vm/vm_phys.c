@@ -2132,10 +2132,8 @@ vm_phys_paddr_to_search_chunk(vm_paddr_t paddr, int domain){
         struct vm_phys_search_index *sip = &vm_phys_search_index[domain];
         int idx = vm_phys_paddr_to_chunk_idx(paddr, domain);
 
-        return (&sip->chunks[idx]);
+        return vm_phys_search_get_chunk(idx);
 }
-
-
 
 
 /*
@@ -2341,7 +2339,7 @@ vm_phys_compact_init_holes(void){
 }
 
 
-/* Initializes holes and starts compaction kthread. */
+/* Initializes holes. */
 static void
 vm_phys_init_compact(void *arg)
 {
