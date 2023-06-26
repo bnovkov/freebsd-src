@@ -840,39 +840,31 @@ vm_phys_init(void)
 	}
 
   struct vm_phys_search_index *sip;
-
-	for (int i = 0; i < (vm_phys_nsegs - 1); i++, vm_phys_nholes++) {
+  printf("%s: nsegs: %d\n", __func__, vm_phys_nsegs);
+	for (int i = 0; i +1 < vm_phys_nsegs; i++, vm_phys_nholes++) {
 		hp = &vm_phys_holes[vm_phys_nholes];
 		hp->start = vm_phys_segs[i].end;
 		hp->end = vm_phys_segs[i + 1].start;
 		hp->domain = vm_phys_segs[i].domain;
+    sip = &vm_phys_search_index[hp->domain];
+    printf("%s: seg idx: %d, domain: %d\n", __func__, i, hp->domain);
 
     /* Does this hole span two domains? */
     if(vm_phys_segs[i].domain != vm_phys_segs[i + 1].domain && hp->end > sip->dom_end){
       /* Clamp end of current hole to domain end */
       sip = &vm_phys_search_index[hp->domain];
+      printf("%s: sip: %p\n", __func__, sip);
       hp->end = sip->dom_end;
       /* Add new hole at beginning of subsequent domain */
-      i++;
       vm_phys_nholes++;
       hp = &vm_phys_holes[vm_phys_nholes];
-      hp->domain = vm_phys_segs[i].domain;
+      hp->domain = vm_phys_segs[i+1].domain;
       sip = &vm_phys_search_index[hp->domain];
       /* Hole starts at domain start and ends at the start of the first segment. */
       hp->start = sip->dom_start;
-      hp->end =  vm_phys_segs[i].start;
+      hp->end =  vm_phys_segs[i+1].start;
     }
 	}
-
-  /* Register hole at end of last segment */
-  sip = &vm_phys_search_index[vm_phys_segs[vm_phys_nsegs-1].domain];
-  if(vm_phys_segs[vm_phys_nsegs-1].end < sip->dom_end){
-    hp = &vm_phys_holes[vm_phys_nholes];
-		hp->start = vm_phys_segs[vm_phys_nsegs-1].end;
-		hp->end = sip->dom_end;
-		hp->domain = vm_phys_segs[vm_phys_nsegs-1].domain;
-    vm_phys_nholes++;
-  }
 
 	rw_init(&vm_phys_fictitious_reg_lock, "vmfctr");
 }
@@ -2321,8 +2313,21 @@ vm_phys_compact_init_holes(void){
 			start_idx = vm_phys_paddr_to_chunk_idx(hp->start, dom);
 			end_idx = vm_phys_paddr_to_chunk_idx(hp->end, dom);
 
+
+
 			start_chunk = vm_phys_search_get_chunk(sip, start_idx);
-			end_chunk = vm_phys_search_get_chunk(sip, end_idx);
+      /*
+       * If the domain end address is search chunk-aligned
+       * and a hole ends there, decrement the index to avoid
+       * an out of bounds access to the search index chunks.
+       */
+      if((sip->dom_end & VM_PHYS_SEARCH_CHUNK_MASK) == 0 && hp->end == sip->dom_end){
+        end_chunk = vm_phys_search_get_chunk(sip, end_idx - 1);
+        /* This is the last search chunk, point it to the first */
+        end_chunk->skipidx = 0;
+      } else {
+        end_chunk = vm_phys_search_get_chunk(sip, end_idx);
+      }
 
 			/* Hole is completely inside this chunk */
 			if (start_chunk == end_chunk) {
@@ -2623,9 +2628,6 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
 	return nrelocated;
 }
 
-
-static struct thread *compact_threads[MAXMEMDOM - 1];
-
 static void vm_phys_compact_thread(void *arg){
         void *cctx;
         size_t domain = (size_t)arg;
@@ -2637,30 +2639,33 @@ static void vm_phys_compact_thread(void *arg){
         start = vm_phys_search_index[domain].dom_start;
         end = vm_phys_search_index[domain].dom_end - PAGE_SIZE;
         cctx = vm_compact_create_job(vm_phys_compact_search, vm_phys_defrag,
-                                     vm_phys_compact_ctx_init, start, end, 9, &error);
+                                     vm_phys_compact_ctx_init, start, end, 9, domain, &error);
         KASSERT(cctx != NULL, ("Error creating compaction job: %d\n", error));
 
         for(;;){
                 tsleep(chan, PPAUSE | PCATCH | PNOLOCK, "compact sleep", hz);
-                kthread_suspend_check();
+                kproc_suspend_check(compactproc);
                 vm_compact_run(cctx);
         }
         vm_compact_free_job(cctx);
 }
 
+static struct thread *compact_threads[MAXMEMDOM - 1];
+
+
 static void vm_phys_compact_daemon(void){
-        int error;
+  int error;
 
         EVENTHANDLER_REGISTER(shutdown_pre_sync, kproc_shutdown, compactproc,
                               SHUTDOWN_PRI_FIRST);
 
-        for(size_t i=1; i< vm_ndomains; i++){
+         for(size_t i=1; i< vm_ndomains; i++){
                 error = kproc_kthread_add(vm_phys_compact_thread, (void *)i, &compactproc, &compact_threads[i-1], 0, 0, "compactdaemon", "compactdaemonthr%zu", i);
                 if(error){
                         panic("%s: cannot start compaction thread, error: %d", __func__, error);
                 }
         }
-
+        
         printf("%s: compaction daemon started\n", __func__);
         vm_phys_compact_thread((void *)0);
 }

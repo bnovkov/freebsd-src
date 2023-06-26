@@ -48,7 +48,7 @@ typedef bool (*vm_compact_end_fn)(void);
 typedef void (*vm_compact_ctx_init_fn)(void **);
 
 void *vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
-    vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order,
+                            vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order, int domain,
     int *error);
 void vm_compact_free_job(void *ctx);
 int vm_compact_run(void *ctx);

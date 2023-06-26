@@ -129,34 +129,15 @@ vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
 	return (ctxp1->start <= ctxp2->start && ctxp2->start <= ctxp1->end);
 }
 
-static bool
-vm_compact_check_range_domain(vm_paddr_t start, vm_paddr_t end)
-{
-	vm_page_t m1 = PHYS_TO_VM_PAGE(start);
-	vm_page_t m2 = PHYS_TO_VM_PAGE(end);
-
-	KASSERT(!(m1->flags & (PG_FICTITIOUS | PG_MARKER)) &&
-		!(m2->flags & (PG_FICTITIOUS | PG_MARKER)),
-	    ("Passed fictitious page in compaction range"));
-	return vm_page_domain(m1) == vm_page_domain(m2);
-}
-
 void *
 vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
-    vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order,
+                      vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order, int domain,
     int *error)
 {
 	struct vm_compact_ctx *ctxp;
-
 	/* Arguments sanity check. */
 	if (end <= start || order > (VM_NFREEORDER_MAX - 1)) {
 		*error = (EINVAL);
-		return (NULL);
-	}
-
-	/* Check whether 'start' and 'end' belong to the same domain. */
-	if (!vm_compact_check_range_domain(start, end)) {
-		*error = (ERANGE);
 		return (NULL);
 	}
 
@@ -167,7 +148,7 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 	ctxp->defrag_fn = dfn;
 	ctxp->start = start;
 	ctxp->order = order;
-	ctxp->domain = vm_page_domain(PHYS_TO_VM_PAGE(start));
+	ctxp->domain = domain;
   SLIST_INIT(&ctxp->regions);
 
 	ctxfn(&ctxp->p_data);
