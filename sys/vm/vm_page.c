@@ -5631,9 +5631,9 @@ vm_page_assert_pga_writeable(vm_page_t m, uint16_t bits)
 #endif
 
 /*
- * Tries to move 'src' into 'dst'. The 'src' page must be busied and its object locked.
- * Returns 0 on success, 1 if the error was caused by the src page, 2 if caused
- * by the dst page.
+ * Tries to move 'src' into 'dst'. The 'src' page must be busied and its object
+ * locked. Returns 0 on success, 1 if the error was caused by the src page, 2 if
+ * caused by the dst page.
  */
 int
 vm_page_relocate_page(vm_page_t src, vm_page_t dst, int domain)
@@ -5659,7 +5659,6 @@ vm_page_relocate_page(vm_page_t src, vm_page_t dst, int domain)
 		vm_domain_free_unlock(vmd);
 		goto unlock;
 	}
-
 
 	vm_page_dequeue(dst);
 	vm_phys_unfree_page(dst);
@@ -5710,7 +5709,6 @@ unlock:
 
 	return error;
 }
-
 
 #include "opt_ddb.h"
 #ifdef DDB

@@ -46,8 +46,6 @@
 
 MALLOC_DEFINE(M_VMCOMPACT, "vm_compact_ctx", "memory compaction context");
 
-
-
 static struct mtx compact_lock;
 static LIST_HEAD(, vm_compact_ctx) active_compactions[MAXMEMDOM];
 
@@ -60,14 +58,13 @@ struct vm_compact_ctx {
 
 	int order;
 	int domain;
-  struct vm_compact_region_head regions;
-  bool stop;
+	struct vm_compact_region_head regions;
+	bool stop;
 
 	void *p_data;
 
 	LIST_ENTRY(vm_compact_ctx) entries;
 };
-
 
 static bool
 vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
@@ -78,8 +75,8 @@ vm_compact_job_overlaps(struct vm_compact_ctx *ctxp1,
 
 void *
 vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
-                      vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order, int domain,
-    int *error)
+    vm_compact_ctx_init_fn ctxfn, vm_paddr_t start, vm_paddr_t end, int order,
+    int domain, int *error)
 {
 	struct vm_compact_ctx *ctxp;
 	/* Arguments sanity check. */
@@ -96,7 +93,7 @@ vm_compact_create_job(vm_compact_search_fn sfn, vm_compact_defrag_fn dfn,
 	ctxp->start = start;
 	ctxp->order = order;
 	ctxp->domain = domain;
-  SLIST_INIT(&ctxp->regions);
+	SLIST_INIT(&ctxp->regions);
 
 	ctxfn(&ctxp->p_data);
 
@@ -114,7 +111,7 @@ vm_compact_run(void *ctx)
 {
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
-  int retval;
+	int retval;
 
 	VM_COMPACT_LOCK();
 	/* Check if the requested compaction overlaps with an existing one. */
@@ -130,18 +127,17 @@ vm_compact_run(void *ctx)
 
 	/* Run compaction job. */
 
-		if(ctxp->search_fn(&ctxp->regions, ctxp->domain, ctxp->p_data)){
-            retval = 0;
-            goto cleanup;
-    }
+	if (ctxp->search_fn(&ctxp->regions, ctxp->domain, ctxp->p_data)) {
+		retval = 0;
+		goto cleanup;
+	}
 
-		retval = ctxp->defrag_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
+	retval = ctxp->defrag_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
 
- cleanup:
+cleanup:
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
-
 
 	return retval;
 }
