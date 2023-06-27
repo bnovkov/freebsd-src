@@ -728,7 +728,6 @@ vm_page_startup(vm_offset_t vaddr)
 	 */
 	new_end = vm_reserv_startup(&vaddr, new_end);
 #endif
-
 #if defined(__aarch64__) || defined(__amd64__) || \
     defined(__riscv) || defined(__powerpc64__)
 	/*
@@ -3891,7 +3890,7 @@ vm_page_enqueue(vm_page_t m, uint8_t queue)
  *	be xbusy.  Otherwise the page must be not busied.  A managed
  *	page must be unmapped.
  */
-bool
+static bool
 vm_page_free_prep(vm_page_t m)
 {
 

@@ -45,32 +45,32 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/domainset.h>
-#include <sys/eventhandler.h>
-#include <sys/kernel.h>
-#include <sys/kthread.h>
 #include <sys/lock.h>
+#include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
-#include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/tree.h>
 #include <sys/vmmeter.h>
+#include <sys/kthread.h>
+#include <sys/eventhandler.h>
+
+#include <ddb/ddb.h>
 
 #include <vm/vm.h>
-#include <vm/vm_compact.h>
+
 #include <vm/vm_extern.h>
+#include <vm/vm_param.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
-#include <vm/vm_pagequeue.h>
-#include <vm/vm_param.h>
 #include <vm/vm_phys.h>
-
-#include <ddb/ddb.h>
+#include <vm/vm_pagequeue.h>
+#include <vm/vm_compact.h>
 
 _Static_assert(sizeof(long) * NBBY >= VM_PHYSSEG_MAX,
     "Too many physsegs.");
@@ -2338,6 +2338,13 @@ vm_phys_compact_ctx_init(void **p_data)
 	    M_VMCOMPACT, M_ZERO | M_WAITOK);
 }
 
+
+static
+struct vm_compact_region * vm_phys_compact_ctx_get_region(struct vm_phys_compact_ctx *ctxp, int idx){
+        KASSERT(idx < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS, ("%s: Not enough memory for regions: %d\n", __func__, idx));
+        return (&ctxp->region[idx]);
+}
+
 /*
  * Scans the search index for physical memory regions that could be potential
  * compaction candidates. Eligible regions are enqueued on a slist.
@@ -2353,7 +2360,7 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 	struct vm_compact_region *rp;
 	vm_paddr_t start, end;
 	int idx, region_cnt = 0;
-	int ctx_alloc_cnt = 0;
+	int ctx_region_idx = 0;
 	int chunks_scanned = 0;
 
 	SLIST_INIT(headp);
@@ -2363,7 +2370,7 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 	    region_cnt < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS) {
 		for (;
 		     chunks_scanned < sip->nchunks && idx < sip->nchunks - 1 &&
-		     region_cnt < VM_PHYS_COMPACT_SEARCH_REGIONS;
+		     region_cnt < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS;
 		     chunks_scanned++, idx++) {
 
 			scp = vm_phys_search_get_chunk(sip, idx);
@@ -2394,20 +2401,20 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 						1,
 					    domain);
 
-					rp = &ctx->region[ctx_alloc_cnt];
+					rp = vm_phys_compact_ctx_get_region(ctx, ctx_region_idx);
 					rp->start = start;
 					rp->end = end;
 					SLIST_INSERT_HEAD(headp, rp, entries);
 
-					ctx_alloc_cnt++;
+					ctx_region_idx++;
 				}
 
 				region_cnt++;
 			}
 		}
-		idx = (idx + 1) % (sip->nchunks);
+		idx = (idx + 1) % (sip->nchunks - 1);
 	}
-	ctx->last_idx = (idx + 1) % (sip->nchunks);
+	ctx->last_idx = (idx + 1) % (sip->nchunks - 1);
 
 	return SLIST_EMPTY(headp);
 }
