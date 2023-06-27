@@ -2350,8 +2350,10 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 	struct vm_phys_compact_ctx *ctx = (struct vm_phys_compact_ctx *)p_data;
 	struct vm_phys_search_index *sip = &vm_phys_search_index[domain];
 	struct vm_phys_subseg *ssegp;
+	struct vm_compact_region *rp;
+	vm_paddr_t start, end;
 	int idx, region_cnt = 0;
-	int ctx_region_cnt = 0;
+	int ctx_alloc_cnt = 0;
 	int chunks_scanned = 0;
 
 	SLIST_INIT(headp);
@@ -2384,26 +2386,23 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 						SLIST_INSERT_HEAD(headp,
 						    &ssegp->region, entries);
 					}
-					region_cnt++;
 
 				} else {
-					vm_paddr_t start =
-					    vm_phys_search_idx_to_paddr(idx,
-						domain);
-					vm_paddr_t end =
-					    vm_phys_search_idx_to_paddr(idx + 1,
-						domain);
+					start = vm_phys_search_idx_to_paddr(idx,
+					    domain);
+					end = vm_phys_search_idx_to_paddr(idx +
+						1,
+					    domain);
 
-					ctx->region[ctx_region_cnt].start =
-					    start;
-					ctx->region[ctx_region_cnt].end = end;
-					SLIST_INSERT_HEAD(headp,
-					    &ctx->region[ctx_region_cnt],
-					    entries);
-					ctx_region_cnt++;
+					rp = &ctx->region[ctx_alloc_cnt];
+					rp->start = start;
+					rp->end = end;
+					SLIST_INSERT_HEAD(headp, rp, entries);
 
-					region_cnt++;
+					ctx_alloc_cnt++;
 				}
+
+				region_cnt++;
 			}
 		}
 		idx = (idx + 1) % (sip->nchunks);
