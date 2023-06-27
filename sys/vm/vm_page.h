@@ -678,9 +678,6 @@ bool vm_page_remove_xbusy(vm_page_t);
 int vm_page_rename(vm_page_t, vm_object_t, vm_pindex_t);
 void vm_page_replace(vm_page_t mnew, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mold);
-bool vm_page_replace_hold(vm_page_t mnew, vm_object_t object,
-    vm_pindex_t pindex, vm_page_t mold);
-bool vm_page_free_prep(vm_page_t m);
 int vm_page_sbusied(vm_page_t m);
 vm_page_bits_t vm_page_set_dirty(vm_page_t m);
 void vm_page_set_valid_range(vm_page_t m, int base, int size);
@@ -708,6 +705,7 @@ void vm_page_test_dirty(vm_page_t);
 vm_page_bits_t vm_page_bits(int base, int size);
 void vm_page_zero_invalid(vm_page_t m, boolean_t setvalid);
 void vm_page_free_pages_toq(struct spglist *free, bool update_wire_count);
+int vm_page_relocate_page(vm_page_t src, vm_page_t dst, int domain);
 
 void vm_page_dirty_KBI(vm_page_t m);
 void vm_page_lock_KBI(vm_page_t m, const char *file, int line);

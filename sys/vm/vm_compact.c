@@ -112,49 +112,38 @@ vm_compact_free_job(void *ctx)
 int
 vm_compact_run(void *ctx)
 {
-        int nretries = 0;
 	struct vm_compact_ctx *ctxp = (struct vm_compact_ctx *)ctx;
 	struct vm_compact_ctx *ctxp_tmp;
-	size_t run_nrelocated, nrelocated = 0;
+  int retval;
 
 	VM_COMPACT_LOCK();
 	/* Check if the requested compaction overlaps with an existing one. */
 	LIST_FOREACH (ctxp_tmp, &active_compactions[ctxp->domain], entries) {
 		if (vm_compact_job_overlaps(ctxp, ctxp_tmp)) {
 			VM_COMPACT_UNLOCK();
-			return (EINPROGRESS);
+			return (-EINPROGRESS);
 		}
 	}
 
 	LIST_INSERT_HEAD(&active_compactions[ctxp->domain], ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
-	/* Run compaction until the fragmentation metric stops improving. */
-	do {
-          if(ctxp->stop){
-                  break;
-          }
-
-          // ctxp->regions.slh_first = NULL;
+	/* Run compaction job. */
 
 		if(ctxp->search_fn(&ctxp->regions, ctxp->domain, ctxp->p_data)){
-            printf("%s: no eligible chunks have been found\n", __func__);
-            break;
+            retval = 0;
+            goto cleanup;
     }
-		run_nrelocated = ctxp->defrag_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
-    if(run_nrelocated == 0){
-            nretries++;
-    } else {
-      nrelocated += run_nrelocated;
-    }
-    
-	} while (nrelocated == 0 && nretries < 5);
 
+		retval = ctxp->defrag_fn(&ctxp->regions, ctxp->domain, ctxp->p_data);
+
+ cleanup:
 	VM_COMPACT_LOCK();
 	LIST_REMOVE(ctxp, entries);
 	VM_COMPACT_UNLOCK();
 
-	return nrelocated;
+
+	return retval;
 }
 
 static void

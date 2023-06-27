@@ -167,7 +167,7 @@ static bool _vm_page_busy_sleep(vm_object_t obj, vm_page_t m,
     vm_pindex_t pindex, const char *wmesg, int allocflags, bool locked);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(vm_page_t m, uint8_t queue);
-// static bool vm_page_free_prep(vm_page_t m);
+static bool vm_page_free_prep(vm_page_t m);
 static void vm_page_free_toq(vm_page_t m);
 static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
@@ -1772,7 +1772,7 @@ vm_page_prev(vm_page_t m)
  * final ref and the caller does not hold a wire reference it may not
  * continue to access the page.
  */
-bool
+static bool
 vm_page_replace_hold(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex,
     vm_page_t mold)
 {
@@ -5629,6 +5629,88 @@ vm_page_assert_pga_writeable(vm_page_t m, uint16_t bits)
 		VM_OBJECT_ASSERT_BUSY(m->object);
 }
 #endif
+
+/*
+ * Tries to move 'src' into 'dst'. The 'src' page must be busied and its object locked.
+ * Returns 0 on success, 1 if the error was caused by the src page, 2 if caused
+ * by the dst page.
+ */
+int
+vm_page_relocate_page(vm_page_t src, vm_page_t dst, int domain)
+{
+	int error = 0;
+	struct vm_domain *vmd = VM_DOMAIN(domain);
+	vm_object_t obj = src->object;
+
+	vm_page_assert_xbusied(src);
+
+	VM_OBJECT_ASSERT_WLOCKED(obj);
+	KASSERT(vm_page_domain(src) == domain,
+	    ("Source page is from a different domain"));
+	KASSERT(vm_page_domain(dst) == domain,
+	    ("Destination page is from a different domain"));
+
+	vm_domain_free_lock(vmd);
+	/* Check if the dst page is still eligible and remove it from the
+	 * freelist. */
+	if (dst->order != 0 || !vm_page_none_valid(dst)) {
+		error = 2;
+		vm_page_xunbusy(src);
+		vm_domain_free_unlock(vmd);
+		goto unlock;
+	}
+
+
+	vm_page_dequeue(dst);
+	vm_phys_unfree_page(dst);
+	vm_domain_free_unlock(vmd);
+	vm_domain_freecnt_inc(vmd, -1);
+
+	/* Unmap src page */
+	if (obj->ref_count != 0 && !vm_page_try_remove_all(src)) {
+		error = 1;
+
+		vm_page_xunbusy(src);
+		/* Place dst page back on the freelists. */
+		vm_domain_free_lock(vmd);
+		vm_phys_free_pages(dst, 0);
+		vm_domain_free_unlock(vmd);
+		vm_domain_freecnt_inc(vmd, 1);
+		goto unlock;
+	}
+	/* Note - if this is missing the calling process gets stuck at the
+	 * 'vmpfw' channel */
+	if (dst->busy_lock == VPB_FREED) {
+		dst->busy_lock = VPB_UNBUSIED;
+	}
+
+	/* Copy page attributes */
+	dst->a.flags = src->a.flags & ~PGA_QUEUE_STATE_MASK;
+	dst->oflags = 0;
+	pmap_copy_page(src, dst);
+
+	dst->valid = src->valid;
+	dst->dirty = src->dirty;
+	src->flags &= ~PG_ZERO;
+	vm_page_dequeue(src);
+
+	if (vm_page_replace_hold(dst, obj, src->pindex, src) &&
+	    vm_page_free_prep(src)) {
+		/* Return src page to freelist. */
+		vm_domain_free_lock(vmd);
+		vm_phys_free_pages(src, 0);
+		vm_domain_free_unlock(vmd);
+
+		vm_domain_freecnt_inc(vmd, 1);
+	}
+
+	vm_page_deactivate(dst);
+unlock:
+	VM_OBJECT_WUNLOCK(obj);
+
+	return error;
+}
+
 
 #include "opt_ddb.h"
 #ifdef DDB
