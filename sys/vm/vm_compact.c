@@ -59,7 +59,6 @@ struct vm_compact_ctx {
 	int order;
 	int domain;
 	struct vm_compact_region_head regions;
-	bool stop;
 
 	void *p_data;
 
@@ -126,7 +125,6 @@ vm_compact_run(void *ctx)
 	VM_COMPACT_UNLOCK();
 
 	/* Run compaction job. */
-
 	if (ctxp->search_fn(&ctxp->regions, ctxp->domain, ctxp->p_data)) {
 		retval = 0;
 		goto cleanup;
