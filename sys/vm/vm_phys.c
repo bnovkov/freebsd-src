@@ -2197,13 +2197,10 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp,
 
 	/*
 	 * Holes are ordered by paddr - hole registration will
-	 * thus always affect the last subsegment in the list.
+	 * thus always affect the first subsegment in the list.
 	 * Take last subseg and split it.
 	 */
 	ssp = SLIST_FIRST(cp->shp);
-	while (SLIST_NEXT(ssp, link)) {
-		ssp = SLIST_NEXT(ssp, link);
-	}
 
 	if (hole_start == ssp->region.start) {
 		ssp->region.start = hole_end;
@@ -2219,7 +2216,7 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp,
 		KASSERT(nssp->region.end > nssp->region.start,
 		    ("%s: inconsistent subsegment after splitting", __func__));
 
-		SLIST_INSERT_AFTER(ssp, nssp, link);
+		SLIST_INSERT_HEAD(cp->shp, nssp, link);
 	}
 
 	KASSERT(ssp->region.end > ssp->region.start,
