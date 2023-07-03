@@ -532,6 +532,8 @@ int vm_map_unwire(vm_map_t map, vm_offset_t start, vm_offset_t end,
 int vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags);
 int vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end,
     int flags);
+int vm_map_wire_obj_range(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offset_t end, int flags);
+int vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offset_t end, int flags);
 long vmspace_swap_count(struct vmspace *vmspace);
 void vm_map_entry_set_vnode_text(vm_map_entry_t entry, bool add);
 #endif				/* _KERNEL */

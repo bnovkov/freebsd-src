@@ -3408,6 +3408,41 @@ vm_map_wire_entry_failure(vm_map_t map, vm_map_entry_t entry,
 	entry->wired_count = -1;
 }
 
+
+int
+vm_map_wire_obj_range(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offset_t end, int flags)
+{
+  int rv;
+
+  vm_map_lock(map);
+  rv = vm_map_wire_obj_range_locked(map, obj, start, end, flags);
+  vm_map_unlock(map);
+  return (rv);
+}
+
+int
+vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offset_t end, int flags){
+  vm_map_entry_t entry;
+
+  VM_MAP_ASSERT_LOCKED(map);
+
+  if(map->system_map){
+    return (KERN_FAILURE);
+  }
+
+  if (start == end){
+    return (KERN_SUCCESS);
+  }
+
+  VM_MAP_RANGE_CHECK(map, start, end);
+  if (!vm_map_lookup_entry(map, start, &entry)) {
+    return (KERN_INVALID_ADDRESS);
+  }
+
+  return (0);
+}
+
+
 int
 vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 {
