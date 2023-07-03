@@ -768,7 +768,7 @@ vm_phys_init(void)
 
 	struct vm_phys_search_index *sip;
 	/* Initialize memory hole array. */
-	for (int i = 0; i + 1 < vm_phys_nsegs; i++, vm_phys_nholes++) {
+	for (int i = 0; i + 1 <= vm_phys_nsegs; i++, vm_phys_nholes++) {
 		hp = &vm_phys_holes[vm_phys_nholes];
 		hp->start = vm_phys_segs[i].end;
 		hp->end = vm_phys_segs[i + 1].start;
@@ -792,6 +792,17 @@ vm_phys_init(void)
 			hp->end = vm_phys_segs[i + 1].start;
 		}
 	}
+
+  /* Register hole at end of last domain */
+  struct vm_phys_seg *segp = &vm_phys_segs[vm_phys_nsegs];
+  sip = &vm_phys_search_index[segp->domain];
+  if(segp->end < sip->dom_end){
+    hp = &vm_phys_holes[vm_phys_nholes];
+		hp->start = segp->end;
+		hp->end = sip->dom_end;
+		hp->domain = segp->domain;
+    vm_phys_nholes++;
+  }
 
 	rw_init(&vm_phys_fictitious_reg_lock, "vmfctr");
 }
@@ -2206,12 +2217,16 @@ vm_phys_chunk_register_hole(struct vm_phys_search_chunk *cp,
 		ssp->region.start = hole_end;
 	} else if (hole_end == ssp->region.end) {
 		ssp->region.end = hole_start;
+  }  else if (hole_start == ssp->region.end)  {
+    /* Last hole in chunk */
+    return;
 	} else { /* Hole splits the subseg - create and enqueue new subseg */
 		struct vm_phys_subseg *nssp = malloc(sizeof(*nssp), M_TEMP,
 		    M_ZERO | M_WAITOK);
 
 		nssp->region.start = hole_end;
 		nssp->region.end = ssp->region.end;
+    printf("%s: hole_start: %p, hole_end: %p, ssp start: %p, ssp end: %p\n", __func__, (void*)hole_start, (void*)hole_end, (void*)ssp->region.start, (void*)ssp->region.end);
 		ssp->region.end = hole_start;
 		KASSERT(nssp->region.end > nssp->region.start,
 		    ("%s: inconsistent subsegment after splitting", __func__));
@@ -2257,10 +2272,7 @@ vm_phys_compact_init_holes(void)
 			    hp->end == sip->dom_end) {
 				end_chunk = vm_phys_search_get_chunk(sip,
 				    end_idx - 1);
-				/* This is the last search chunk, point it to
-				 * the first one */
-				end_chunk->skipidx = 1;
-			} else {
+	  	} else {
 				end_chunk = vm_phys_search_get_chunk(sip,
 				    end_idx);
 			}
@@ -2338,7 +2350,7 @@ vm_phys_compact_ctx_init(void **p_data)
 
 static
 struct vm_compact_region * vm_phys_compact_ctx_get_region(struct vm_phys_compact_ctx *ctxp, int idx){
-        KASSERT(idx < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS, ("%s: Not enough memory for regions: %d\n", __func__, idx));
+        KASSERT(idx >= 0 && idx < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS, ("%s: Not enough memory for regions: %d\n", __func__, idx));
         return (&ctxp->region[idx]);
 }
 
@@ -2363,10 +2375,10 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 	SLIST_INIT(headp);
 
 	idx = ctx->last_idx;
-	while (chunks_scanned < sip->nchunks &&
+	while (chunks_scanned < (sip->nchunks -1) &&
 	    region_cnt < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS) {
 		for (;
-		     chunks_scanned < sip->nchunks && idx < sip->nchunks - 1 &&
+		     chunks_scanned < (sip->nchunks-1) && idx < sip->nchunks - 1 &&
 		     region_cnt < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS;
 		     chunks_scanned++, idx++) {
 
@@ -2389,6 +2401,7 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 					SLIST_FOREACH (ssegp, scp->shp, link) {
 						SLIST_INSERT_HEAD(headp,
 						    &ssegp->region, entries);
+            KASSERT(ssegp->region.entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
 					}
 
 				} else {
@@ -2399,9 +2412,11 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 					    domain);
 
 					rp = vm_phys_compact_ctx_get_region(ctx, ctx_region_idx);
+          bzero(rp, sizeof(*rp));
 					rp->start = start;
 					rp->end = end;
 					SLIST_INSERT_HEAD(headp, rp, entries);
+          KASSERT(rp->entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
 
 					ctx_region_idx++;
 				}
@@ -2465,6 +2480,8 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
 	int error;
 	while (!SLIST_EMPTY(headp)) {
 		rp = SLIST_FIRST(headp);
+    KASSERT(rp->entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
+
 		SLIST_REMOVE_HEAD(headp, entries);
 
 		vm_page_t free = PHYS_TO_VM_PAGE(rp->start);
@@ -2668,6 +2685,7 @@ sysctl_vm_phys_compact(SYSCTL_HANDLER_ARGS)
 	sbuf_new_for_sysctl(&sbuf, NULL, 32, req);
 
 	for (int i = 0; i < vm_ndomains; i++) {
+    /* BUG: first and second thread share same chan */
 		void *chan = (void *)&compact_threads[i];
 		wakeup_one(chan);
 	}
