@@ -100,6 +100,8 @@ __FBSDID("$FreeBSD$");
 #include <vm/swap_pager.h>
 #include <vm/uma.h>
 
+#include <vm/vm_reserv.h>
+
 /*
  *	Virtual memory maps provide for the mapping, protection,
  *	and sharing of virtual memory objects.  In addition,
@@ -3420,14 +3422,47 @@ vm_map_wire_obj_range(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offse
   return (rv);
 }
 
+static void
+vm_map_wire_obj_range_cleanup(vm_map_t map, vm_object_t obj, vm_pindex_t pindex, vm_offset_t start){
+  vm_page_t m;//, m_super;
+
+  while(pindex >= atop(start)){
+    m = vm_page_lookup(obj, pindex);
+    KASSERT(m != NULL, ("%s: previously mapped page at %lu not found", __func__, pindex));
+
+    //vm_page_tryxbusy(m);
+    //    VM_OBJECT_WLOCK(m->object);
+    /* if((m_super = vm_reserv_to_superpage(m)) != NULL){ */
+    /*   pindex = m_super->pindex; */
+    /*   vm_page_xunbusy(m); */
+    /*   m = m_super; */
+    /*   vm_page_tryxbusy(m_super); */
+
+    /*   pmap_remove(map->pmap, ptoa(pindex), ptoa(pindex) + (1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT))); */
+    /* } else { */
+      pmap_remove(map->pmap, ptoa(pindex), ptoa(pindex) + PAGE_SIZE);
+      //}
+    //VM_OBJECT_WUNLOCK(m->object);
+
+    vm_page_remove(m);
+      pindex--;
+  }
+}
+
 int
 vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offset_t end, int flags){
   vm_map_entry_t entry;
+  vm_pindex_t pindex;
+  vm_offset_t cur;
+  vm_page_t m;
+  //  bool retry = false;
+  //const size_t reserv_size = (1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT));
+  int rv = 0;
 
   VM_MAP_ASSERT_LOCKED(map);
 
   if(map->system_map){
-    return (KERN_FAILURE);
+    return (KERN_INVALID_ARGUMENT);
   }
 
   if (start == end){
@@ -3439,7 +3474,70 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
     return (KERN_INVALID_ADDRESS);
   }
 
-  return (0);
+  if(entry->start != start || entry->end != end){
+    return (KERN_INVALID_ADDRESS);
+  }
+
+  if (entry->wired_count > 0){
+    return (KERN_FAILURE);
+  }
+
+  /*
+   * Mark the entry in case the map lock is released.
+   */
+  KASSERT((entry->eflags & MAP_ENTRY_IN_TRANSITION) == 0 &&
+          entry->wiring_thread == NULL,
+          ("owned map entry %p", entry));
+  entry->eflags |= MAP_ENTRY_IN_TRANSITION;
+  entry->wiring_thread = curthread;
+
+  vm_map_unlock(map);
+
+  VM_OBJECT_WLOCK(obj);
+
+  cur = start;
+  while(cur < end){
+    /* First run - try to map using a superpage */
+    pindex  = atop(cur);
+    // alloc:
+    /* if((cur - end) >= reserv_size && !retry){ */
+    /*   m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED, 1, 0, ~0, reserv_size, 0, VM_MEMATTR_DEFAULT); */
+    /*   if (m == NULL){ */
+    /*     /\* Alloc failed, fall back to 0-order pages *\/ */
+    /*     retry = true; */
+    /*     goto alloc; */
+    /*   } */
+    /*   m->psind = 1; */
+    /*   pmap_enter(map->pmap, cur, m, entry->protection, PMAP_ENTER_WIRED, 1); */
+
+    /*   cur += reserv_size; */
+    /* } else { */
+      m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED);
+      if(m == NULL){
+        /* OOM? */
+        vm_map_wire_obj_range_cleanup(map, obj, pindex, start);
+        rv = KERN_NO_SPACE;
+        break;
+        //}
+      }
+      /* We got a 0-order page */
+      pmap_enter(map->pmap, cur, m, entry->protection, PMAP_ENTER_WIRED, 0);
+      entry->wired_count++;
+      cur += PAGE_SIZE;
+      vm_page_xunbusy(m);
+
+    /* if(retry) */
+    /*   retry = false; */
+  }
+  VM_OBJECT_WUNLOCK(obj);
+
+  vm_map_lock(map);
+
+  entry->eflags &= ~MAP_ENTRY_IN_TRANSITION;
+  entry->wiring_thread = NULL;
+
+
+  return (rv);
 }
 
 
