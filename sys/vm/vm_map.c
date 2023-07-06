@@ -3457,7 +3457,7 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
   vm_page_t m;
   //  bool retry = false;
   //const size_t reserv_size = (1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT));
-  int rv = 0;
+  int rv = KERN_SUCCESS;
 
   VM_MAP_ASSERT_LOCKED(map);
 
@@ -3508,8 +3508,9 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
     /*     goto alloc; */
     /*   } */
     /*   m->psind = 1; */
+    // PMAP_ENTER_LARGEPAGE
     /*   pmap_enter(map->pmap, cur, m, entry->protection, PMAP_ENTER_WIRED, 1); */
-
+    
     /*   cur += reserv_size; */
     /* } else { */
       m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED);
@@ -3522,7 +3523,6 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
       }
       /* We got a 0-order page */
       pmap_enter(map->pmap, cur, m, entry->protection, PMAP_ENTER_WIRED, 0);
-      entry->wired_count++;
       cur += PAGE_SIZE;
       vm_page_xunbusy(m);
 
@@ -3536,6 +3536,17 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
   entry->eflags &= ~MAP_ENTRY_IN_TRANSITION;
   entry->wiring_thread = NULL;
 
+  if (entry->eflags & MAP_ENTRY_NEEDS_WAKEUP) {
+    entry->eflags &= ~MAP_ENTRY_NEEDS_WAKEUP;
+    vm_map_wakeup(map);
+  }
+
+  if(rv ==  KERN_SUCCESS){
+    entry->eflags |= MAP_ENTRY_USER_WIRED;
+    entry->wired_count++;
+    // TODO: handle false
+    vm_map_wire_user_count_add(atop(end - start));
+  }
 
   return (rv);
 }
