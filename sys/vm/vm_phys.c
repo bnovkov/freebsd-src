@@ -2386,7 +2386,7 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 			/* Skip current chunk if it was marked as invalid */
 			if (scp->skipidx) {
 				idx = scp->skipidx - 1;
-				chunks_scanned += (scp->skipidx - 1) - idx;
+				chunks_scanned += scp->skipidx - idx;
 				continue;
 			}
 
@@ -2396,6 +2396,9 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 			    scp->holecnt >= VM_PHYS_HOLECNT_LO &&
 			    scp->holecnt <= VM_PHYS_HOLECNT_HI) {
 				if (scp->shp) {
+          if(SLIST_NEXT(&(SLIST_FIRST(scp->shp)->region), entries)){
+            continue;
+          }
 					/* Enqueue subsegments in chunks with
 					 * holes. */
 					SLIST_FOREACH (ssegp, scp->shp, link) {
