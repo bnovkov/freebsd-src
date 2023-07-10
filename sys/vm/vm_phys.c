@@ -2404,7 +2404,7 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 					SLIST_FOREACH (ssegp, scp->shp, link) {
 						SLIST_INSERT_HEAD(headp,
 						    &ssegp->region, entries);
-            KASSERT(ssegp->region.entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
+//            KASSERT(ssegp->region.entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
 					}
 
 				} else {
@@ -2415,11 +2415,11 @@ vm_phys_compact_search(struct vm_compact_region_head *headp, int domain,
 					    domain);
 
 					rp = vm_phys_compact_ctx_get_region(ctx, ctx_region_idx);
-          bzero(rp, sizeof(*rp));
+//          bzero(rp, sizeof(*rp));
 					rp->start = start;
 					rp->end = end;
 					SLIST_INSERT_HEAD(headp, rp, entries);
-          KASSERT(rp->entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
+//          KASSERT(rp->entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
 
 					ctx_region_idx++;
 				}
@@ -2483,7 +2483,7 @@ vm_phys_defrag(struct vm_compact_region_head *headp, int domain, void *p_data)
 	int error;
 	while (!SLIST_EMPTY(headp)) {
 		rp = SLIST_FIRST(headp);
-    KASSERT(rp->entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
+//    KASSERT(rp->entries.sle_next != (vm_compact_region_t)-1, ("WHAT"));
 
 		SLIST_REMOVE_HEAD(headp, entries);
 
