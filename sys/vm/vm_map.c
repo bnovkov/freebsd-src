@@ -3544,6 +3544,7 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
   if(rv ==  KERN_SUCCESS){
     entry->eflags |= MAP_ENTRY_USER_WIRED;
     entry->wired_count++;
+    entry->offset = start;
     // TODO: handle false
     vm_map_wire_user_count_add(atop(end - start));
   }
