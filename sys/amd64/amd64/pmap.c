@@ -7477,10 +7477,10 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	struct spglist free;
 	pd_entry_t oldpde, *pde;
 	pt_entry_t PG_G, PG_RW, PG_V;
-	vm_page_t mt, pdpg;
+	vm_page_t mt, pdpg, ptpg;
 
-	KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
-	    ("pmap_enter_pde: cannot create wired user mapping"));
+  //	KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
+	//    ("pmap_enter_pde: cannot create wired user mapping"));
 	PG_G = pmap_global_bit(pmap);
 	PG_RW = pmap_rw_bit(pmap);
 	KASSERT((newpde & (pmap_modified_bit(pmap) | PG_RW)) != PG_RW,
@@ -7500,6 +7500,16 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 		    " in pmap %p", va, pmap);
 		return (KERN_RESOURCE_SHORTAGE);
 	}
+
+  if (pmap != kernel_pmap && (newpde & PG_W) != 0 ){
+    ptpg = pmap_alloc_pt_page(pmap, pmap_pde_pindex(va), VM_ALLOC_WIRED | VM_ALLOC_ZERO);
+    if(ptpg == NULL){
+      return (KERN_RESOURCE_SHORTAGE);
+    } else if (pmap_insert_pt_page(pmap, ptpg, true, false)){
+      panic("pmap_enter_pde: trie insert failed");
+    }
+    ptpg->ref_count++;
+  }
 
 	/*
 	 * If pkru is not same for the whole pde range, return failure
