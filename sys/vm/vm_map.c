@@ -3493,16 +3493,15 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
         /* OOM? */
         rv = KERN_NO_SPACE;
         break;
-        }
       }
       /* We got a 0-order page */
-    pmap_enter(map->pmap, cur, m, prot, prot | PMAP_ENTER_WIRED, 0);
+      pmap_enter(map->pmap, cur, m, prot, prot | PMAP_ENTER_WIRED, 0);
       cur += PAGE_SIZE;
       vm_page_xunbusy(m);
 
       if(retry)
         retry = false;
-    
+    }
   }
   VM_OBJECT_WUNLOCK(obj);
 
