@@ -3427,10 +3427,12 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
   vm_map_entry_t entry;
   vm_pindex_t pindex;
   vm_offset_t cur;
-  vm_page_t m;
+  vm_page_t m, mt;
   vm_prot_t prot;
   bool retry = false;
-  const size_t reserv_size = (1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT));
+  const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
+  const size_t reserv_npages = 1 << VM_LEVEL_0_ORDER;
+
   int rv = KERN_SUCCESS;
 
   VM_MAP_ASSERT_LOCKED(map);
@@ -3476,19 +3478,22 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
     pindex  = atop(cur);
     alloc:
     if((cur & (reserv_size - 1)) == 0 && (cur - end) >= reserv_size && !retry){
-      m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED, 1, 0, ~0, reserv_size, 0, VM_MEMATTR_DEFAULT);
+      m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED, reserv_npages, 0, ~0, 0, 0, VM_MEMATTR_DEFAULT);
       if (m == NULL){
         /* Alloc failed, fall back to 0-order pages */
         retry = true;
         goto alloc;
       }
-      m->psind = 1;
-      pmap_enter(map->pmap, cur, m, prot, prot | PMAP_ENTER_WIRED, 1);
-      vm_page_xunbusy(m);
+      pmap_enter(map->pmap, cur, m, prot, prot | PMAP_ENTER_WIRED, m->psind);
+
+      for(mt = m; mt < (m+reserv_npages); mt++){
+        vm_page_valid(mt);
+        vm_page_xunbusy(mt);
+      }
 
       cur += reserv_size;
     } else {
-      m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED);
+    m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED | VM_ALLOC_COUNT(16));
       if(m == NULL){
         /* OOM? */
         rv = KERN_NO_SPACE;
@@ -3497,11 +3502,12 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
       /* We got a 0-order page */
       pmap_enter(map->pmap, cur, m, prot, prot | PMAP_ENTER_WIRED, 0);
       cur += PAGE_SIZE;
+      vm_page_valid(m);
       vm_page_xunbusy(m);
 
       if(retry)
         retry = false;
-    }
+     }
   }
   VM_OBJECT_WUNLOCK(obj);
 

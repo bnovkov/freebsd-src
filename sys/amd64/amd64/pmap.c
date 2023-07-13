@@ -7524,12 +7524,8 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 			return (KERN_RESOURCE_SHORTAGE);
 		}
 		if ((newpde & PG_RW) != 0) {
-      if( m->psind == 0) {
 			for (mt = m; mt < &m[NBPDR / PAGE_SIZE]; mt++)
 				vm_page_aflag_set(mt, PGA_WRITEABLE);
-      } else {
-        vm_page_aflag_set(m, PGA_WRITEABLE);
-      }
 		}
 	}
 

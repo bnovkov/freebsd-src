@@ -928,7 +928,10 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 
 	vm_object_reference(seg->object);
 
+  //error = vm_map_wire(&vm->vmspace->vm_map, gpa, gpa + len,
+  //   VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
   error = vm_map_wire_obj_range(&vm->vmspace->vm_map, seg->object, gpa, gpa + len, 0);
+
 
   if (error != KERN_SUCCESS) {
     vm_map_remove(&vm->vmspace->vm_map, gpa, gpa + len);
@@ -938,8 +941,8 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 
 
   if (flags & VM_MEMMAP_F_WIRED) {
-    //		error = vm_map_wire(&vm->vmspace->vm_map, gpa, gpa + len,
-    //  VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+    //    		error = vm_map_wire(&vm->vmspace->vm_map, gpa, gpa + len,
+    // VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
     error = vm_map_wire_obj_range(&vm->vmspace->vm_map, seg->object, gpa, gpa + len, 0);
 
 		if (error != KERN_SUCCESS) {
