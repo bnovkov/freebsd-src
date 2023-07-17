@@ -3410,77 +3410,30 @@ vm_map_wire_entry_failure(vm_map_t map, vm_map_entry_t entry,
 	entry->wired_count = -1;
 }
 
-
-int
-vm_map_wire_obj_range(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offset_t end, int flags)
-{
-  int rv;
-
-  vm_map_lock(map);
-  rv = vm_map_wire_obj_range_locked(map, obj, start, end, flags);
-  vm_map_unlock(map);
-  return (rv);
-}
-
-int
-vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, vm_offset_t end, int flags){
-  vm_map_entry_t entry;
+static int
+vm_map_wire_fill_entry(vm_map_t map, vm_map_entry_t entry){
   vm_pindex_t pindex;
-  vm_offset_t cur;
-  vm_page_t m, mt;
-  //  vm_prot_t prot;
-  bool retry = false;
-  const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
-  const size_t reserv_npages = 1 << VM_LEVEL_0_ORDER;
-
+  vm_offset_t cur, start, end;
+  vm_page_t m;
+  vm_object_t obj = entry->object.vm_object;
   int rv = KERN_SUCCESS;
 
-  VM_MAP_ASSERT_LOCKED(map);
+#if VM_NRESERVLEVEL > 0
+  const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
+  const size_t reserv_npages = 1 << VM_LEVEL_0_ORDER;
+  bool retry = false;
+  vm_page_t mt;
+#endif
 
-  if(map->system_map){
-    return (KERN_INVALID_ARGUMENT);
-  }
-
-  if (start == end){
-    return (KERN_SUCCESS);
-  }
-
-  VM_MAP_RANGE_CHECK(map, start, end);
-  if (!vm_map_lookup_entry(map, start, &entry)) {
-    return (KERN_INVALID_ADDRESS);
-  }
-
-  if(entry->start != start || entry->end != end){
-    return (KERN_INVALID_ADDRESS);
-  }
-
-  if (entry->wired_count > 0){
-    return (KERN_FAILURE);
-  }
-
-  /*
-   * Mark the entry in case the map lock is released.
-   */
-  KASSERT((entry->eflags & MAP_ENTRY_IN_TRANSITION) == 0 &&
-          entry->wiring_thread == NULL,
-          ("owned map entry %p", entry));
-  entry->eflags |= MAP_ENTRY_IN_TRANSITION;
-  entry->wiring_thread = curthread;
-  entry->wired_count++;
-  if(!vm_map_wire_user_count_add(atop(end - start))) {
-    vm_map_wire_entry_failure(map, entry,
-                              entry->start);
-    rv = KERN_RESOURCE_SHORTAGE;
-    goto done;
-  }
-
-  vm_map_unlock(map);
+  start = entry->start;
+  end = entry->end;
 
   VM_OBJECT_WLOCK(obj);
 
-  /* Populate object with pages. */
+  /* Populate entry's object with pages. */
   cur = start;
   while(cur < end){
+#if VM_NRESERVLEVEL > 0
     /* First run - try to map using a superpage */
     pindex  = atop(cur);
     alloc:
@@ -3492,14 +3445,15 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
         goto alloc;
       }
 
-      for(mt = m; mt < (m+reserv_npages); mt++){
+      for(mt = m; mt < (m + reserv_npages); mt++){
         vm_page_valid(mt);
         vm_page_xunbusy(mt);
       }
 
       cur += reserv_size;
     } else {
-    m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED | VM_ALLOC_COUNT(16));
+#endif
+    m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED);
       if(m == NULL){
         /* OOM? */
         rv = KERN_NO_SPACE;
@@ -3510,9 +3464,11 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
       vm_page_valid(m);
       vm_page_xunbusy(m);
 
+#if VM_NRESERVLEVEL > 0
       if(retry)
         retry = false;
      }
+#endif
   }
   VM_OBJECT_WUNLOCK(obj);
 
@@ -3533,25 +3489,6 @@ vm_map_wire_obj_range_locked(vm_map_t map, vm_object_t obj, vm_offset_t start, v
 
     cur += pagesizes[m->psind];
   }
- done:
-  vm_map_lock(map);
-
-  entry->eflags &= ~MAP_ENTRY_IN_TRANSITION;
-  entry->wiring_thread = NULL;
-
-  if (entry->eflags & MAP_ENTRY_NEEDS_WAKEUP) {
-    entry->eflags &= ~MAP_ENTRY_NEEDS_WAKEUP;
-    vm_map_wakeup(map);
-  }
-
-  if(rv == KERN_SUCCESS){
-    entry->eflags |= MAP_ENTRY_USER_WIRED;
-    entry->offset = start;
-  } else {
-    vm_map_wire_entry_failure(map, entry,
-                              cur);
-  }
-
   return (rv);
 }
 
@@ -3666,17 +3603,21 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 			vm_map_busy(map);
 			vm_map_unlock(map);
 
-			for (faddr = saved_start; faddr < saved_end;
-			    faddr += incr) {
-				/*
-				 * Simulate a fault to get the page and enter
-				 * it into the physical map.
-				 */
-				rv = vm_fault(map, faddr, VM_PROT_NONE,
-				    VM_FAULT_WIRE, NULL);
-				if (rv != KERN_SUCCESS)
-					break;
-			}
+      if(user_wire && !holes_ok && start == entry->start && end == entry->end){
+        vm_map_wire_fill_entry(map, entry);
+      } else {
+        for (faddr = saved_start; faddr < saved_end;
+             faddr += incr) {
+          /*
+           * Simulate a fault to get the page and enter
+           * it into the physical map.
+           */
+          rv = vm_fault(map, faddr, VM_PROT_NONE,
+                        VM_FAULT_WIRE, NULL);
+          if (rv != KERN_SUCCESS)
+            break;
+        }
+      }
 			vm_map_lock(map);
 			vm_map_unbusy(map);
 			if (last_timestamp + 1 != map->timestamp) {
