@@ -7475,9 +7475,9 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
     vm_page_t m, struct rwlock **lockp)
 {
 	struct spglist free;
-	pd_entry_t oldpde, *pde;
+	pd_entry_t oldpde, *pde, *fbpde;
 	pt_entry_t PG_G, PG_RW, PG_V;
-	vm_page_t mt, pdpg, ptpg;
+	vm_page_t mt, pdpg;
 
   //	KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
 	//    ("pmap_enter_pde: cannot create wired user mapping"));
@@ -7501,16 +7501,6 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 		return (KERN_RESOURCE_SHORTAGE);
 	}
 
-  if (pmap != kernel_pmap && (newpde & PG_W) != 0 ){
-    ptpg = pmap_alloc_pt_page(pmap, pmap_pde_pindex(va), VM_ALLOC_WIRED | VM_ALLOC_ZERO);
-    if(ptpg == NULL){
-      return (KERN_RESOURCE_SHORTAGE);
-    } else if (pmap_insert_pt_page(pmap, ptpg, true, false)){
-      panic("pmap_enter_pde: trie insert failed");
-    }
-    ptpg->ref_count++;
-  }
-
 	/*
 	 * If pkru is not same for the whole pde range, return failure
 	 * and let vm_fault() cope.  Check after pde allocation, since
@@ -7524,6 +7514,31 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 		newpde &= ~X86_PG_PKU_MASK;
 		newpde |= pmap_pkru_get(pmap, va);
 	}
+
+  /*
+   * Allocate fallback pdpage for wired entries.
+   */
+  if (pmap != kernel_pmap && (newpde & PG_W) != 0 ){
+          printf("%s: wired mapping!\n", __func__);
+          vm_page_t fbpdpg = pmap_alloc_pt_page(pmap, pmap_pde_pindex(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
+          if(fbpdpg == NULL){
+                  return (KERN_RESOURCE_SHORTAGE);
+          } else if (pmap_insert_pt_page(pmap, fbpdpg, true, false)){
+                  panic("pmap_enter_pde: trie insert failed");
+          }
+
+          /*
+           * Initialize the fallback pdpage.
+           */
+          vm_paddr_t fbpdpgpa = VM_PAGE_TO_PHYS(fbpdpg);
+          pd_entry_t *firstfbpde = (pd_entry_t *)PHYS_TO_DMAP(fbpdpgpa);
+          pd_entry_t newfbpde = newpde & ~(PG_PS | PG_G);
+
+          for (fbpde = firstfbpde; fbpde < firstfbpde + NPDEPG; fbpde++) {
+                  *fbpde = newfbpde;
+                  newfbpde += 1 << (PAGE_SHIFT + NPTEPGSHIFT);
+          }
+  }
 
 	/*
 	 * If there are existing mappings, either abort or remove them.
