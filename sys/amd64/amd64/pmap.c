@@ -6084,6 +6084,9 @@ pmap_demote_pde_locked(pmap_t pmap, pd_entry_t *pde, vm_offset_t va,
 		if (!in_kernel)
 			mpte->ref_count = NPTEPG;
 	}
+  if(oldpde & PG_W){
+          printf("%s: nice\n", __func__);
+  }
 	mptepa = VM_PAGE_TO_PHYS(mpte);
 	firstpte = (pt_entry_t *)PHYS_TO_DMAP(mptepa);
 	newpde = mptepa | PG_M | PG_A | (oldpde & PG_U) | PG_RW | PG_V;
@@ -7479,8 +7482,8 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	pt_entry_t PG_G, PG_RW, PG_V;
 	vm_page_t mt, pdpg;
 
-  //	KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
-	//    ("pmap_enter_pde: cannot create wired user mapping"));
+  //  KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
+  //	    ("pmap_enter_pde: cannot create wired user mapping"));
 	PG_G = pmap_global_bit(pmap);
 	PG_RW = pmap_rw_bit(pmap);
 	KASSERT((newpde & (pmap_modified_bit(pmap) | PG_RW)) != PG_RW,
@@ -7538,6 +7541,8 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
                   *fbpde = newfbpde;
                   newfbpde += 1 << (PAGE_SHIFT + NPTEPGSHIFT);
           }
+          fbpdpg->ref_count=NPDEPG;
+
   }
 
 	/*
