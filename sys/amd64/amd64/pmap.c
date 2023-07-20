@@ -7478,9 +7478,9 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
     vm_page_t m, struct rwlock **lockp)
 {
 	struct spglist free;
-	pd_entry_t oldpde, *pde, *fbpde;
+	pd_entry_t oldpde, *pde;
 	pt_entry_t PG_G, PG_RW, PG_V;
-	vm_page_t mt, pdpg;
+	vm_page_t mt, pdpg, ptpg;
 
   //  KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
   //	    ("pmap_enter_pde: cannot create wired user mapping"));
@@ -7523,25 +7523,21 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
    */
   if (pmap != kernel_pmap && (newpde & PG_W) != 0 ){
           printf("%s: wired mapping!\n", __func__);
-          vm_page_t fbpdpg = pmap_alloc_pt_page(pmap, pmap_pde_pindex(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
-          if(fbpdpg == NULL){
+          ptpg = pmap_alloc_pt_page(pmap, pmap_pde_pindex(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
+          if(ptpg == NULL){
                   return (KERN_RESOURCE_SHORTAGE);
-          } else if (pmap_insert_pt_page(pmap, fbpdpg, true, false)){
+          } else if (pmap_insert_pt_page(pmap, ptpg, true, false)){
                   panic("pmap_enter_pde: trie insert failed");
           }
 
           /*
-           * Initialize the fallback pdpage.
+           * Initialize the fallback ptpage.
            */
-          vm_paddr_t fbpdpgpa = VM_PAGE_TO_PHYS(fbpdpg);
-          pd_entry_t *firstfbpde = (pd_entry_t *)PHYS_TO_DMAP(fbpdpgpa);
-          pd_entry_t newfbpde = newpde & ~(PG_PS | PG_G);
+          vm_paddr_t ptpgpa = VM_PAGE_TO_PHYS(ptpg);
+          pt_entry_t *firstpte = (pt_entry_t *)PHYS_TO_DMAP(ptpgpa);
+          pt_entry_t newfbpte = newpde & ~(PG_PS);
 
-          for (fbpde = firstfbpde; fbpde < firstfbpde + NPDEPG; fbpde++) {
-                  *fbpde = newfbpde;
-                  newfbpde += 1 << (PAGE_SHIFT + NPTEPGSHIFT);
-          }
-          fbpdpg->ref_count=NPDEPG;
+          pmap_fill_ptp(firstpte, newfbpte);
 
   }
 
