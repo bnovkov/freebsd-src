@@ -7523,10 +7523,10 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
    */
   if (pmap != kernel_pmap && (newpde & PG_W) != 0 ){
           printf("%s: wired mapping!\n", __func__);
-          ptpg = pmap_alloc_pt_page(pmap, pmap_pde_pindex(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
+          ptpg = pmap_alloc_pt_page(pmap, pmap_pde_index(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
           if(ptpg == NULL){
                   return (KERN_RESOURCE_SHORTAGE);
-          } else if (pmap_insert_pt_page(pmap, ptpg, true, false)){
+          } else if (pmap_insert_pt_page(pmap, ptpg, true, true)){
                   panic("pmap_enter_pde: trie insert failed");
           }
 
@@ -7543,8 +7543,9 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
             *pte = newfbpte;
             newfbpte += PAGE_SIZE;
           }
+          ptpg->ref_count = NPTEPG;
 
-
+          printf("debug placeholder\n");
   }
 
 	/*
