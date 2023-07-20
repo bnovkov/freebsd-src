@@ -7537,7 +7537,13 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
           pt_entry_t *firstpte = (pt_entry_t *)PHYS_TO_DMAP(ptpgpa);
           pt_entry_t newfbpte = newpde & ~(PG_PS);
 
-          pmap_fill_ptp(firstpte, newfbpte);
+          pt_entry_t *pte;
+
+          for (pte = firstpte; pte < firstpte + NPTEPG; pte++) {
+            *pte = newfbpte;
+            newfbpte += PAGE_SIZE;
+          }
+
 
   }
 
