@@ -6084,7 +6084,7 @@ pmap_demote_pde_locked(pmap_t pmap, pd_entry_t *pde, vm_offset_t va,
 		if (!in_kernel)
 			mpte->ref_count = NPTEPG;
 	}
-  mptepa = VM_PAGE_TO_PHYS(mpte);
+	mptepa = VM_PAGE_TO_PHYS(mpte);
 	firstpte = (pt_entry_t *)PHYS_TO_DMAP(mptepa);
 	newpde = mptepa | PG_M | PG_A | (oldpde & PG_U) | PG_RW | PG_V;
 	KASSERT((oldpde & (PG_M | PG_RW)) != PG_RW,
@@ -7514,7 +7514,7 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	}
 
   /*
-   * Allocate leaf ptpage for wired entries.
+   * Allocate leaf ptpage for wired userspace pages.
    */
   if (pmap != kernel_pmap && (newpde & PG_W) != 0 ){
           uwptpg = pmap_alloc_pt_page(pmap, pmap_pde_index(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
