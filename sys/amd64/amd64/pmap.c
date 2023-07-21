@@ -6084,10 +6084,7 @@ pmap_demote_pde_locked(pmap_t pmap, pd_entry_t *pde, vm_offset_t va,
 		if (!in_kernel)
 			mpte->ref_count = NPTEPG;
 	}
-  if(oldpde & PG_W){
-          printf("%s: nice\n", __func__);
-  }
-	mptepa = VM_PAGE_TO_PHYS(mpte);
+  mptepa = VM_PAGE_TO_PHYS(mpte);
 	firstpte = (pt_entry_t *)PHYS_TO_DMAP(mptepa);
 	newpde = mptepa | PG_M | PG_A | (oldpde & PG_U) | PG_RW | PG_V;
 	KASSERT((oldpde & (PG_M | PG_RW)) != PG_RW,
@@ -7480,10 +7477,8 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	struct spglist free;
 	pd_entry_t oldpde, *pde;
 	pt_entry_t PG_G, PG_RW, PG_V;
-	vm_page_t mt, pdpg, ptpg;
+	vm_page_t mt, pdpg, uwptpg;
 
-  //  KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
-  //	    ("pmap_enter_pde: cannot create wired user mapping"));
 	PG_G = pmap_global_bit(pmap);
 	PG_RW = pmap_rw_bit(pmap);
 	KASSERT((newpde & (pmap_modified_bit(pmap) | PG_RW)) != PG_RW,
@@ -7519,33 +7514,20 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	}
 
   /*
-   * Allocate fallback pdpage for wired entries.
+   * Allocate leaf ptpage for wired entries.
    */
   if (pmap != kernel_pmap && (newpde & PG_W) != 0 ){
-          printf("%s: wired mapping!\n", __func__);
-          ptpg = pmap_alloc_pt_page(pmap, pmap_pde_index(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
-          if(ptpg == NULL){
+          uwptpg = pmap_alloc_pt_page(pmap, pmap_pde_index(va), VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
+          if(uwptpg == NULL){
                   return (KERN_RESOURCE_SHORTAGE);
-          } else if (pmap_insert_pt_page(pmap, ptpg, true, true)){
+          } else if (pmap_insert_pt_page(pmap, uwptpg, true, true)){
                   panic("pmap_enter_pde: trie insert failed");
           }
 
-          /*
-           * Initialize the fallback ptpage.
-           */
-          vm_paddr_t ptpgpa = VM_PAGE_TO_PHYS(ptpg);
-          pt_entry_t *firstpte = (pt_entry_t *)PHYS_TO_DMAP(ptpgpa);
-          pt_entry_t newfbpte = newpde & ~(PG_PS);
+          vm_paddr_t uwptpgpa = VM_PAGE_TO_PHYS(uwptpg);
 
-          pt_entry_t *pte;
-
-          for (pte = firstpte; pte < firstpte + NPTEPG; pte++) {
-            *pte = newfbpte;
-            newfbpte += PAGE_SIZE;
-          }
-          ptpg->ref_count = NPTEPG;
-
-          printf("debug placeholder\n");
+          pmap_fill_ptp((pt_entry_t *)PHYS_TO_DMAP(uwptpgpa),  newpde & ~(PG_PS));
+          uwptpg->ref_count = NPTEPG;
   }
 
 	/*
