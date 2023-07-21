@@ -7477,10 +7477,8 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	struct spglist free;
 	pd_entry_t oldpde, *pde;
 	pt_entry_t PG_G, PG_RW, PG_V;
-	vm_page_t mt, pdpg;
+	vm_page_t mt, pdpg, uwptpg;
 
-	KASSERT(pmap == kernel_pmap || (newpde & PG_W) == 0,
-	    ("pmap_enter_pde: cannot create wired user mapping"));
 	PG_G = pmap_global_bit(pmap);
 	PG_RW = pmap_rw_bit(pmap);
 	KASSERT((newpde & (pmap_modified_bit(pmap) | PG_RW)) != PG_RW,
@@ -7513,6 +7511,25 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	if (va < VM_MAXUSER_ADDRESS && pmap->pm_type == PT_X86) {
 		newpde &= ~X86_PG_PKU_MASK;
 		newpde |= pmap_pkru_get(pmap, va);
+	}
+
+	/*
+	 * Allocate leaf ptpage for wired userspace pages.
+	 */
+	if (pmap != kernel_pmap && (newpde & PG_W) != 0) {
+		uwptpg = pmap_alloc_pt_page(pmap, pmap_pde_index(va),
+		    VM_ALLOC_WIRED | VM_ALLOC_INTERRUPT);
+		if (uwptpg == NULL) {
+			return (KERN_RESOURCE_SHORTAGE);
+		} else if (pmap_insert_pt_page(pmap, uwptpg, true, true)) {
+			panic("pmap_enter_pde: trie insert failed");
+		}
+
+		vm_paddr_t uwptpgpa = VM_PAGE_TO_PHYS(uwptpg);
+
+		pmap_fill_ptp((pt_entry_t *)PHYS_TO_DMAP(uwptpgpa),
+		    newpde & ~(PG_PS));
+		uwptpg->ref_count = NPTEPG;
 	}
 
 	/*
