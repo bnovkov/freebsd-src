@@ -7478,6 +7478,7 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	pd_entry_t oldpde, *pde;
 	pt_entry_t PG_G, PG_RW, PG_V;
 	vm_page_t mt, pdpg;
+	vm_page_t uwptpg = NULL;
 
 	PG_G = pmap_global_bit(pmap);
 	PG_RW = pmap_rw_bit(pmap);
@@ -7579,20 +7580,16 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	 * Allocate leaf ptpage for wired userspace pages.
 	 */
 	if (pmap != kernel_pmap && (newpde & PG_W) != 0) {
-		vm_page_t uwptpg;
-		vm_paddr_t uwptpgpa;
-
 		uwptpg = pmap_alloc_pt_page(pmap, pmap_pde_index(va),
 		    VM_ALLOC_WIRED);
 		if (uwptpg == NULL) {
 			return (KERN_RESOURCE_SHORTAGE);
-		} else if (pmap_insert_pt_page(pmap, uwptpg, true, true)) {
-			panic("pmap_enter_pde: trie insert failed");
 		}
 
-		uwptpgpa = VM_PAGE_TO_PHYS(uwptpg);
-		pmap_fill_ptp((pt_entry_t *)PHYS_TO_DMAP(uwptpgpa),
-		    newpde & ~(PG_PS));
+		if (pmap_insert_pt_page(pmap, uwptpg, true, false)) {
+			pmap_free_pt_page(pmap, uwptpg, true);
+			return (KERN_RESOURCE_SHORTAGE);
+		}
 
 		uwptpg->ref_count = NPTEPG;
 	}
@@ -7604,6 +7601,10 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 		if (!pmap_pv_insert_pde(pmap, va, newpde, flags, lockp)) {
 			if (pdpg != NULL)
 				pmap_abort_ptp(pmap, va, pdpg);
+
+			if (uwptpg != NULL)
+				pmap_free_pt_page(pmap, uwptpg, true);
+
 			CTR2(KTR_PMAP, "pmap_enter_pde: failure for va %#lx"
 			    " in pmap %p", va, pmap);
 			return (KERN_RESOURCE_SHORTAGE);
