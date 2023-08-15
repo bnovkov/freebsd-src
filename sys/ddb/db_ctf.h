@@ -37,15 +37,11 @@
 
 #define DB_CTF_OBJTOFF_INVALID 0xffffffff
 
-int db_ctf_register(linker_file_t module);
-int db_ctf_unregister(linker_file_t module);
-
 struct db_ctf_sym_data {
 	linker_ctf_t lc;
 	Elf_Sym *sym;
 };
 
-struct db_ctf_sym_data;
 typedef struct db_ctf_sym_data *db_ctf_sym_data_t;
 
 struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);

@@ -32,6 +32,8 @@
 #include <sys/ctype.h>
 #include <sys/linker.h>
 
+#include <machine/stdarg.h>
+
 #include <ddb/ddb.h>
 #include <ddb/db_access.h>
 #include <ddb/db_ctf.h>
@@ -89,11 +91,11 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	}
 
 	if (depth > max_depth) {
-		db_printf("{ ... }, ");
+		db_pprintf(depth, "{ ... },\n");
 		return;
 	}
 
-	db_printf("{\n");
+	db_pprintf(depth-1, "{\n");
 
 	if (struct_size < CTF_V3_LSTRUCT_THRESH) {
 		struct ctf_member_v3 *mp, *endp;
@@ -113,11 +115,11 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctm_name);
 			if (mname) {
-				db_printf("%s = ", mname);
+				db_pprintf(depth, "%s = ", mname);
 			}
 
 			db_pprint_type(maddr, mtype, depth + 1);
-			db_printf(", ");
+			db_printf(",\n");
 		}
 	} else {
 		struct ctf_lmember_v3 *mp, *endp;
@@ -136,11 +138,11 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctlm_name);
 			if (mname) {
-				db_printf("%s = ", mname);
+				db_pprintf(depth, "%s = ", mname);
 			}
 
 			db_pprint_type(maddr, mtype, depth + 1);
-			db_printf(", ");
+			db_printf(",");
 		}
 	}
 
@@ -166,7 +168,7 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	db_addr_t elem_addr = addr;
 	db_addr_t end = addr + (arr->cta_nelems * elem_size);
 
-	db_printf("[");
+	db_pprintf(depth, "[");
 	for (; elem_addr < end; elem_addr += elem_size) {
 		if (db_pager_quit) {
 			return;
@@ -175,10 +177,10 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 		db_pprint_type(elem_addr, elem_type, depth);
 
 		if ((elem_addr + elem_size) < end) {
-			db_printf(", ");
+			db_printf(",\n");
 		}
 	}
-	db_printf("]\n");
+	db_pprintf(depth, "]\n");
 }
 
 static inline void
@@ -303,49 +305,62 @@ db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	}
 }
 
-static int
-db_pprint_symbol(void)
+static void
+db_pprint_symbol(const char *name)
 {
-	db_addr_t addr = sym_data.sym->st_value;
+	db_addr_t addr;
 	struct ctf_type_v3 *type = NULL;
-	db_expr_t _val;
-
-	const char *sym_name = NULL;
 	const char *type_name = NULL;
 
 	if (db_pager_quit) {
-		return -1;
+		return;
 	}
 
+  if (db_ctf_find_symbol(name, &sym_data)) {
+    db_error("Symbol not found\n");
+  }
+
+  if (ELF_ST_TYPE(sym_data.sym->st_info) != STT_OBJECT) {
+    db_error("Symbol is not a variable\n");
+  }
+
+  addr = sym_data.sym->st_value;
 	type = db_ctf_sym_to_type(&sym_data);
 	if (!type) {
-		db_printf("Cant find CTF type info\n");
-		return -1;
+		db_error("Can't find CTF type info\n");
 	}
 
-	db_symbol_values((c_db_sym_t)sym_data.sym, &sym_name, &_val);
 	type_name = db_ctf_stroff_to_str(&sym_data, type->ctt_name);
 
 	if (type_name) {
 		db_printf("%s ", type_name);
 	}
-	if (sym_name) {
-		db_printf("%s = ", sym_name);
+  db_printf("%s = ", sym_name);
+
+	db_pprint_type(addr, type, 0);
+}
+
+static void
+db_pprint_struct(db_expr_t addr, const char* type_name){
+  struct ctf_type_v3 *type = NULL;
+
+  type = db_ctf_sym_to_type(&sym_data);
+	if (!type) {
+		db_error("Can't find CTF type info\n");
 	}
 
 	db_pprint_type(addr, type, 0);
-
-	return 0;
 }
 
 /*
  * Pretty print an address.
- * Syntax: pprint [/d depth] addr
+ * Syntax: pprint [struct <name> <addr> | <sym_name>]
  */
 void
 db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 {
 	int t = 0;
+  const char* name;
 
 	/* Set default depth */
 	max_depth = DB_PPRINT_DEFAULT_DEPTH;
@@ -370,22 +385,30 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 		/* Fetch next token */
 		t = db_read_token();
 	}
-
-	if (t != tNUMBER) {
-		db_error("No address supplied\n");
-	}
-
 	bzero(&sym_data, sizeof(sym_data));
-	addr = db_tok_number;
-	if (db_ctf_find_symbol(addr, &sym_data)) {
-		db_error("Symbol not found\n");
-	}
 
-	if (ELF_ST_TYPE(sym_data.sym->st_info) != STT_OBJECT) {
-		db_error("Symbol is not a variable\n");
-	}
+  /* Parse subcomannd */
+  if(t == tIDENT){
+    if(!strcmp(db_tok_string, "struct")){
+      t = db_read_token();
 
-	if (db_pprint_symbol()) {
-		db_error("");
-	}
+      if (t != tIDENT) {
+        db_error("Invalid struct type name provided\n");
+      }
+      name = db_tok_string;
+
+      if(!db_expression(&addr)){
+        db_error("Address not provided\n");
+      }
+
+      if (db_pprint_symbol(name)) {
+        db_error("");
+      }
+    } else {
+      name = db_tok_string;
+      db_pprint_symbol(name);
+    }
+  } else {
+    db_error("Invalid subcommand\n");
+  }
 }

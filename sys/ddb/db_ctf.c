@@ -93,6 +93,100 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 	return objtoff;
 }
 
+static u_int
+db_ctf_type_size(struct ctf_type_v3 *t){
+  u_int vlen, kind, ssize, type_struct_size, kind_size;
+
+  vlen = CTF_V3_INFO_VLEN(t->ctt_info);
+  kind = CTF_V3_INFO_KIND(t->ctt_info);
+  ssize = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? CTF_TYPE_LSIZE(t) :
+          t->ctt_size);
+  type_struct_size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ?
+                      sizeof(struct ctf_type_v3) :
+                      sizeof(struct ctf_stype_v3));
+
+  switch (kind) {
+  case CTF_K_INTEGER:
+  case CTF_K_FLOAT:
+    kind_size = sizeof(uint32_t);
+    break;
+  case CTF_K_ARRAY:
+     sizeof(struct ctf_array_v3);
+    break;
+  case CTF_K_UNION:
+  case CTF_K_STRUCT:
+    kind_size = vlen *
+      ((ssize < CTF_V3_LSTRUCT_THRESH) ?
+       sizeof(struct ctf_member_v3) :
+       sizeof(struct ctf_lmember_v3));
+    break;
+  case CTF_K_ENUM:
+    kind_size = vlen * sizeof(struct ctf_enum);
+    break;
+  case CTF_K_FUNCTION:
+    kind_size = vlen * sizeof(uint32_t);
+    break;
+  case CTF_K_UNKNOWN:
+  case CTF_K_FORWARD:
+  case CTF_K_POINTER:
+  case CTF_K_TYPEDEF:
+  case CTF_K_VOLATILE:
+  case CTF_K_CONST:
+  case CTF_K_RESTRICT:
+    kind_size = 0;
+    break;
+  default:
+    db_printf("Error: invalid CTF type kind encountered\n");
+    return -1;
+  }
+
+  return type_struct_size + kind_size;
+}
+
+static uint32_t
+db_ctf_name_to_typeoff(const ctf_header_t *hp, const char *name){
+	const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
+	char *start, *cur, *end;
+	uint32_t stroff = hp->cth_stroff;
+	uint32_t typeoff = hp->cth_typeoff;
+  uint32_t name_stroff;
+  u_int skiplen;
+
+  /* Scan ctf strtab for typename. */
+  start = cur = (char *)hp + sizeof(ctf_header_t) + php->cth_stroff;
+  end = cur + hp->cth_strlen;
+  while(cur < end){
+    if(!strcmp(cur, name))
+      break;
+    cur += strlen(cur) + 1;
+  }
+  if(cur >= end)
+    return -1;
+
+  name_stroff = (uint32_t)(cur - start);
+  /* Scan for type containing the found stroff. */
+	while (typeoff < stroff) {
+		struct ctf_type_v3 *t =
+      (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
+                             typeoff);
+
+		/* We found the type struct */
+		if (t->ctt_name == name_stroff) {
+			break;
+		}
+	  if((skiplen = db_ctf_type_size(t)) == -1){
+      return (NULL);
+    }
+    typeoff += skiplen;
+	}
+  if (typeoff < stroff) {
+		return (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
+                                  typeoff);
+	} else { /* A type struct was not found */
+		return (NULL);
+	}
+}
+
 struct ctf_type_v3 *
 db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 {
@@ -103,65 +197,23 @@ db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 	uint32_t stroff = hp->cth_stroff;
 	/* CTF typeids start at 0x1 */
 	size_t cur_typeid = 1;
+  u_int skiplen;
 
 	/* Find corresponding type */
 	while (typeoff < stroff) {
-		u_int vlen, kind, size;
-		size_t skiplen, type_struct_size;
 		struct ctf_type_v3 *t =
 		    (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
 			typeoff);
-
-		vlen = CTF_V3_INFO_VLEN(t->ctt_info);
-		kind = CTF_V3_INFO_KIND(t->ctt_info);
-		size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ? CTF_TYPE_LSIZE(t) :
-							     t->ctt_size);
-		type_struct_size = ((t->ctt_size == CTF_V3_LSIZE_SENT) ?
-			sizeof(struct ctf_type_v3) :
-			sizeof(struct ctf_stype_v3));
-
-		switch (kind) {
-		case CTF_K_INTEGER:
-		case CTF_K_FLOAT:
-			skiplen = sizeof(uint32_t);
-			break;
-		case CTF_K_ARRAY:
-			skiplen = sizeof(struct ctf_array_v3);
-			break;
-		case CTF_K_UNION:
-		case CTF_K_STRUCT:
-			skiplen = vlen *
-			    ((size < CTF_V3_LSTRUCT_THRESH) ?
-				    sizeof(struct ctf_member_v3) :
-				    sizeof(struct ctf_lmember_v3));
-			break;
-		case CTF_K_ENUM:
-			skiplen = vlen * sizeof(struct ctf_enum);
-			break;
-		case CTF_K_FUNCTION:
-			skiplen = vlen * sizeof(uint32_t);
-			break;
-		case CTF_K_UNKNOWN:
-		case CTF_K_FORWARD:
-		case CTF_K_POINTER:
-		case CTF_K_TYPEDEF:
-		case CTF_K_VOLATILE:
-		case CTF_K_CONST:
-		case CTF_K_RESTRICT:
-			skiplen = 0;
-			break;
-		default:
-			db_printf("Error: invalid CTF type kind encountered\n");
-			return (NULL);
-		}
 
 		/* We found the type struct */
 		if (cur_typeid == typeid) {
 			break;
 		}
-
 		cur_typeid++;
-		typeoff += type_struct_size + skiplen;
+	  if((skiplen = db_ctf_type_size(t)) == -1){
+      return (NULL);
+    }
+    typeoff += skiplen;
 	}
 
 	if (typeoff < stroff) {
@@ -217,13 +269,12 @@ db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 }
 
 int
-db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd)
+db_ctf_find_symbol(char *name, db_ctf_sym_data_t sd)
 {
-	db_expr_t off;
 	int error;
 
 	sd->sym = __DECONST(Elf_Sym *,
-	    db_search_symbol(addr, DB_STGY_ANY, &off));
+	    db_lookup(name));
 	if (sd->sym == NULL) {
 		return (ENOENT);
 	}
