@@ -7592,7 +7592,6 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 
 		uwptpg->ref_count = NPTEPG;
 	}
-
 	if ((newpde & PG_MANAGED) != 0) {
 		/*
 		 * Abort this mapping if its PV entry could not be created.
@@ -7600,16 +7599,14 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 		if (!pmap_pv_insert_pde(pmap, va, newpde, flags, lockp)) {
 			if (pdpg != NULL)
 				pmap_abort_ptp(pmap, va, pdpg);
-
 			if (uwptpg != NULL) {
-                                mt = pmap_remove_pt_page(pmap, va);
-                                KASSERT(mt == uwptpg,
-                                    ("removed pt page %p, expected %p",
-                                    mt, uwptpg));
-                                uwptpg->ref_count = 1;
-                                pmap_free_pt_page(pmap, uwptpg, false);
+				mt = pmap_remove_pt_page(pmap, va);
+				KASSERT(mt == uwptpg,
+				    ("removed pt page %p, expected %p", mt,
+					uwptpg));
+				uwptpg->ref_count = 1;
+				pmap_free_pt_page(pmap, uwptpg, false);
 			}
-
 			CTR2(KTR_PMAP, "pmap_enter_pde: failure for va %#lx"
 			    " in pmap %p", va, pmap);
 			return (KERN_RESOURCE_SHORTAGE);
