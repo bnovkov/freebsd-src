@@ -71,6 +71,10 @@ __FBSDID("$FreeBSD$");
 
 #include "linker_if.h"
 
+#ifdef DDB_CTF
+#include <ddb/db_ctf.h>
+#endif
+
 #define MAXSEGS 4
 
 typedef struct elf_file {
@@ -499,6 +503,7 @@ link_elf_init(void* arg)
 
 	(void)link_elf_link_common_finish(linker_kernel_file);
 	linker_kernel_file->flags |= LINKER_FILE_LINKED;
+
 	TAILQ_INIT(&set_pcpu_list);
 #ifdef VIMAGE
 	TAILQ_INIT(&set_vnet_list);
