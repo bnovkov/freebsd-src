@@ -7579,15 +7579,14 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 	/*
 	 * Allocate leaf ptpage for wired userspace pages.
 	 */
-	if (pmap != kernel_pmap && (newpde & PG_W) != 0) {
+	if ((newpde & PG_W) != 0 && pmap != kernel_pmap) {
 		uwptpg = pmap_alloc_pt_page(pmap, pmap_pde_index(va),
 		    VM_ALLOC_WIRED);
 		if (uwptpg == NULL) {
 			return (KERN_RESOURCE_SHORTAGE);
 		}
-
 		if (pmap_insert_pt_page(pmap, uwptpg, true, false)) {
-			pmap_free_pt_page(pmap, uwptpg, true);
+			pmap_free_pt_page(pmap, uwptpg, false);
 			return (KERN_RESOURCE_SHORTAGE);
 		}
 
@@ -7602,8 +7601,14 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 			if (pdpg != NULL)
 				pmap_abort_ptp(pmap, va, pdpg);
 
-			if (uwptpg != NULL)
-				pmap_free_pt_page(pmap, uwptpg, true);
+			if (uwptpg != NULL) {
+                                mt = pmap_remove_pt_page(pmap, va);
+                                KASSERT(mt == uwptpg,
+                                    ("removed pt page %p, expected %p",
+                                    mt, uwptpg));
+                                uwptpg->ref_count = 1;
+                                pmap_free_pt_page(pmap, uwptpg, false);
+			}
 
 			CTR2(KTR_PMAP, "pmap_enter_pde: failure for va %#lx"
 			    " in pmap %p", va, pmap);
