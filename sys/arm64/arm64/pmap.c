@@ -4780,6 +4780,7 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2, u_int flags,
 	struct spglist free;
 	pd_entry_t *l2, old_l2;
 	vm_page_t l2pg, mt;
+  vm_page_t uwptpg = NULL;
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
 	KASSERT(ADDR_IS_CANONICAL(va),
@@ -4847,6 +4848,23 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2, u_int flags,
 		}
 	}
 
+  /*
+	 * Allocate leaf ptpage for wired userspace pages.
+	 */
+	if ((new_l2 & ATTR_SW_WIRED) != 0 && pmap != kernel_pmap) {
+          uwptpg = vm_page_alloc_noobj(VM_ALLOC_WIRED);
+          if (uwptpg == NULL) {
+                  return (KERN_RESOURCE_SHORTAGE);
+          }
+          uwptpg->pindex = pmap_l2_pindex(va);
+          if (pmap_insert_pt_page(pmap, uwptpg, true, false)) {
+                  vm_page_unwire_noq(uwptpg);
+                  vm_page_free(uwptpg);
+                  return (KERN_RESOURCE_SHORTAGE);
+          }
+          pmap_resident_count_inc(pmap, 1);
+          uwptpg->ref_count = NL3PG;
+	}
 	if ((new_l2 & ATTR_SW_MANAGED) != 0) {
 		/*
 		 * Abort this mapping if its PV entry could not be created.
@@ -4854,6 +4872,16 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2, u_int flags,
 		if (!pmap_pv_insert_l2(pmap, va, new_l2, flags, lockp)) {
 			if (l2pg != NULL)
 				pmap_abort_ptp(pmap, va, l2pg);
+      if (uwptpg != NULL) {
+              mt = pmap_remove_pt_page(pmap, va);
+              KASSERT(mt == uwptpg,
+                      ("removed pt page %p, expected %p", mt,
+                       uwptpg));
+              pmap_resident_count_dec(pmap, 1);
+              uwptpg->ref_count = 1;
+              vm_page_unwire_noq(uwptpg);
+              vm_page_free(uwptpg);
+			}
 			CTR2(KTR_PMAP,
 			    "pmap_enter_l2: failure for va %#lx in pmap %p",
 			    va, pmap);
