@@ -91,11 +91,13 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	}
 
 	if (depth > max_depth) {
-		db_pprintf(depth, "{ ... },\n");
+    db_indent = depth;
+		db_iprintf("{ ... },\n");
 		return;
 	}
 
-	db_pprintf(depth-1, "{\n");
+  db_indent = depth - 1;
+	db_iprintf("{\n");
 
 	if (struct_size < CTF_V3_LSTRUCT_THRESH) {
 		struct ctf_member_v3 *mp, *endp;
@@ -115,7 +117,8 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctm_name);
 			if (mname) {
-				db_pprintf(depth, "%s = ", mname);
+        db_indent = depth;
+				db_iprintf("%s = ", mname);
 			}
 
 			db_pprint_type(maddr, mtype, depth + 1);
@@ -138,7 +141,8 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctlm_name);
 			if (mname) {
-				db_pprintf(depth, "%s = ", mname);
+        db_indent = depth;
+				db_iprintf("%s = ", mname);
 			}
 
 			db_pprint_type(maddr, mtype, depth + 1);
@@ -168,7 +172,8 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	db_addr_t elem_addr = addr;
 	db_addr_t end = addr + (arr->cta_nelems * elem_size);
 
-	db_pprintf(depth, "[");
+  db_indent = depth;
+	db_iprintf("[");
 	for (; elem_addr < end; elem_addr += elem_size) {
 		if (db_pager_quit) {
 			return;
@@ -180,7 +185,8 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 			db_printf(",\n");
 		}
 	}
-	db_pprintf(depth, "]\n");
+  db_indent = depth;
+	db_iprintf("]\n");
 }
 
 static inline void
@@ -309,6 +315,7 @@ static void
 db_pprint_symbol_cmd(const char *name)
 {
 	db_addr_t addr;
+  int db_indent_old;
 	struct ctf_type_v3 *type = NULL;
 	const char *type_name = NULL;
 
@@ -335,11 +342,14 @@ db_pprint_symbol_cmd(const char *name)
 		db_printf("%s ", type_name);
   db_printf("%s = ", name);
 
+  db_indent_old = db_indent;
 	db_pprint_type(addr, type, 0);
+  db_indent = db_indent_old;
 }
 
 static void
 db_pprint_struct_cmd(db_expr_t addr, const char* type_name){
+  int db_indent_old;
   struct ctf_type_v3 *type = NULL;
 
   type = db_ctf_typename_to_type(&sym_data, type_name);
@@ -350,7 +360,9 @@ db_pprint_struct_cmd(db_expr_t addr, const char* type_name){
   db_printf("%s ", type_name);
   db_printf("%p = ", (void *)addr);
 
+  db_indent_old = db_indent;
 	db_pprint_type(addr, type, 0);
+  db_indent = db_indent_old;
 }
 
 /*

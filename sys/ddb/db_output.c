@@ -383,41 +383,6 @@ db_iprintf(const char *fmt,...)
 #endif
 }
 
-void
-db_pprintf(int depth, const char *fmt, ...){
-#ifdef DDB_BUFR_SIZE
-	char bufr[DDB_BUFR_SIZE];
-#endif
-	struct dbputchar_arg dca;
-	int i;
-	va_list listp;
-
-  for (i = depth; i >= 8; i -= 8)
-		db_printf("\t");
-	while (--i >= 0)
-		db_printf(" ");
-
-#ifdef DDB_BUFR_SIZE
-	dca.da_pbufr = bufr;
-	dca.da_pnext = dca.da_pbufr;
-	dca.da_nbufr = sizeof(bufr);
-	dca.da_remain = sizeof(bufr);
-	*dca.da_pnext = '\0';
-#else
-	dca.da_pbufr = NULL;
-#endif
-
-	va_start(listp, fmt);
-	kvprintf (fmt, db_putchar, &dca, db_radix, listp);
-	va_end(listp);
-
-#ifdef DDB_BUFR_SIZE
-	if (*dca.da_pbufr != '\0')
-		db_puts(dca.da_pbufr);
-#endif
-}
-
-
 /*
  * End line if too long.
  */

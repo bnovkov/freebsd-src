@@ -240,7 +240,6 @@ int		db_expression(db_expr_t *valuep);
 int		db_getc(void);
 int		db_get_variable(db_expr_t *valuep);
 void		db_iprintf(const char *,...) __printflike(1, 2);
-void		db_pprintf(int depth, const char *,...) __printflike(2, 3);
 struct proc	*db_lookup_proc(db_expr_t addr);
 struct thread	*db_lookup_thread(db_expr_t addr, bool check_pid);
 struct vm_map	*db_map_addr(vm_offset_t);
