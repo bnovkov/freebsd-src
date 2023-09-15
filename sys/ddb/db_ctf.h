@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (c) 2022  <bnovkov@freebsd.org>
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,7 +35,7 @@
 #include <ddb/ddb.h>
 #include <ddb/db_sym.h>
 
-#define DB_CTF_OBJTOFF_INVALID 0xffffffff
+#define DB_CTF_INVALID_OFF 0xffffffff
 
 struct db_ctf_sym_data {
 	linker_ctf_t lc;
@@ -44,10 +44,14 @@ struct db_ctf_sym_data {
 
 typedef struct db_ctf_sym_data *db_ctf_sym_data_t;
 
+int
+db_ctf_fill_sym_data(db_ctf_sym_data_t, db_expr_t addr);
 struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);
-struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd,
-    uint32_t typeid);
 const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
-int db_ctf_find_symbol(db_expr_t addr, db_ctf_sym_data_t sd);
+int db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd);
+struct ctf_type_v3 *
+db_ctf_typename_to_type(db_ctf_sym_data_t sd, const char *name);
+struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd,
+                                          uint32_t typeid);
 
 #endif /* !_DDB_DB_CTF_H_ */

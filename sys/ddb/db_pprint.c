@@ -306,7 +306,7 @@ db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 }
 
 static void
-db_pprint_symbol(const char *name)
+db_pprint_symbol_cmd(const char *name)
 {
 	db_addr_t addr;
 	struct ctf_type_v3 *type = NULL;
@@ -331,29 +331,30 @@ db_pprint_symbol(const char *name)
 	}
 
 	type_name = db_ctf_stroff_to_str(&sym_data, type->ctt_name);
-
-	if (type_name) {
+	if (type_name)
 		db_printf("%s ", type_name);
-	}
-  db_printf("%s = ", sym_name);
+  db_printf("%s = ", name);
 
 	db_pprint_type(addr, type, 0);
 }
 
 static void
-db_pprint_struct(db_expr_t addr, const char* type_name){
+db_pprint_struct_cmd(db_expr_t addr, const char* type_name){
   struct ctf_type_v3 *type = NULL;
 
-  type = db_ctf_sym_to_type(&sym_data);
+  type = db_ctf_typename_to_type(type_name);
 	if (!type) {
 		db_error("Can't find CTF type info\n");
 	}
+
+  db_printf("%s ", type_name);
+  db_printf("%p = ", (void *)addr);
 
 	db_pprint_type(addr, type, 0);
 }
 
 /*
- * Pretty print an address.
+ * Pretty print an address or a symbol.
  * Syntax: pprint [struct <name> <addr> | <sym_name>]
  */
 void
@@ -401,12 +402,10 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
         db_error("Address not provided\n");
       }
 
-      if (db_pprint_symbol(name)) {
-        db_error("");
-      }
+      db_pprint_struct_cmd(addr, name);
     } else {
       name = db_tok_string;
-      db_pprint_symbol(name);
+      db_pprint_symbol_cmd(name);
     }
   } else {
     db_error("Invalid subcommand\n");

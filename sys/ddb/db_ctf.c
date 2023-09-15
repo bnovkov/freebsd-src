@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (c) 2022  <bnovkov@freebsd.org>
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,18 +53,18 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 
 	/* Ignore non-object symbols */
 	if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT) {
-		return DB_CTF_OBJTOFF_INVALID;
+		return DB_CTF_INVALID_OFF;
 	}
 
 	/* Sanity check */
 	if (!(sym >= symtab && sym <= symtab_end)) {
-		return DB_CTF_OBJTOFF_INVALID;
+		return DB_CTF_INVALID_OFF;
 	}
 
 	for (const Elf_Sym *symp = symtab; symp < symtab_end; symp++) {
 		/* Make sure we do not go beyond the objtoff section */
 		if (objtoff >= hp->cth_funcoff) {
-			objtoff = DB_CTF_OBJTOFF_INVALID;
+			objtoff = DB_CTF_INVALID_OFF;
 			break;
 		}
 
@@ -109,7 +109,7 @@ db_ctf_type_size(struct ctf_type_v3 *t){
     kind_size = sizeof(uint32_t);
     break;
   case CTF_K_ARRAY:
-     sizeof(struct ctf_array_v3);
+     kind_size = sizeof(struct ctf_array_v3);
     break;
   case CTF_K_UNION:
   case CTF_K_STRUCT:
@@ -141,17 +141,19 @@ db_ctf_type_size(struct ctf_type_v3 *t){
   return type_struct_size + kind_size;
 }
 
-static uint32_t
-db_ctf_name_to_typeoff(const ctf_header_t *hp, const char *name){
-	const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
+struct ctf_type_v3 *
+db_ctf_typename_to_type(db_ctf_sym_data_t sd, const char *name){
+  const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
 	char *start, *cur, *end;
 	uint32_t stroff = hp->cth_stroff;
 	uint32_t typeoff = hp->cth_typeoff;
   uint32_t name_stroff;
+  const uint8_t *ctfstart = (const uint8_t *)hp + sizeof(ctf_header_t);
+
   u_int skiplen;
 
   /* Scan ctf strtab for typename. */
-  start = cur = (char *)hp + sizeof(ctf_header_t) + php->cth_stroff;
+  start = cur = __DECONST(char *, hp) + sizeof(ctf_header_t) + hp->cth_stroff;
   end = cur + hp->cth_strlen;
   while(cur < end){
     if(!strcmp(cur, name))
@@ -159,21 +161,20 @@ db_ctf_name_to_typeoff(const ctf_header_t *hp, const char *name){
     cur += strlen(cur) + 1;
   }
   if(cur >= end)
-    return -1;
+          return (NULL);
 
   name_stroff = (uint32_t)(cur - start);
   /* Scan for type containing the found stroff. */
 	while (typeoff < stroff) {
-		struct ctf_type_v3 *t =
-      (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
-                             typeoff);
-
+          struct ctf_type_v3 *t =
+                  (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
+                                         typeoff);
 		/* We found the type struct */
 		if (t->ctt_name == name_stroff) {
 			break;
 		}
 	  if((skiplen = db_ctf_type_size(t)) == -1){
-      return (NULL);
+            return (NULL);
     }
     typeoff += skiplen;
 	}
@@ -181,7 +182,7 @@ db_ctf_name_to_typeoff(const ctf_header_t *hp, const char *name){
 		return (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
                                   typeoff);
 	} else { /* A type struct was not found */
-		return (NULL);
+          return (NULL);
 	}
 }
 
@@ -190,7 +191,6 @@ db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 {
 	const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
 	const uint8_t *ctfstart = (const uint8_t *)hp + sizeof(ctf_header_t);
-
 	uint32_t typeoff = hp->cth_typeoff;
 	uint32_t stroff = hp->cth_stroff;
 	/* CTF typeids start at 0x1 */
@@ -255,7 +255,7 @@ db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 
 	objtoff = sym_to_objtoff(&sd->lc, sd->sym, symtab, symtab_end);
 	/* Sanity check - should not happen */
-	if (objtoff == DB_CTF_OBJTOFF_INVALID) {
+	if (objtoff == DB_CTF_INVALID_OFF) {
 		db_printf("Could not find CTF object offset.\n");
 		return (NULL);
 	}
@@ -267,7 +267,7 @@ db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 }
 
 int
-db_ctf_find_symbol(char *name, db_ctf_sym_data_t sd)
+db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd)
 {
 	int error;
   long _diffp;
@@ -287,4 +287,21 @@ db_ctf_find_symbol(char *name, db_ctf_sym_data_t sd)
 	}
 
 	return (0);
+}
+
+int
+db_ctf_fill_sym_data(db_ctf_sym_data_t sd, db_expr_t addr){
+        db_expr_t _off;
+        c_db_sym_t	sym;
+
+        bzero(sd, sizeof(*sd));
+
+        sym =  db_search_symbol(addr, DB_STGY_ANY, &_off);
+        if(ret != C_DB_SYM_NULL){
+                // TODO assign sym to sd 
+        }
+
+        /* Scan all KLD  */
+
+        return 0;
 }
