@@ -34,8 +34,6 @@
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 
-#include <contrib/zlib/zlib.h>
-
 #include <ddb/ddb.h>
 #include <ddb/db_ctf.h>
 
@@ -272,17 +270,19 @@ int
 db_ctf_find_symbol(char *name, db_ctf_sym_data_t sd)
 {
 	int error;
+  long _diffp;
 
-	sd->sym = __DECONST(Elf_Sym *,
-	    db_lookup(name));
-	if (sd->sym == NULL) {
-		return (ENOENT);
-	}
+	/* sd->sym = __DECONST(Elf_Sym *, */
+	/*     db_lookup(name)); */
+	/* if (sd->sym == NULL) { */
+	/* 	return (ENOENT); */
+	/* } */
 
-	/* XXX-MJ what if the address belongs to a KLD? */
-	error = linker_ctf_get(linker_kernel_file, &sd->lc);
+	/* /\* XXX-MJ what if the address belongs to a KLD? *\/ */
+	/* error = linker_ctf_get(linker_kernel_file, &sd->lc); */
+  error = linker_search_name_ctf(name, &sd->sym, &_diffp, &sd->lc);
 	if (error != 0) {
-		db_printf("failed to look up CTF info\n");
+		db_printf("failed to look up symbol and CTF info for %s: error %d\n", name, error);
 		return (error);
 	}
 
