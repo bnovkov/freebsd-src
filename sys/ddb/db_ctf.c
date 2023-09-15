@@ -278,5 +278,7 @@ db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd)
 		return (error);
 	}
 
+  sd->sym =  __DECONST(Elf_Sym *, lsym);
+
 	return (0);
 }
