@@ -342,7 +342,7 @@ static void
 db_pprint_struct_cmd(db_expr_t addr, const char* type_name){
   struct ctf_type_v3 *type = NULL;
 
-  type = db_ctf_typename_to_type(type_name);
+  type = db_ctf_typename_to_type(&sym_data, type_name);
 	if (!type) {
 		db_error("Can't find CTF type info\n");
 	}
@@ -373,7 +373,7 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 		if (t != tIDENT) {
 			db_error("Invalid flag passed\n");
 		}
-		/* Fetch desired depth level */
+		/* Parse desired depth level */
 		if (!strcmp(db_tok_string, "d")) {
 			t = db_read_token();
 			if (t != tNUMBER) {

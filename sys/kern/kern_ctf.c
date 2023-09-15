@@ -30,6 +30,7 @@
 
 #include <sys/ctf.h>
 #include <sys/kdb.h>
+#include <sys/linker.h>
 
 /*
  * Note this file is included by both link_elf.c and link_elf_obj.c.
@@ -293,4 +294,33 @@ out:
 #endif
 
 	return (error);
+}
+
+static int
+link_elf_ctf_search_sym(linker_file_t lf, const char *symname,
+                         c_linker_sym_t *sym, linker_ctf_t *lc)
+{
+	elf_file_t ef = (elf_file_t)lf;
+  caddr_t ret;
+
+  /* Check whether CTF data was loaded or if a previous loading attempt failed (ctfcnt == -1). */
+  if (ef->ctfcnt <= 0) {
+    return (ENOENT);
+  }
+
+  ret = linker_file_lookup_symbol(lf, symname, 0);
+  if(ret == 0)
+    return (ENOENT);
+
+  /* A symbol was found and CTF is present - populate linker CTF struct. */
+  lc->ctftab = ef->ctftab;
+  lc->ctfcnt = ef->ctfcnt;
+  lc->symtab = ef->ddbsymtab;
+  lc->strtab = ef->ddbstrtab;
+  lc->strcnt = ef->ddbstrcnt;
+  lc->nsym   = ef->ddbsymcnt;
+
+  *sym = (c_linker_sym_t)ret;
+
+	return (0);
 }

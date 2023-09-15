@@ -124,14 +124,15 @@ typedef struct elf_file {
 
 } *elf_file_t;
 
+
 #include <kern/kern_ctf.c>
 
+static int	link_elf_lookup_symbol(linker_file_t, const char *,
+                                   c_linker_sym_t *);
 static int	link_elf_link_preload(linker_class_t cls,
 		    const char *, linker_file_t *);
 static int	link_elf_link_preload_finish(linker_file_t);
 static int	link_elf_load_file(linker_class_t, const char *, linker_file_t *);
-static int	link_elf_lookup_symbol(linker_file_t, const char *,
-		    c_linker_sym_t *);
 static int	link_elf_lookup_debug_symbol(linker_file_t, const char *,
 		    c_linker_sym_t *);
 static int	link_elf_symbol_values(linker_file_t, c_linker_sym_t,
@@ -170,6 +171,7 @@ static kobj_method_t link_elf_methods[] = {
 	KOBJMETHOD(linker_each_function_name,	link_elf_each_function_name),
 	KOBJMETHOD(linker_each_function_nameval, link_elf_each_function_nameval),
 	KOBJMETHOD(linker_ctf_get,		link_elf_ctf_get),
+  KOBJMETHOD(linker_ctf_search_sym,		link_elf_ctf_search_sym),
 	KOBJMETHOD(linker_symtab_get, 		link_elf_symtab_get),
 	KOBJMETHOD(linker_strtab_get, 		link_elf_strtab_get),
 	KOBJMETHOD_END
@@ -1547,43 +1549,6 @@ link_elf_search_symbol(linker_file_t lf, caddr_t value,
 
 	return (0);
 }
-
-static int
-link_elf_search_name_ctf(char *name,
-                           c_linker_sym_t *sym, long *diffp, linker_ctf_t *lc)
-{
-	elf_file_t ef = (elf_file_t)lf;
-	u_long off = (uintptr_t)(void *)value;
-	u_long diff = off;
-	u_long st_value;
-	const Elf_Sym *es;
-	const Elf_Sym *best = NULL;
-	int i;
-
-	for (i = 0, es = ef->ddbsymtab; i < ef->ddbsymcnt; i++, es++) {
-		if (es->st_name == 0)
-			continue;
-		st_value = es->st_value;
-		if (off >= st_value) {
-			if (off - st_value < diff) {
-				diff = off - st_value;
-				best = es;
-				if (diff == 0)
-					break;
-			} else if (off - st_value == diff) {
-				best = es;
-			}
-		}
-	}
-	if (best == NULL)
-		*diffp = off;
-	else
-		*diffp = diff;
-	*sym = (c_linker_sym_t) best;
-
-	return (0);
-}
-
 
 /*
  * Look up a linker set on an ELF system.

@@ -804,6 +804,18 @@ linker_ctf_get(linker_file_t file, linker_ctf_t *lc)
 	return (LINKER_CTF_GET(file, lc));
 }
 
+int
+linker_ctf_search_sym(const char *symname, c_linker_sym_t *sym, linker_ctf_t *lc)
+{
+	linker_file_t lf;
+
+	TAILQ_FOREACH(lf, &linker_files, link) {
+		if (LINKER_CTF_SEARCH_SYM(lf, symname, sym, lc) == 0)
+			return (0);
+	}
+	return (ENOENT);
+}
+
 static int
 linker_file_add_dependency(linker_file_t file, linker_file_t dep)
 {
@@ -946,18 +958,6 @@ linker_file_lookup_symbol_internal(linker_file_t file, const char *name,
  * linker_debug_lookup() is ifdef DDB as currently it's only used by DDB.
  */
 #ifdef DDB
-static int
-linker_debug_lookup(const char *symstr, c_linker_sym_t *sym)
-{
-	linker_file_t lf;
-
-	TAILQ_FOREACH(lf, &linker_files, link) {
-		if (LINKER_LOOKUP_DEBUG_SYMBOL(lf, symstr, sym) == 0)
-			return (0);
-	}
-	return (ENOENT);
-}
-
 static int
 linker_debug_lookup(const char *symstr, c_linker_sym_t *sym)
 {
