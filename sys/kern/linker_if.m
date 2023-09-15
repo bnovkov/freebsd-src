@@ -117,13 +117,11 @@ METHOD int ctf_get {
 };
 
 #
-# Search for a symbol name in all loaded modules, store it in *symp
+# Load CTF data , store it in *symp
 # and populate the linker CTF structure.
 #
-METHOD int ctf_search_sym {
+METHOD int ctf_get_ddb {
 	linker_file_t	file;
-  const char *symname;
-  c_linker_sym_t*	symp;
 	linker_ctf_t	*lc;
 };
 

@@ -272,7 +272,7 @@ db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd)
 	int error;
   c_linker_sym_t lsym = NULL;
 
-  error = linker_ctf_search_sym(name, &lsym, &sd->lc);
+  error = linker_ctf_search_sym_ddb(name, &lsym, &sd->lc);
 	if (error != 0) {
 		db_printf("failed to look up symbol and CTF info for %s: error %d\n", name, error);
 		return (error);

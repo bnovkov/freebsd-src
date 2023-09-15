@@ -805,14 +805,19 @@ linker_ctf_get(linker_file_t file, linker_ctf_t *lc)
 }
 
 int
-linker_ctf_search_sym(const char *symname, c_linker_sym_t *sym, linker_ctf_t *lc)
+linker_ctf_search_sym_ddb(const char *symname, c_linker_sym_t *sym, linker_ctf_t *lc)
 {
+  #ifdef DDB
 	linker_file_t lf;
 
 	TAILQ_FOREACH(lf, &linker_files, link) {
-		if (LINKER_CTF_SEARCH_SYM(lf, symname, sym, lc) == 0)
+		if (LINKER_LOOKUP_DEBUG_SYMBOL(lf, symname, sym) == 0){
+      if(LINKER_CTF_GET_DDB(lf, lc) != 0)
+        return (ENOENT);
 			return (0);
+    }
 	}
+  #endif
 	return (ENOENT);
 }
 
