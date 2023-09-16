@@ -53,11 +53,13 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 
 	/* Ignore non-object symbols */
 	if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT) {
+    db_printf("thefuck1");
 		return DB_CTF_INVALID_OFF;
 	}
 
 	/* Sanity check */
 	if (!(sym >= symtab && sym <= symtab_end)) {
+    db_printf("sym: %p, start: %p, end: %p\n", sym, symtab, symtab_end);
 		return DB_CTF_INVALID_OFF;
 	}
 
@@ -272,7 +274,7 @@ db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd)
 	int error;
   c_linker_sym_t lsym = NULL;
 
-  error = linker_ctf_search_sym_ddb(name, &lsym, &sd->lc);
+  error = linker_ctf_lookup_sym_ddb(name, &lsym, &sd->lc);
 	if (error != 0) {
 		db_printf("failed to look up symbol and CTF info for %s: error %d\n", name, error);
 		return (error);

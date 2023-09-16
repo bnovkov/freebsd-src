@@ -120,9 +120,11 @@ METHOD int ctf_get {
 # Load CTF data , store it in *symp
 # and populate the linker CTF structure.
 #
-METHOD int ctf_get_ddb {
-	linker_file_t	file;
-	linker_ctf_t	*lc;
+METHOD int lookup_debug_symbol_ctf {
+  linker_file_t file;
+  const char *name;
+  c_linker_sym_t *sym;
+  linker_ctf_t *lc;
 };
 
 #
