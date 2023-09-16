@@ -1609,7 +1609,7 @@ link_elf_lookup_debug_symbol_ctf(linker_file_t lf, const char *name,
            (ELF_ST_TYPE(symp->st_info) == STT_FUNC ||
             ELF_ST_TYPE(symp->st_info) == STT_GNU_IFUNC))) {
 				*sym = (c_linker_sym_t) symp;
-				return (0);
+				break;
 			}
 			return (ENOENT);
 		}
