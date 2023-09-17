@@ -1615,7 +1615,8 @@ link_elf_lookup_debug_symbol_ctf(linker_file_t lf, const char *name,
 		}
 	}
 
-  return (link_elf_ctf_get_ddb(lf, lc));
+  /* Populate CTF info structure if symbol was found. */
+  return (i < ef->ddbsymcnt ? link_elf_ctf_get_ddb(lf, lc) : ENOENT);
 }
 
 static int

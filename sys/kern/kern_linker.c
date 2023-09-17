@@ -808,13 +808,12 @@ int
 linker_ctf_lookup_sym_ddb(const char *symname, c_linker_sym_t *sym, linker_ctf_t *lc)
 {
   #ifdef DDB
-  //	linker_file_t lf;
+  linker_file_t lf;
 
-	/* TAILQ_FOREACH(lf, &linker_files, link) { */
-  /*   if(LINKER_LOOKUP_DEBUG_SYMBOL_CTF(lf, symname, sym, lc) == 0) */
-	/* 		return (0); */
-	/* } */
-  return LINKER_LOOKUP_DEBUG_SYMBOL_CTF(linker_kernel_file, symname, sym, lc);
+	TAILQ_FOREACH(lf, &linker_files, link) {
+    if(LINKER_LOOKUP_DEBUG_SYMBOL_CTF(lf, symname, sym, lc) == 0)
+			return (0);
+	}
 
   #endif
 	return (ENOENT);

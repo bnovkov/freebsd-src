@@ -362,7 +362,7 @@ db_pprint_struct_cmd(db_expr_t addr, const char* type_name){
 
   db_indent_old = db_indent;
 	db_pprint_type(addr, type, 0);
-  db_indent = db_indent_old;
+  db_indent = db_indent_old; 
 }
 
 /*
