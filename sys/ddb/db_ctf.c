@@ -289,3 +289,12 @@ db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd)
 
 	return (0);
 }
+
+struct ctf_type_v3 *
+db_ctf_find_typename(db_ctf_sym_data_t sd, const char *typename){
+  if (linker_ctf_lookup_typename_ddb(&sd->lc, typename)){
+    return (NULL);
+  }
+
+  
+}

@@ -44,15 +44,21 @@ struct db_ctf_sym_data {
 
 typedef struct db_ctf_sym_data *db_ctf_sym_data_t;
 
-int
-db_ctf_fill_sym_data(db_ctf_sym_data_t, db_expr_t addr);
+/*
+ * Routines for finding symbols and CTF info accross all loaded linker files.
+ */
+int db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd);
+struct ctf_type_v3 * db_ctf_find_typename(db_ctf_sym_data_t sd, const char *typename);
+bool db_ctf_lookup_typename(linker_ctf_t *lc, const char *typename);
+
+/*
+ * Routines for working with CTF data.
+ */
 struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);
 const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
-int db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd);
 struct ctf_type_v3 *
 db_ctf_typename_to_type(db_ctf_sym_data_t sd, const char *name);
 struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd,
                                           uint32_t typeid);
-bool db_ctf_lookup_typename(linker_ctf_t *lc, const char *typename);
 
 #endif /* !_DDB_DB_CTF_H_ */

@@ -122,8 +122,8 @@ METHOD int ctf_get {
 #
 METHOD int ctf_lookup_typename_ddb {
   linker_file_t file;
-  const char *typename;
   linker_ctf_t *lc;
+  const char *typename;
 };
 
 #
