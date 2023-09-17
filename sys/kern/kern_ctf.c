@@ -31,6 +31,7 @@
 #include <sys/ctf.h>
 #include <sys/kdb.h>
 #include <sys/linker.h>
+#include <ddb/db_ctf.h>
 
 /*
  * Note this file is included by both link_elf.c and link_elf_obj.c.
@@ -314,4 +315,14 @@ link_elf_ctf_get_ddb(linker_file_t lf, linker_ctf_t *lc)
   lc->nsym   = ef->ddbsymcnt;
 
 	return (0);
+}
+
+static int
+link_elf_ctf_lookup_typename_ddb(linker_file_t lf, linker_ctf_t *lc)
+{
+
+  if (link_elf_ctf_get_ddb(lf, lc))
+    return (ENOENT);
+
+	return ();
 }

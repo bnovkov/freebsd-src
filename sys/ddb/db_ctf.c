@@ -144,8 +144,8 @@ db_ctf_type_size(struct ctf_type_v3 *t){
 }
 
 struct ctf_type_v3 *
-db_ctf_typename_to_type(db_ctf_sym_data_t sd, const char *name){
-  const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
+db_ctf_typename_to_type(linker_ctf_t *lc, const char *name){
+  const ctf_header_t *hp = db_ctf_fetch_cth(lc);
 	char *start, *cur, *end;
 	uint32_t stroff = hp->cth_stroff;
 	uint32_t typeoff = hp->cth_typeoff;
@@ -188,10 +188,15 @@ db_ctf_typename_to_type(db_ctf_sym_data_t sd, const char *name){
 	}
 }
 
+bool db_ctf_lookup_typename(linker_ctf_t *lc, const char *typename){
+  return (db_ctf_typename_to_type(lc, typename) != NULL);
+}
+
+
 struct ctf_type_v3 *
-db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
+db_ctf_typeid_to_type(linker_ctf_t *lc, uint32_t typeid)
 {
-	const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
+	const ctf_header_t *hp = db_ctf_fetch_cth(lc);
 	const uint8_t *ctfstart = (const uint8_t *)hp + sizeof(ctf_header_t);
 	uint32_t typeoff = hp->cth_typeoff;
 	uint32_t stroff = hp->cth_stroff;

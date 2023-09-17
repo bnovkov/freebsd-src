@@ -805,6 +805,21 @@ linker_ctf_get(linker_file_t file, linker_ctf_t *lc)
 }
 
 int
+linker_ctf_lookup_sym_ddb(const char *typename, linker_ctf_t *lc)
+{
+#ifdef DDB
+  linker_file_t lf;
+
+	TAILQ_FOREACH(lf, &linker_files, link) {
+    if(LINKER_CTF_LOOKUP_TYPENAME_DDB(lf, typename, lc) == 0)
+			return (0);
+	}
+
+#endif
+	return (ENOENT);
+}
+
+int
 linker_ctf_lookup_sym_ddb(const char *symname, c_linker_sym_t *sym, linker_ctf_t *lc)
 {
   #ifdef DDB

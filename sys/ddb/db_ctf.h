@@ -53,5 +53,6 @@ struct ctf_type_v3 *
 db_ctf_typename_to_type(db_ctf_sym_data_t sd, const char *name);
 struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd,
                                           uint32_t typeid);
+bool db_ctf_lookup_typename(linker_ctf_t *lc, const char *typename);
 
 #endif /* !_DDB_DB_CTF_H_ */
