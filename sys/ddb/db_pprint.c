@@ -352,9 +352,10 @@ db_pprint_struct_cmd(db_expr_t addr, const char* type_name){
   int db_indent_old;
   struct ctf_type_v3 *type = NULL;
 
-  type = db_ctf_find_typename(&sym_data->lc, type_name);
+  type = db_ctf_find_typename(&sym_data, type_name);
 	if (!type) {
-		db_error("Can't find CTF type info for 'struct %s'\n", type_name);
+		db_printf("Can't find CTF type info for 'struct %s'\n", type_name);
+    return;
 	}
 
   db_printf("%s ", type_name);
