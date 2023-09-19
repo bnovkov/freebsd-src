@@ -53,13 +53,11 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 
 	/* Ignore non-object symbols */
 	if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT) {
-    db_printf("thefuck1");
 		return DB_CTF_INVALID_OFF;
 	}
 
 	/* Sanity check */
 	if (!(sym >= symtab && sym <= symtab_end)) {
-    db_printf("sym: %p, start: %p, end: %p\n", sym, symtab, symtab_end);
 		return DB_CTF_INVALID_OFF;
 	}
 

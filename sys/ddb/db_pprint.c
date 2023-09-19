@@ -348,13 +348,17 @@ db_pprint_symbol_cmd(const char *name)
 }
 
 static void
-db_pprint_struct_cmd(db_expr_t addr, const char* type_name){
+db_pprint_struct_cmd(db_expr_t addr, const char* struct_name){
   int db_indent_old;
   struct ctf_type_v3 *type = NULL;
+  char type_name[128];
+
+  snprintf(type_name, 128, "struct %s", struct_name);
 
   type = db_ctf_find_typename(&sym_data, type_name);
 	if (!type) {
-		db_printf("Can't find CTF type info for 'struct %s'\n", type_name);
+		db_printf("Can't find CTF type info for '%s'\n", type_name);
+    db_error("");
     return;
 	}
 

@@ -811,10 +811,9 @@ linker_ctf_lookup_typename_ddb(linker_ctf_t *lc, const char *typename)
   linker_file_t lf;
 
 	TAILQ_FOREACH(lf, &linker_files, link) {
-    if(LINKER_CTF_LOOKUP_TYPENAME_DDB(lf, lc, typename) == 0)
+    if(LINKER_CTF_LOOKUP_TYPENAME(lf, lc, typename) == 0)
 			return (0);
 	}
-
 #endif
 	return (ENOENT);
 }
