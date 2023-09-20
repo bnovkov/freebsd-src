@@ -117,8 +117,9 @@ METHOD int ctf_get {
 };
 
 #
-# Load CTF data , store it in *symp
-# and populate the linker CTF structure.
+# Look up a CTF type in the file's CTF section
+# and return CTF info in the linker CTF structure.
+# Return ENOENT if typename is not found, otherwise zero.
 #
 METHOD int ctf_lookup_typename {
   linker_file_t file;
@@ -127,8 +128,9 @@ METHOD int ctf_lookup_typename {
 };
 
 #
-# Load CTF data , store it in *symp
-# and populate the linker CTF structure.
+# Lookup a symbol in the file's symbol table and the file's CTF info.
+# Return ENOENT if either the symbol or its CTF
+# data is not loaded, otherwise return zero.
 #
 METHOD int lookup_debug_symbol_ctf {
   linker_file_t file;

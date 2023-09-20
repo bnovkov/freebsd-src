@@ -43,6 +43,10 @@ db_ctf_fetch_cth(linker_ctf_t *lc)
 	return (const ctf_header_t *)lc->ctftab;
 }
 
+
+/*
+ * Tries to look up the ELF symbol -> CTF type identifier mapping by scanning the CTF object section.
+ */
 static uint32_t
 sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
     const Elf_Sym *symtab_end)
@@ -55,7 +59,6 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 	if (ELF_ST_TYPE(sym->st_info) != STT_OBJECT) {
 		return DB_CTF_INVALID_OFF;
 	}
-
 	/* Sanity check */
 	if (!(sym >= symtab && sym <= symtab_end)) {
 		return DB_CTF_INVALID_OFF;
@@ -67,12 +70,10 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 			objtoff = DB_CTF_INVALID_OFF;
 			break;
 		}
-
 		if (symp->st_name == 0 || symp->st_shndx == SHN_UNDEF) {
 			continue;
 		}
-
-		if ((symp->st_shndx == SHN_ABS && symp->st_value == 0)) {
+		if (symp->st_shndx == SHN_ABS && symp->st_value == 0) {
 			continue;
 		}
 
@@ -80,17 +81,18 @@ sym_to_objtoff(linker_ctf_t *lc, const Elf_Sym *sym, const Elf_Sym *symtab,
 		if (ELF_ST_TYPE(symp->st_info) != STT_OBJECT) {
 			continue;
 		}
-
 		if (symp == sym) {
 			break;
 		}
-
 		objtoff += idwidth;
 	}
 
 	return objtoff;
 }
 
+/*
+ * Returns the size of CTF type 't'.
+ */
 static u_int
 db_ctf_type_size(struct ctf_type_v3 *t){
   u_int vlen, kind, ssize, type_struct_size, kind_size;
@@ -141,6 +143,9 @@ db_ctf_type_size(struct ctf_type_v3 *t){
   return type_struct_size + kind_size;
 }
 
+/*
+ * Looks up type name 'name' in the CTF string table and returns the corresponding CTF type struct, if any.
+ */
 struct ctf_type_v3 *
 db_ctf_typename_to_type(linker_ctf_t *lc, const char *name){
   const ctf_header_t *hp = db_ctf_fetch_cth(lc);
@@ -162,8 +167,8 @@ db_ctf_typename_to_type(linker_ctf_t *lc, const char *name){
   }
   if(cur >= end)
           return (NULL);
-
   name_stroff = (uint32_t)(cur - start);
+
   /* Scan for type containing the found stroff. */
 	while (typeoff < stroff) {
           struct ctf_type_v3 *t =
@@ -186,11 +191,17 @@ db_ctf_typename_to_type(linker_ctf_t *lc, const char *name){
 	}
 }
 
+/*
+ * Wrapper used by the kernel linker CTF routines.
+ * Currently used to implement lookup of CTF types accross all loaded kernel modules.
+ */
 bool db_ctf_lookup_typename(linker_ctf_t *lc, const char *typename){
   return (db_ctf_typename_to_type(lc, typename) != NULL);
 }
 
-
+/*
+ * Returns the type corresponding to the 'typeid' parameter from the CTF type section.
+ */
 struct ctf_type_v3 *
 db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 {
@@ -218,7 +229,6 @@ db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
     }
     typeoff += skiplen;
 	}
-
 	if (typeoff < stroff) {
 		return (struct ctf_type_v3 *)(__DECONST(uint8_t *, ctfstart) +
 		    typeoff);
@@ -227,17 +237,20 @@ db_ctf_typeid_to_type(db_ctf_sym_data_t sd, uint32_t typeid)
 	}
 }
 
+/*
+ * Returns 
+ */
 const char *
 db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off)
 {
 	const ctf_header_t *hp = db_ctf_fetch_cth(&sd->lc);
 	uint32_t stroff = hp->cth_stroff + off;
+  const char *ret;
 
 	if (stroff >= (hp->cth_stroff + hp->cth_strlen)) {
 		return "invalid";
 	}
-
-	const char *ret = ((const char *)hp + sizeof(ctf_header_t)) + stroff;
+	ret = ((const char *)hp + sizeof(ctf_header_t)) + stroff;
 	if (*ret == '\0') {
 		return NULL;
 	}
@@ -245,6 +258,9 @@ db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off)
 	return ret;
 }
 
+/*
+ * Tries to find the type of the symbol specified in 'sd->sym'.
+ */
 struct ctf_type_v3 *
 db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 {
@@ -254,7 +270,6 @@ db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 	if (sd->sym == NULL) {
 		return (NULL);
 	}
-
 	symtab = sd->lc.symtab;
 	symtab_end = symtab + sd->lc.nsym;
 
@@ -271,6 +286,9 @@ db_ctf_sym_to_type(db_ctf_sym_data_t sd)
 	return db_ctf_typeid_to_type(sd, typeid);
 }
 
+/*
+ * Scans the kernel file and all loaded module for symbol 'name'.
+ */
 int
 db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd)
 {
@@ -282,17 +300,18 @@ db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd)
 		db_printf("failed to look up symbol and CTF info for %s: error %d\n", name, error);
 		return (error);
 	}
-
   sd->sym =  __DECONST(Elf_Sym *, lsym);
 
 	return (0);
 }
 
+/*
+ * Scans the kernel file and all loaded module for type specified by 'typename'.
+ */
 struct ctf_type_v3 *
 db_ctf_find_typename(db_ctf_sym_data_t sd, const char *typename){
   if (linker_ctf_lookup_typename_ddb(&sd->lc, typename)){
     return (NULL);
   }
-
   return (db_ctf_typename_to_type(&sd->lc, typename));
 }

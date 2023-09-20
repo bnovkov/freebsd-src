@@ -46,6 +46,10 @@ static void db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type,
 static u_int max_depth = DB_PPRINT_DEFAULT_DEPTH;
 static struct db_ctf_sym_data sym_data;
 
+
+/*
+ * Pretty-prints a CTF_INT type.
+ */
 static inline void
 db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
@@ -64,10 +68,12 @@ db_pprint_int(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 		db_printf("Invalid size '%d' found for integer type\n", bits);
 		return;
 	}
-
 	db_printf("0x%lx", db_get_value(addr,  (bits / 8) ? (bits / 8) : 1, sign));
 }
 
+/*
+ * Pretty-prints a struct. Nested structs are pretty-printed up 'depth' nested levels.
+ */
 static inline void
 db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
@@ -85,7 +91,6 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	if (db_pager_quit) {
 		return;
 	}
-
 	if (depth > max_depth) {
 		db_printf("{ ... }");
 		return;
@@ -94,15 +99,14 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 
 	if (struct_size < CTF_V3_LSTRUCT_THRESH) {
     struct ctf_member_v3 *mp, *endp;
+
 		mp = (struct ctf_member_v3 *)((db_addr_t)type +
 		    type_struct_size);
 		endp = mp + vlen;
-
 		for (; mp < endp; mp++) {
 			if (db_pager_quit) {
 				return;
 			}
-
 			mtype = db_ctf_typeid_to_type(&sym_data, mp->ctm_type);
 			maddr = addr + mp->ctm_offset;
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctm_name);
@@ -118,15 +122,14 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 		}
 	} else {
     struct ctf_lmember_v3 *mp, *endp;
+
 		mp = (struct ctf_lmember_v3 *)((db_addr_t)type +
 		    type_struct_size);
 		endp = mp + vlen;
-
 		for (; mp < endp; mp++) {
 			if (db_pager_quit) {
 				return;
 			}
-
 			mtype = db_ctf_typeid_to_type(&sym_data, mp->ctlm_type);
 			maddr = addr + CTF_LMEM_OFFSET(mp);
 			mname = db_ctf_stroff_to_str(&sym_data, mp->ctlm_name);
@@ -136,6 +139,7 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 			} else {
         db_iprintf("");
       }
+
 			db_pprint_type(maddr, mtype, depth + 1);
 			db_printf(",");
 		}
@@ -144,6 +148,9 @@ db_pprint_struct(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	db_iprintf("}");
 }
 
+/*
+ * Pretty-prints an array. Each array member is printed out in a separate line indented with 'depth' spaces.
+ */
 static inline void
 db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
@@ -165,6 +172,7 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 
   db_indent = depth;
 	db_printf("[\n");
+  /* Loop through and print individual elements. */
 	for (; elem_addr < end; elem_addr += elem_size) {
 		if (db_pager_quit) {
 			return;
@@ -180,6 +188,9 @@ db_pprint_arr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	db_iprintf("]");
 }
 
+/*
+ * Pretty-prints an enum value. Also prints out symbolic name of value, if any.
+ */
 static inline void
 db_pprint_enum(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
@@ -194,13 +205,12 @@ db_pprint_enum(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	if (db_pager_quit) {
 		return;
 	}
-
 	ep = (struct ctf_enum *)((db_addr_t)type + type_struct_size);
 	endp = ep + vlen;
 	for (; ep < endp; ep++) {
 		if (val == ep->cte_value) {
 			valname = db_ctf_stroff_to_str(&sym_data, ep->cte_name);
-			if (valname) 
+			if (valname)
               db_printf("%s (0x%lx)", valname, val);
 			else
               db_printf("(0x%lx)", val);
@@ -209,6 +219,9 @@ db_pprint_enum(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	}
 }
 
+/*
+ * Pretty-prints a pointer. If the 'depth' parameter is less than the 'max_depth' global var, the pointer is "dereference", i.e. the contents of the memory it points to are also printed. The value of the pointer is printed otherwise.
+ */
 static inline void
 db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
@@ -236,17 +249,21 @@ db_pprint_ptr(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 
 	val = db_get_value(addr, sizeof(db_addr_t), false);
 	if (depth < max_depth) {
+          /* Print contents of memory pointed to by this pointer. */
 		db_pprint_type(addr, ref_type, depth + 1);
 	} else {
 		name = db_ctf_stroff_to_str(&sym_data, ref_type->ctt_name);
     db_indent = depth;
-		if (name) 
+		if (name)
             db_printf("(%s%s *) 0x%lx", qual, name, val);
-		else 
+		else
             db_printf("0x%lx", val);
 	}
 }
 
+/*
+ * Pretty-print dispatching function.
+ */
 static void
 db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 {
@@ -297,6 +314,10 @@ db_pprint_type(db_addr_t addr, struct ctf_type_v3 *type, u_int depth)
 	}
 }
 
+/*
+ * Symbol pretty-printing command.
+ * Syntax: pprint [/d depth] <sym_name>
+ */
 static void
 db_pprint_symbol_cmd(const char *name)
 {
@@ -329,6 +350,10 @@ db_pprint_symbol_cmd(const char *name)
   db_indent = db_indent_old;
 }
 
+/*
+ * Command for pretty-printing arbitrary addresses.
+ * Syntax: pprint [/d depth] struct <struct_name> <addr>
+ */
 static void
 db_pprint_struct_cmd(db_expr_t addr, const char* struct_name){
   int db_indent_old;
@@ -351,7 +376,6 @@ db_pprint_struct_cmd(db_expr_t addr, const char* struct_name){
 
 /*
  * Pretty print an address or a symbol.
- * Syntax: pprint [/d depth] [struct <name> <addr> | <sym_name>]
  */
 void
 db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
@@ -363,7 +387,6 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 	max_depth = DB_PPRINT_DEFAULT_DEPTH;
   /* Clear symbol and CTF info */
   bzero(&sym_data, sizeof(sym_data));
-
 	/* Parse print modifiers */
 	t = db_read_token();
 	if (t == tSLASH) {
@@ -384,7 +407,6 @@ db_pprint_cmd(db_expr_t addr, bool have_addr, db_expr_t count, char *modif)
 		/* Fetch next token */
 		t = db_read_token();
 	}
-
   /* Parse subcomannd */
   if(t == tIDENT){
     if(!strcmp(db_tok_string, "struct")){
