@@ -32,8 +32,8 @@
 #include <sys/ctf.h>
 #include <sys/linker.h>
 
-#include <ddb/db_sym.h>
 #include <ddb/ddb.h>
+#include <ddb/db_sym.h>
 
 #define DB_CTF_INVALID_OFF 0xffffffff
 

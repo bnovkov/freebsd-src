@@ -32,11 +32,11 @@
 
 #include <machine/stdarg.h>
 
-#include <ddb/db_access.h>
+#include <ddb/ddb.h>
 #include <ddb/db_ctf.h>
 #include <ddb/db_lex.h>
 #include <ddb/db_sym.h>
-#include <ddb/ddb.h>
+#include <ddb/db_access.h>
 
 #define DB_PPRINT_DEFAULT_DEPTH 1
 

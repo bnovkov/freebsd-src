@@ -34,8 +34,8 @@
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 
-#include <ddb/db_ctf.h>
 #include <ddb/ddb.h>
+#include <ddb/db_ctf.h>
 
 static const ctf_header_t *
 db_ctf_fetch_cth(linker_ctf_t *lc)

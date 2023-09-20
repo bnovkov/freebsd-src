@@ -91,9 +91,6 @@ void		db_symbol_values(c_db_sym_t, const char **, db_expr_t *);
 bool		db_eqname(const char *, const char *, int);
 					/* strcmp, modulo leading char */
 
-c_db_sym_t db_lookup(const char *symstr);
-/* find symbol by name */
-
 void		db_printsym(db_expr_t, db_strategy_t);
 					/* print closest symbol to a value */
 
