@@ -756,7 +756,7 @@ ttydisc_rubchar(struct tty *tp)
 	if (ttyinq_peekchar(&tp->t_inq, &c, &quote) != 0)
 		return (-1);
 	ttyinq_unputchar(&tp->t_inq);
-
+	// TODO: check for IUTF8 here
 	if (CMP_FLAG(l, ECHO)) {
 		/*
 		 * Remove the character from the screen. This is even

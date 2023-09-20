@@ -99,6 +99,7 @@
 #if __BSD_VISIBLE
 #define	IMAXBEL		0x00002000	/* ring bell on input queue full */
 #endif
+#define IUTF8     0x00004000 /* input is utf-8 encoded */
 
 /*
  * Output flags - software output processing
