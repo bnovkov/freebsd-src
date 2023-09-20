@@ -32,9 +32,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cons.h>
-#include <sys/linker.h>
 #include <sys/kdb.h>
 #include <sys/kernel.h>
+#include <sys/linker.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/reboot.h>
@@ -44,9 +44,9 @@ __FBSDID("$FreeBSD$");
 #include <machine/pcb.h>
 #include <machine/setjmp.h>
 
-#include <ddb/ddb.h>
 #include <ddb/db_command.h>
 #include <ddb/db_sym.h>
+#include <ddb/ddb.h>
 
 struct db_private {
 	char*		strtab;

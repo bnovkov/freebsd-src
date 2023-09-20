@@ -126,14 +126,16 @@ typedef struct elf_file {
 
 #include <kern/kern_ctf.c>
 
+static int link_elf_lookup_symbol(linker_file_t, const char *,
+    c_linker_sym_t *);
 static int	link_elf_link_preload(linker_class_t cls,
 		    const char *, linker_file_t *);
 static int	link_elf_link_preload_finish(linker_file_t);
 static int	link_elf_load_file(linker_class_t, const char *, linker_file_t *);
-static int	link_elf_lookup_symbol(linker_file_t, const char *,
-		    c_linker_sym_t *);
 static int	link_elf_lookup_debug_symbol(linker_file_t, const char *,
 		    c_linker_sym_t *);
+static int link_elf_lookup_debug_symbol_ctf(linker_file_t lf, const char *name,
+    c_linker_sym_t *sym, linker_ctf_t *lc);
 static int	link_elf_symbol_values(linker_file_t, c_linker_sym_t,
 		    linker_symval_t *);
 static int	link_elf_debug_symbol_values(linker_file_t, c_linker_sym_t,
@@ -156,24 +158,26 @@ static long	link_elf_strtab_get(linker_file_t, caddr_t *);
 static int	elf_obj_lookup(linker_file_t lf, Elf_Size symidx, int deps,
 		    Elf_Addr *);
 
-static kobj_method_t link_elf_methods[] = {
-	KOBJMETHOD(linker_lookup_symbol,	link_elf_lookup_symbol),
-	KOBJMETHOD(linker_lookup_debug_symbol,	link_elf_lookup_debug_symbol),
-	KOBJMETHOD(linker_symbol_values,	link_elf_symbol_values),
-	KOBJMETHOD(linker_debug_symbol_values,	link_elf_debug_symbol_values),
-	KOBJMETHOD(linker_search_symbol,	link_elf_search_symbol),
-	KOBJMETHOD(linker_unload,		link_elf_unload_file),
-	KOBJMETHOD(linker_load_file,		link_elf_load_file),
-	KOBJMETHOD(linker_link_preload,		link_elf_link_preload),
-	KOBJMETHOD(linker_link_preload_finish,	link_elf_link_preload_finish),
-	KOBJMETHOD(linker_lookup_set,		link_elf_lookup_set),
-	KOBJMETHOD(linker_each_function_name,	link_elf_each_function_name),
-	KOBJMETHOD(linker_each_function_nameval, link_elf_each_function_nameval),
-	KOBJMETHOD(linker_ctf_get,		link_elf_ctf_get),
-	KOBJMETHOD(linker_symtab_get, 		link_elf_symtab_get),
-	KOBJMETHOD(linker_strtab_get, 		link_elf_strtab_get),
-	KOBJMETHOD_END
-};
+static kobj_method_t link_elf_methods[] = { KOBJMETHOD(linker_lookup_symbol,
+						link_elf_lookup_symbol),
+	KOBJMETHOD(linker_lookup_debug_symbol, link_elf_lookup_debug_symbol),
+	KOBJMETHOD(linker_lookup_debug_symbol_ctf,
+	    link_elf_lookup_debug_symbol_ctf),
+	KOBJMETHOD(linker_symbol_values, link_elf_symbol_values),
+	KOBJMETHOD(linker_debug_symbol_values, link_elf_debug_symbol_values),
+	KOBJMETHOD(linker_search_symbol, link_elf_search_symbol),
+	KOBJMETHOD(linker_unload, link_elf_unload_file),
+	KOBJMETHOD(linker_load_file, link_elf_load_file),
+	KOBJMETHOD(linker_link_preload, link_elf_link_preload),
+	KOBJMETHOD(linker_link_preload_finish, link_elf_link_preload_finish),
+	KOBJMETHOD(linker_lookup_set, link_elf_lookup_set),
+	KOBJMETHOD(linker_each_function_name, link_elf_each_function_name),
+	KOBJMETHOD(linker_each_function_nameval,
+	    link_elf_each_function_nameval),
+	KOBJMETHOD(linker_ctf_get, link_elf_ctf_get),
+	KOBJMETHOD(linker_ctf_lookup_typename, link_elf_ctf_lookup_typename),
+	KOBJMETHOD(linker_symtab_get, link_elf_symtab_get),
+	KOBJMETHOD(linker_strtab_get, link_elf_strtab_get), KOBJMETHOD_END };
 
 static struct linker_class link_elf_class = {
 #if ELF_TARG_CLASS == ELFCLASS32
@@ -1470,6 +1474,16 @@ link_elf_lookup_debug_symbol(linker_file_t lf, const char *name,
     c_linker_sym_t *sym)
 {
 	return (link_elf_lookup_symbol1(lf, name, sym, true));
+}
+
+static int
+link_elf_lookup_debug_symbol_ctf(linker_file_t lf, const char *name,
+    c_linker_sym_t *sym, linker_ctf_t *lc)
+{
+	if (link_elf_lookup_debug_symbol(lf, name, sym))
+		return (ENOENT);
+
+	return (link_elf_ctf_get_ddb(lf, lc));
 }
 
 static int
