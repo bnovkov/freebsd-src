@@ -341,7 +341,6 @@ linker_ctf_load_file(linker_file_t file)
 	linker_ctf_t lc;
 	int error;
 
-	printf("%s:%d %s\n", __func__, __LINE__, file->filename);
 	error = linker_ctf_get(file, &lc);
 	if (error == 0)
 		return;
