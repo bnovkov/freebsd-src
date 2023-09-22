@@ -58,6 +58,8 @@
 #include <unistd.h>
 #include <netdb.h>
 
+#include <libxo/xo.h>
+
 #include "functions.h"
 
 static int 	fsflg,	/* show files on same filesystem as file(s) argument */
@@ -107,6 +109,11 @@ do_fstat(int argc, char **argv)
 	int arg, ch, what;
 	int cnt, i;
 
+  argc = xo_parse_args(argc, argv);
+	if (argc < 0)
+          exit(1);
+	atexit(xo_finish_atexit);
+
 	arg = 0;
 	what = KERN_PROC_PROC;
 	nlistf = memf = NULL;
@@ -144,7 +151,7 @@ do_fstat(int argc, char **argv)
 			if (uflg++)
 				usage();
 			if (!(passwd = getpwnam(optarg)))
-				errx(1, "%s: unknown uid", optarg);
+				xo_errx(1, "%s: unknown uid", optarg);
 			what = KERN_PROC_UID;
 			arg = passwd->pw_uid;
 			break;
@@ -177,24 +184,22 @@ do_fstat(int argc, char **argv)
 	else
 		procstat = procstat_open_sysctl();
 	if (procstat == NULL)
-		errx(1, "procstat_open()");
+		xo_errx(1, "procstat_open()");
 	p = procstat_getprocs(procstat, what, arg, &cnt);
 	if (p == NULL)
-		errx(1, "procstat_getprocs()");
+		xo_errx(1, "procstat_getprocs()");
 
 	/*
 	 * Print header.
 	 */
 	if (nflg)
-		printf("%s",
-"USER     CMD          PID   FD  DEV    INUM       MODE SZ|DV R/W");
+		xo_emit("USER     CMD          PID   FD  DEV    INUM       MODE SZ|DV R/W");
 	else
-		printf("%s",
-"USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W");
+		xo_emit("USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W");
 	if (checkfile && fsflg == 0)
-		printf(" NAME\n");
+		xo_emit(" NAME\n");
 	else
-		putchar('\n');
+		xo_emit("\n");
 
 	/*
 	 * Go through the process list.
@@ -225,9 +230,11 @@ dofiles(struct procstat *procstat, struct kinfo_proc *kp)
 	head = procstat_getfiles(procstat, kp, mflg);
 	if (head == NULL)
 		return;
+  xo_open_instance("process");
 	STAILQ_FOREACH(fst, head, next)
 		print_file_info(procstat, fst, uname, cmd, pid);
 	procstat_freefiles(procstat, head);
+  xo_close_instance("process");
 }
 
 
@@ -265,23 +272,23 @@ print_file_info(struct procstat *procstat, struct filestat *fst,
 	/*
 	 * Print entry prefix.
 	 */
-	printf("%-8.8s %-10s %5d", uname, cmd, pid);
+	xo_emit("{:user/%-8.8s} {:cmd/%-10s} {:pid/%5d}", uname, cmd, pid);
 	if (fst->fs_uflags & PS_FST_UFLAG_TEXT)
-		printf(" text");
+		xo_emit("{:fd/ text}");
 	else if (fst->fs_uflags & PS_FST_UFLAG_CDIR)
-		printf("   wd");
+		xo_emit("{:fd/   wd}");
 	else if (fst->fs_uflags & PS_FST_UFLAG_RDIR)
-		printf(" root");
+    xo_emit("{:fd/ root}");
 	else if (fst->fs_uflags & PS_FST_UFLAG_TRACE)
-		printf("   tr");
+    xo_emit("{:fd/   tr}");
 	else if (fst->fs_uflags & PS_FST_UFLAG_MMAP)
-		printf(" mmap");
+    xo_emit("{:fd/ mmap}");
 	else if (fst->fs_uflags & PS_FST_UFLAG_JAIL)
-		printf(" jail");
+    xo_emit("{:fd/ jail}");
 	else if (fst->fs_uflags & PS_FST_UFLAG_CTTY)
-		printf(" ctty");
+    xo_emit("{:fd/ ctty}");
 	else
-		printf(" %4d", fst->fs_fd);
+    xo_emit("{:fd/ %4d}", fst->fs_fd);
 
 	/*
 	 * Print type-specific data.
@@ -315,7 +322,7 @@ print_file_info(struct procstat *procstat, struct filestat *fst,
 			    fst->fs_type, fst->fs_fd, pid);
 	}
 	if (filename && !fsflg)
-		printf("  %s", filename);
+		xo_emit("{:fname/  %s}", filename);
 	putchar('\n');
 }
 
@@ -390,11 +397,11 @@ print_socket_info(struct procstat *procstat, struct filestat *fst)
 
 	error = procstat_get_socket_info(procstat, fst, &sock, errbuf);
 	if (error != 0) {
-		printf("* error");
+		xo_emit("* error");
 		return;
 	}
 	if (sock.type > STYPEMAX)
-		printf("* %s ?%d", sock.dname, sock.type);
+		xo_emit("* %s ?%d", sock.dname, sock.type);
 	else
 		printf("* %s %s", sock.dname, stypename[sock.type]);
 
@@ -567,6 +574,8 @@ print_vnode_info(struct procstat *procstat, struct filestat *fst)
 	const char *badtype;
 	int error;
 
+  xo_open_instance("vnode");
+
 	badtype = NULL;
 	error = procstat_get_vnode_info(procstat, fst, &vn, errbuf);
 	if (error != 0)
@@ -576,14 +585,15 @@ print_vnode_info(struct procstat *procstat, struct filestat *fst)
 	else if (vn.vn_type == PS_FST_VTYPE_VNON)
 		badtype = "none";
 	if (badtype != NULL) {
-		printf(" -         -  %10s    -", badtype);
+		xo_emit("{:badtype -         -  %10s    -}", badtype);
+    xo_close_instance("vnode");
 		return;
 	}
 
 	if (nflg)
-		printf(" %#5jx", (uintmax_t)vn.vn_fsid);
+	  xo_emit("{:fsid/ %#5jx}", (uintmax_t)vn.vn_fsid);
 	else if (vn.vn_mntdir != NULL)
-		(void)printf(" %-8s", vn.vn_mntdir);
+          xo_emit("{:mnt/ %-8s}", vn.vn_mntdir);
 
 	/*
 	 * Print access mode.
@@ -593,17 +603,18 @@ print_vnode_info(struct procstat *procstat, struct filestat *fst)
 	else {
 		strmode(vn.vn_mode, mode);
 	}
-	(void)printf(" %6jd %10s", (intmax_t)vn.vn_fileid, mode);
+	(void)xo_emit("{:fileid/ %6jd}{:mode/ %10s}", (intmax_t)vn.vn_fileid, mode);
 
 	if (vn.vn_type == PS_FST_VTYPE_VBLK || vn.vn_type == PS_FST_VTYPE_VCHR) {
 		if (nflg || !*vn.vn_devname)
-			printf(" %#6jx", (uintmax_t)vn.vn_dev);
+			xo_emit("{:devname/ %#6jx}", (uintmax_t)vn.vn_dev);
 		else {
-			printf(" %6s", vn.vn_devname);
+      xo_emit("{:devname/ %6s}", vn.vn_devname);
 		}
 	} else
-		printf(" %6ju", (uintmax_t)vn.vn_size);
+		xo_emit("{:size/ %6ju}", (uintmax_t)vn.vn_size);
 	print_access_flags(fst->fs_fflags);
+  xo_close_instance("vnode");
 }
 
 static void
@@ -616,7 +627,7 @@ print_access_flags(int flags)
 		strcat(rw, "r");
 	if (flags & PS_FST_FFLAG_WRITE)
 		strcat(rw, "w");
-	printf(" %2s", rw);
+	xo_emit("{:aflags: %2s}", rw);
 }
 
 int
