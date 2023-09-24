@@ -756,7 +756,8 @@ ttydisc_rubchar(struct tty *tp)
 	if (ttyinq_peekchar(&tp->t_inq, &c, &quote) != 0)
 		return (-1);
 	ttyinq_unputchar(&tp->t_inq);
-	// TODO: check for IUTF8 here
+
+  printf("IUTF8 set: %s\n", (tp->t_termios.c_iflag & IUTF8) ? "true" : "false");
 	if (CMP_FLAG(l, ECHO)) {
 		/*
 		 * Remove the character from the screen. This is even
@@ -802,7 +803,11 @@ ttydisc_rubchar(struct tty *tp)
 				ttyoutq_write_nofrag(&tp->t_outq,
 				    "\b\b\b\b\b\b\b\b", tablen);
 				return (0);
-			} else {
+      } else if ((tp->t_termios.c_iflag & IUTF8) != 0 && (c & 0x80) != 0 ){
+              printf("UTF8 trigger\n");
+              tp->t_column -= 1;
+              ttyoutq_write_nofrag(&tp->t_outq, "\b \b", 3);
+      } else {
 				/*
 				 * Remove a regular character by
 				 * punching a space over it.
