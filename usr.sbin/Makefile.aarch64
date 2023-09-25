@@ -5,3 +5,5 @@ SUBDIR+=	acpi
 SUBDIR+=	bhyve
 SUBDIR+=	bhyvectl
 .endif
+
+SUBDIR+=	hwt
