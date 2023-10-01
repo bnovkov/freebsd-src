@@ -312,7 +312,7 @@ vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
 	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
 	do {
 		/* Allocate from the kernel arena for non-standard kstack sizes. */
-		if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
+		if (size != ptoa(kstack_pages + KSTACK_GUARD_PAGES)) {
 			arena = vm_dom[domain].vmd_kernel_arena;
 		} else {
 			arena = vmd_kstack_arena[domain];
@@ -424,7 +424,7 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 	 */
 	rem = addr % KVA_KSTACK_QUANTUM;
 	if (rem) {
-		KASSERT(rem <= (npages * PAGE_SIZE),
+		KASSERT(rem <= ptoa(npages),
 		    ("%s: rem > npages (%d), (%d)", __func__, rem,
 			(int)npages));
 		addr -= rem;
@@ -445,9 +445,7 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 	/*
 	 * Get a kernel virtual address for this thread's kstack.
 	 */
-	ks = vm_thread_alloc_kstack_kva((pages + KSTACK_GUARD_PAGES) *
-		PAGE_SIZE,
-	    ds);
+	ks = vm_thread_alloc_kstack_kva(ptoa(pages + KSTACK_GUARD_PAGES), ds);
 	if (ks == 0) {
 		printf("%s: kstack allocation failed\n", __func__);
 		return (0);
@@ -487,6 +485,9 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 			panic("%s: kstack already missing?", __func__);
 		if (domain == -1)
 			domain = vm_page_domain(m);
+		KASSERT(vm_page_domain(m) == domain,
+		    ("%s: page %p domain mismatch, expected %d got %d",
+			__func__, m, domain, vm_page_domain(m)));
 		vm_page_xbusy_claim(m);
 		vm_page_unwire_noq(m);
 		vm_page_free(m);
@@ -568,10 +569,11 @@ vm_kstack_pindex(vm_offset_t ks, int npages)
 	if (KSTACK_GUARD_PAGES == 0 || npages != kstack_pages) {
 		return (pindex);
 	}
-	KASSERT(pindex % (npages + KSTACK_GUARD_PAGES) != 0,
+	KASSERT(pindex % (npages + KSTACK_GUARD_PAGES) >= KSTACK_GUARD_PAGES,
 	    ("%s: Attempting to calculate kstack guard page pindex", __func__));
 
-	return (pindex - ((pindex / (npages + KSTACK_GUARD_PAGES)) + 1));
+	return (pindex -
+	    (pindex / (npages + KSTACK_GUARD_PAGES) + 1) * KSTACK_GUARD_PAGES);
 }
 
 /*
