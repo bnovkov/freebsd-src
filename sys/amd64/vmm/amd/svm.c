@@ -1257,31 +1257,33 @@ exit_reason_to_str(uint64_t reason)
 		int reason;
 		const char *str;
 	} reasons[] = {
-		{ .reason = VMCB_EXIT_INVALID,	.str = "invalvmcb" },
-		{ .reason = VMCB_EXIT_SHUTDOWN,	.str = "shutdown" },
-		{ .reason = VMCB_EXIT_NPF, 	.str = "nptfault" },
-		{ .reason = VMCB_EXIT_PAUSE,	.str = "pause" },
-		{ .reason = VMCB_EXIT_HLT,	.str = "hlt" },
-		{ .reason = VMCB_EXIT_CPUID,	.str = "cpuid" },
-		{ .reason = VMCB_EXIT_IO,	.str = "inout" },
-		{ .reason = VMCB_EXIT_MC,	.str = "mchk" },
-		{ .reason = VMCB_EXIT_INTR,	.str = "extintr" },
-		{ .reason = VMCB_EXIT_NMI,	.str = "nmi" },
-		{ .reason = VMCB_EXIT_VINTR,	.str = "vintr" },
-		{ .reason = VMCB_EXIT_MSR,	.str = "msr" },
-		{ .reason = VMCB_EXIT_IRET,	.str = "iret" },
-		{ .reason = VMCB_EXIT_MONITOR,	.str = "monitor" },
-		{ .reason = VMCB_EXIT_MWAIT,	.str = "mwait" },
-		{ .reason = VMCB_EXIT_VMRUN,	.str = "vmrun" },
-		{ .reason = VMCB_EXIT_VMMCALL,	.str = "vmmcall" },
-		{ .reason = VMCB_EXIT_VMLOAD,	.str = "vmload" },
-		{ .reason = VMCB_EXIT_VMSAVE,	.str = "vmsave" },
-		{ .reason = VMCB_EXIT_STGI,	.str = "stgi" },
-		{ .reason = VMCB_EXIT_CLGI,	.str = "clgi" },
-		{ .reason = VMCB_EXIT_SKINIT,	.str = "skinit" },
-		{ .reason = VMCB_EXIT_ICEBP,	.str = "icebp" },
-		{ .reason = VMCB_EXIT_INVD,	.str = "invd" },
-		{ .reason = VMCB_EXIT_INVLPGA,	.str = "invlpga" },
+		{ .reason = VMCB_EXIT_INVALID, .str = "invalvmcb" },
+		{ .reason = VMCB_EXIT_SHUTDOWN, .str = "shutdown" },
+		{ .reason = VMCB_EXIT_NPF, .str = "nptfault" },
+		{ .reason = VMCB_EXIT_PAUSE, .str = "pause" },
+		{ .reason = VMCB_EXIT_HLT, .str = "hlt" },
+		{ .reason = VMCB_EXIT_CPUID, .str = "cpuid" },
+		{ .reason = VMCB_EXIT_IO, .str = "inout" },
+		{ .reason = VMCB_EXIT_MC, .str = "mchk" },
+		{ .reason = VMCB_EXIT_INTR, .str = "extintr" },
+		{ .reason = VMCB_EXIT_NMI, .str = "nmi" },
+		{ .reason = VMCB_EXIT_VINTR, .str = "vintr" },
+		{ .reason = VMCB_EXIT_MSR, .str = "msr" },
+		{ .reason = VMCB_EXIT_IRET, .str = "iret" },
+		{ .reason = VMCB_EXIT_MONITOR, .str = "monitor" },
+		{ .reason = VMCB_EXIT_MWAIT, .str = "mwait" },
+		{ .reason = VMCB_EXIT_VMRUN, .str = "vmrun" },
+		{ .reason = VMCB_EXIT_VMMCALL, .str = "vmmcall" },
+		{ .reason = VMCB_EXIT_VMLOAD, .str = "vmload" },
+		{ .reason = VMCB_EXIT_VMSAVE, .str = "vmsave" },
+		{ .reason = VMCB_EXIT_STGI, .str = "stgi" },
+		{ .reason = VMCB_EXIT_CLGI, .str = "clgi" },
+		{ .reason = VMCB_EXIT_SKINIT, .str = "skinit" },
+		{ .reason = VMCB_EXIT_ICEBP, .str = "icebp" },
+		{ .reason = VMCB_EXIT_INVD, .str = "invd" },
+		{ .reason = VMCB_EXIT_INVLPGA, .str = "invlpga" },
+		{ .reason = VMCB_EXIT_POPF, .str = "popf" },
+		{ .reason = VMCB_EXIT_PUSHF, .str = "pushf" },
 	};
 
 	for (i = 0; i < nitems(reasons); i++) {
@@ -1391,6 +1393,7 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	case 0x40 ... 0x5F:
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_EXCEPTION, 1);
 		reflect = 1;
+    handled = 1;
 		idtvec = code - 0x40;
 		switch (idtvec) {
 		case IDT_MC:
@@ -1401,6 +1404,7 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			reflect = 0;
 			SVM_CTR0(vcpu, "Vectoring to MCE handler");
 			__asm __volatile("int $18");
+			handled = 1;
 			break;
 		case IDT_PF:
 			error = svm_setreg(vcpu, VM_REG_GUEST_CR2, info2);
@@ -1419,8 +1423,74 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			errcode_valid = 1;
 			info1 = 0;
 			break;
+		case IDT_DB: {
+			/*
+			 * Check if we are being stepped (RFLAGS.TF)
+			 * and bounce vmexit to userland.
+			 */
+			bool stepped = 0;
 
+			errcode_valid = 0;
+			info1 = 0;
+
+			vmcb_read(vcpu, VM_REG_GUEST_DR6, &dr6);
+			stepped = !!(dr6 & DBREG_DR6_BS);
+
+			if (stepped &&
+			    (vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
+				vmexit->exitcode = VM_EXITCODE_DB;
+				vmexit->u.dbg.trace_trap = 1;
+				vmexit->u.dbg.pushf_intercept = 0;
+
+				if (s_vcpu->dbg.popf_step) {
+					/* DB exit was caused by stepping over
+					 * popf */
+					uint64_t rflags;
+
+					vcpu->dbg.popf_next = 0;
+					/*
+					 * Update shadowed TF bit so the next
+					 * setcap(..., RFLAGS_SSTEP, 0) restores
+					 * the correct value
+					 */
+					vmcb_read(vcpu, VM_REG_GUEST_RFLAGS,
+					    &rflags);
+					vcpu->dbg.rflags_tf =
+					    rflags & PSL_T;
+				} else if (vcpu->dbg.pushf_step) {
+					/* DB exit was caused by stepping over
+					 * pushf */
+
+					/*
+					 * Adjusting the pushed rflags after a
+					 * restarted pushf instruction must be
+					 * handled outside of svm.c due to the
+					 * critical_enter() lock being held.
+					 */
+					vmexit->u.dbg.pushf_intercept = 1;
+					vmexit->u.dbg.tf_shadow_val =
+					    vcpu->db_info.rflags_tf;
+					svm_paging_info(svm_get_vmcb(vcpu),
+					    &vmexit->u.dbg.paging);
+
+					vcpu->dbg.pushf_next = 0;
+				}
+				reflect = 0;
+				handled = 0;
+			}
+			break;
+		}
 		case IDT_BP:
+			if (svm_get_intercept(vcpu, VMCB_EXC_INTCPT,
+				BIT(IDT_BP)) == 1) {
+				vmexit->exitcode = VM_EXITCODE_BPT;
+				vmexit->u.bpt.inst_length = vmexit->inst_length;
+				vmexit->inst_length = 0;
+
+				reflect = 0;
+				handled = 0;
+				break;
+			}
 		case IDT_OF:
 		case IDT_BR:
 			/*
@@ -1455,7 +1525,6 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			KASSERT(error == 0, ("%s: vm_inject_exception error %d",
 			    __func__, error));
 		}
-		handled = 1;
 		break;
 	case VMCB_EXIT_MSR:	/* MSR access. */
 		eax = state->rax;
@@ -1538,6 +1607,46 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	case VMCB_EXIT_MWAIT:
 		vmexit->exitcode = VM_EXITCODE_MWAIT;
 		break;
+	case VMCB_EXIT_PUSHF: {
+		uint64_t rflags;
+
+    if (svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_TF)) {
+			svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+			/* Update shadow TF to guard against unrelated
+			 * intercepts */
+			//		vcpu->db_info.shadow_rflags_tf = rflags &
+			//PSL_T;
+			/* Restart this instruction */
+			vmexit->rip -= vmexit->inst_length;
+			/* Disable PUSHF intercepts - avoid a loop*/
+			svm_set_intercept(vcpu, VMCB_CTRL1_INTCPT,
+			    VMCB_INTCPT_PUSHF, 0);
+			/* Trace restarted instruction */
+			vmcb_write(vcpu, VM_REG_GUEST_RFLAGS, (rflags | PSL_T));
+			/* Let the IDT_DB handler know that pushf was stepped */
+			vcpu->dbg.pushf_sstep = 1;
+			handled = 1;
+		}
+		break;
+	}
+	case VMCB_EXIT_POPF: {
+		uint64_t rflags;
+
+		if (svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_TF)) {
+      svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+			/* Restart this instruction */
+			vmexit->rip -= vmexit->inst_length;
+			/* Disable POPF intercepts - avoid a loop*/
+			svm_set_intercept(vcpu, VMCB_CTRL1_INTCPT,
+			    VMCB_INTCPT_POPF, 0);
+			/* Trace restarted instruction */
+			vmcb_write(svm_sc, vcpu, VM_REG_GUEST_RFLAGS,
+			    (rflags | PSL_T));
+			vcpu->dbg.popf_sstep = 1;
+			handled = 1;
+    }
+		break;
+	}
 	case VMCB_EXIT_SHUTDOWN:
 	case VMCB_EXIT_VMRUN:
 	case VMCB_EXIT_VMMCALL:
@@ -2332,10 +2441,59 @@ svm_setcap(void *vcpui, int type, int val)
 		if (val == 0)
 			error = EINVAL;
 		break;
+  case VM_CAP_BPT_EXIT:
+		svm_set_intercept(vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP), val);
+		break;
 	case VM_CAP_IPI_EXIT:
 		vlapic = vm_lapic(vcpu->vcpu);
 		vlapic->ipi_exit = val;
 		break;
+	case VM_CAP_RFLAGS_TF: {
+		uint64_t rflags;
+
+		/* Fetch RFLAGS */
+		if (svm_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags)) {
+			error = (EINVAL);
+			break;
+		}
+		if (val) {
+			/* Save current TF bit */
+			vcpu->dbg.rflags_tf = rflags & PSL_T;
+
+			/* Trace next instruction */
+			if (vmcb_write(vcpu, VM_REG_GUEST_RFLAGS,
+				(rflags | PSL_T))) {
+				error = (EINVAL);
+				break;
+			}
+
+			vcpu->caps |= (1 << VM_CAP_RFLAGS_SSTEP);
+		} else {
+			/*
+			 * Restore shadowed RFLAGS.TF only if vCPU was being
+			 * stepped
+			 */
+			if (vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
+				rflags |= s_vcpu->db_info.shadow_rflags_tf;
+				vcpu->db_info.shadow_rflags_tf = 0;
+
+				if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS,
+					rflags)) {
+					error = (EINVAL);
+					break;
+				}
+				vcpu->caps &= ~(1 << VM_CAP_RFLAGS_SSTEP);
+			}
+		}
+
+		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
+		svm_set_intercept(
+		    sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, val);
+
+		break;
+	}
 	default:
 		error = ENOENT;
 		break;
@@ -2365,9 +2523,16 @@ svm_getcap(void *vcpui, int type, int *retval)
 	case VM_CAP_UNRESTRICTED_GUEST:
 		*retval = 1;	/* unrestricted guest is always enabled */
 		break;
+  case VM_CAP_BPT_EXIT:
+		*retval = svm_get_intercept(vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP));
+		break;
 	case VM_CAP_IPI_EXIT:
 		vlapic = vm_lapic(vcpu->vcpu);
 		*retval = vlapic->ipi_exit;
+		break;
+	case VM_CAP_RFLAGS_TF:
+		*retval = !!(
+		    svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_TF));
 		break;
 	default:
 		error = ENOENT;
