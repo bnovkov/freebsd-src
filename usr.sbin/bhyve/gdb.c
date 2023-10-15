@@ -744,6 +744,43 @@ _gdb_cpu_suspend(struct vcpu *vcpu, bool report_stop)
 }
 
 /*
+ * Requests vCPU single-stepping using a
+ * VMEXIT suitable for the host platform.
+ */
+static int
+_gdb_set_step(int vcpu, int val)
+{
+	/*
+	 * If the MTRAP cap fails, we are running on an AMD host.
+	 * In that case, we request DB exits caused by RFLAGS.TF.
+	 */
+	int error = vm_set_capability(ctx, vcpu, VM_CAP_MTRAP_EXIT, val);
+	if (error) {
+                error = vm_set_capability(ctx, vcpu, VM_CAP_RFLAGS_TF, val);
+	}
+	if (error == 0)
+		vm_set_capability(vcpu, VM_CAP_MASK_HWINTR, val);
+
+	return error;
+}
+
+/*
+ * Checks whether single-stepping is enabled for a given vCPU.
+ */
+static int
+_gdb_check_step(int vcpu)
+{
+	int error, val;
+
+	error = vm_get_capability(ctx, vcpu, VM_CAP_MTRAP_EXIT, &val);
+	if (error < 0) {
+		if (vm_get_capability(ctx, vcpu, VM_CAP_RFLAGS_TF, &val) < 0)
+			return -1;
+	}
+	return 0;
+}
+
+/*
  * Invoked at the start of a vCPU thread's execution to inform the
  * debug server about the new thread.
  */
@@ -797,7 +834,7 @@ gdb_cpu_resume(struct vcpu *vcpu)
 	assert(vs->hit_swbreak == false);
 	assert(vs->stepped == false);
 	if (vs->stepping) {
-		error = vm_set_capability(vcpu, VM_CAP_MTRAP_EXIT, 1);
+		error = _gdb_set_step(vcpu, 1);
 		assert(error == 0);
 
 		error = vm_set_capability(vcpu, VM_CAP_MASK_HWINTR, 1);
@@ -805,6 +842,21 @@ gdb_cpu_resume(struct vcpu *vcpu)
 	}
 }
 
+/*
+ * A general handler for VM_EXITCODE_DB.
+ * Handles RFLAGS.TF exits on AMD SVM.
+ */
+void
+gdb_cpu_debug(int vcpu, struct vm_exit *vmexit)
+{
+        if (!gdb_active)
+                return;
+
+        /* RFLAGS.TF exit? */
+        if (vmexit->u.dbg.trace_trap) {
+                _gdb_cpu_step(vcpu);
+        }
+}
 /*
  * Handler for VM_EXITCODE_DEBUG used to suspend a vCPU when the guest
  * has been suspended due to an event on different vCPU or in response
@@ -835,38 +887,45 @@ gdb_suspend_vcpus(void)
 }
 
 /*
+ * Invoked each time a vmexit handler needs to step a vCPU.
+ * Handles MTRAP and RFLAGS.TF vmexits.
+ */
+static void
+gdb_cpu_step(int vcpu)
+{
+        struct vcpu_state *vs;
+
+        debug("$vCPU %d stepped\n", vcpu);
+        pthread_mutex_lock(&gdb_lock);
+        vs = &vcpu_state[vcpu];
+        if (vs->stepping) {
+                vs->stepping = false;
+                vs->stepped = true;
+                _gdb_set_step(vcpu, 0);
+
+                while (vs->stepped) {
+                        if (stopped_vcpu == -1) {
+                                debug("$vCPU %d reporting step\n", vcpu);
+                                stopped_vcpu = vcpu;
+                                gdb_suspend_vcpus();
+                        }
+                        _gdb_cpu_suspend(vcpu, true);
+                }
+                gdb_cpu_resume(vcpu);
+        }
+        pthread_mutex_unlock(&gdb_lock);
+}
+
+/*
  * Handler for VM_EXITCODE_MTRAP reported when a vCPU single-steps via
  * the VT-x-specific MTRAP exit.
  */
 void
 gdb_cpu_mtrap(struct vcpu *vcpu)
 {
-	struct vcpu_state *vs;
-	int vcpuid;
-
-	if (!gdb_active)
-		return;
-	vcpuid = vcpu_id(vcpu);
-	debug("$vCPU %d MTRAP\n", vcpuid);
-	pthread_mutex_lock(&gdb_lock);
-	vs = &vcpu_state[vcpuid];
-	if (vs->stepping) {
-		vs->stepping = false;
-		vs->stepped = true;
-		vm_set_capability(vcpu, VM_CAP_MTRAP_EXIT, 0);
-		vm_set_capability(vcpu, VM_CAP_MASK_HWINTR, 0);
-
-		while (vs->stepped) {
-			if (stopped_vcpu == -1) {
-				debug("$vCPU %d reporting step\n", vcpuid);
-				stopped_vcpu = vcpuid;
-				gdb_suspend_vcpus();
-			}
-			_gdb_cpu_suspend(vcpu, true);
-		}
-		gdb_cpu_resume(vcpu);
-	}
-	pthread_mutex_unlock(&gdb_lock);
+  if(vm_get_capability(vcpu, VM_CAP_MTRAP_EXIT, 0)){
+		gdb_cpu_step(vcpu_id(vcpu));
+  }
 }
 
 static struct breakpoint *
