@@ -440,15 +440,15 @@ vmexit_debug(struct vmctx *ctx __unused, struct vcpu *vcpu,
 }
 
 static int
-vmexit_db(struct vmctx *ctx, struct vm_exit *vmexit, int *pvcpu)
+vmexit_db(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_run *vmrun)
 {
 
 #ifdef BHYVE_SNAPSHOT
-        checkpoint_cpu_suspend(*pvcpu);
+        checkpoint_cpu_suspend(vcpu_id(vcpu));
 #endif
-        gdb_cpu_debug(*pvcpu, vmexit);
+	gdb_cpu_debug(vcpu, vmrun->vm_exit);
 #ifdef BHYVE_SNAPSHOT
-        checkpoint_cpu_resume(*pvcpu);
+	checkpoint_cpu_resume(vcpu_id(vcpu));
 #endif
         return (VMEXIT_CONTINUE);
 }

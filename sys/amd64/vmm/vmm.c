@@ -1750,7 +1750,7 @@ vm_handle_reqidle(struct vcpu *vcpu, bool *retu)
 }
 
 static int
-vm_handle_db(struct vm *vm, int vcpuid, struct vm_exit *vme, bool *retu)
+vm_handle_db(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 {
 	int error, fault;
 	uint64_t rsp;
@@ -1763,9 +1763,9 @@ vm_handle_db(struct vm *vm, int vcpuid, struct vm_exit *vme, bool *retu)
 	}
 	printf("%s: writing back rflags after pushf\r\n", __func__);
 
-	vm_get_register(vm, vcpuid, VM_REG_GUEST_RSP, &rsp);
+	vm_get_register(vcpu, VM_REG_GUEST_RSP, &rsp);
 
-	error = vm_copy_setup(vm, vcpuid, &vme->u.dbg.paging, rsp,
+	error = vm_copy_setup(vcpu, &vme->u.dbg.paging, rsp,
 	    sizeof(uint64_t), VM_PROT_WRITE, &copyinfo, 1, &fault);
 	if (error || fault) {
 		*retu = false;
@@ -1773,16 +1773,16 @@ vm_handle_db(struct vm *vm, int vcpuid, struct vm_exit *vme, bool *retu)
 	}
 
 	/* Read pushed rflags value */
-	vm_copyin(vm, vcpuid, &copyinfo, &rflags, sizeof(uint64_t));
+	vm_copyin(&copyinfo, &rflags, sizeof(uint64_t));
 	printf("%s: rflags: 0x%8lx\r\n", __func__, rflags);
-	/* Set TF bit to shadowed value*/
+	/* Set TF bit to shadowed value */
 	rflags &= ~(PSL_T);
 	rflags |= vme->u.dbg.tf_shadow_val;
 	printf("%s: updated rflags: 0x%8lx\r\n", __func__, rflags);
-	/* Write updated value back to memory*/
-	vm_copyout(vm, vcpuid, &rflags, &copyinfo, sizeof(uint64_t));
+	/* Write updated value back to memory */
+	vm_copyout(&rflags, &copyinfo, sizeof(uint64_t));
 
-	vm_copy_teardown(vm, vcpuid, &copyinfo, 1);
+	vm_copy_teardown(&copyinfo, 1);
 
 	return (0);
 }
@@ -1956,7 +1956,7 @@ restart:
 			error = vm_handle_inout(vcpu, vme, &retu);
 			break;
     case VM_EXITCODE_DB:
-			error = vm_handle_db(vm, vcpuid, vme, &retu);
+			error = vm_handle_db(vcpu, vme, &retu);
 		case VM_EXITCODE_MONITOR:
 		case VM_EXITCODE_MWAIT:
 		case VM_EXITCODE_VMINSN:
