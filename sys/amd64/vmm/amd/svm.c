@@ -131,6 +131,7 @@ static VMM_STAT_AMD(VMEXIT_VINTR, "VM exits due to interrupt window");
 
 static int svm_getdesc(void *vcpui, int reg, struct seg_desc *desc);
 static int svm_setreg(void *vcpui, int ident, uint64_t val);
+static int svm_getreg(void *vcpui, int ident, uint64_t *val);
 
 static __inline int
 flush_by_asid(void)
@@ -1429,6 +1430,7 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			 * and bounce vmexit to userland.
 			 */
 			bool stepped = 0;
+			uint64_t dr6 = 0;
 
 			errcode_valid = 0;
 			info1 = 0;
@@ -1436,18 +1438,17 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			vmcb_read(vcpu, VM_REG_GUEST_DR6, &dr6);
 			stepped = !!(dr6 & DBREG_DR6_BS);
 
-			if (stepped &&
-			    (vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP))) {
+			if (stepped && (vcpu->caps & (1 << VM_CAP_RFLAGS_TF))) {
 				vmexit->exitcode = VM_EXITCODE_DB;
 				vmexit->u.dbg.trace_trap = 1;
 				vmexit->u.dbg.pushf_intercept = 0;
 
-				if (s_vcpu->dbg.popf_step) {
+				if (vcpu->dbg.popf_sstep) {
 					/* DB exit was caused by stepping over
 					 * popf */
 					uint64_t rflags;
 
-					vcpu->dbg.popf_next = 0;
+					vcpu->dbg.popf_sstep = 0;
 					/*
 					 * Update shadowed TF bit so the next
 					 * setcap(..., RFLAGS_SSTEP, 0) restores
@@ -1457,7 +1458,7 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 					    &rflags);
 					vcpu->dbg.rflags_tf =
 					    rflags & PSL_T;
-				} else if (vcpu->dbg.pushf_step) {
+				} else if (vcpu->dbg.pushf_sstep) {
 					/* DB exit was caused by stepping over
 					 * pushf */
 
@@ -1469,11 +1470,11 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 					 */
 					vmexit->u.dbg.pushf_intercept = 1;
 					vmexit->u.dbg.tf_shadow_val =
-					    vcpu->db_info.rflags_tf;
+					    vcpu->dbg.rflags_tf;
 					svm_paging_info(svm_get_vmcb(vcpu),
 					    &vmexit->u.dbg.paging);
 
-					vcpu->dbg.pushf_next = 0;
+					vcpu->dbg.pushf_sstep = 0;
 				}
 				reflect = 0;
 				handled = 0;
@@ -1610,8 +1611,8 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	case VMCB_EXIT_PUSHF: {
 		uint64_t rflags;
 
-    if (svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_TF)) {
-			svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+    if (vcpu->caps & (1 << VM_CAP_RFLAGS_TF)) {
+			svm_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
 			/* Update shadow TF to guard against unrelated
 			 * intercepts */
 			//		vcpu->db_info.shadow_rflags_tf = rflags &
@@ -1632,19 +1633,19 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	case VMCB_EXIT_POPF: {
 		uint64_t rflags;
 
-		if (svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_TF)) {
-      svm_getreg(svm_sc, vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+		if (vcpu->caps & (1 << VM_CAP_RFLAGS_TF)) {
+			svm_getreg(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
 			/* Restart this instruction */
 			vmexit->rip -= vmexit->inst_length;
 			/* Disable POPF intercepts - avoid a loop*/
 			svm_set_intercept(vcpu, VMCB_CTRL1_INTCPT,
 			    VMCB_INTCPT_POPF, 0);
 			/* Trace restarted instruction */
-			vmcb_write(svm_sc, vcpu, VM_REG_GUEST_RFLAGS,
+			vmcb_write(vcpu, VM_REG_GUEST_RFLAGS,
 			    (rflags | PSL_T));
 			vcpu->dbg.popf_sstep = 1;
 			handled = 1;
-    }
+		}
 		break;
 	}
 	case VMCB_EXIT_SHUTDOWN:
@@ -2467,30 +2468,30 @@ svm_setcap(void *vcpui, int type, int val)
 				break;
 			}
 
-			vcpu->caps |= (1 << VM_CAP_RFLAGS_SSTEP);
+			vcpu->caps |= (1 << VM_CAP_RFLAGS_TF);
 		} else {
 			/*
 			 * Restore shadowed RFLAGS.TF only if vCPU was being
 			 * stepped
 			 */
-			if (vcpu->caps & (1 << VM_CAP_RFLAGS_SSTEP)) {
-				rflags |= s_vcpu->db_info.shadow_rflags_tf;
-				vcpu->db_info.shadow_rflags_tf = 0;
+			if (vcpu->caps & (1 << VM_CAP_RFLAGS_TF)) {
+				rflags |= vcpu->dbg.rflags_tf;
+				vcpu->dbg.rflags_tf = 0;
 
-				if (vmcb_write(sc, vcpu, VM_REG_GUEST_RFLAGS,
+				if (vmcb_write(vcpu, VM_REG_GUEST_RFLAGS,
 					rflags)) {
 					error = (EINVAL);
 					break;
 				}
-				vcpu->caps &= ~(1 << VM_CAP_RFLAGS_SSTEP);
+				vcpu->caps &= ~(1 << VM_CAP_RFLAGS_TF);
 			}
 		}
 
-		svm_set_intercept(sc, vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
+		svm_set_intercept(vcpu, VMCB_EXC_INTCPT, BIT(IDT_DB), val);
 		svm_set_intercept(
-		    sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
-		svm_set_intercept(
-		    sc, vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF, val);
+		    vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_POPF, val);
+		svm_set_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_PUSHF,
+		    val);
 
 		break;
 	}
@@ -2531,8 +2532,7 @@ svm_getcap(void *vcpui, int type, int *retval)
 		*retval = vlapic->ipi_exit;
 		break;
 	case VM_CAP_RFLAGS_TF:
-		*retval = !!(
-		    svm_get_vcpu(sc, vcpu)->caps & (1 << VM_CAP_RFLAGS_TF));
+		*retval = !!(vcpu->caps & (1 << VM_CAP_RFLAGS_TF));
 		break;
 	default:
 		error = ENOENT;

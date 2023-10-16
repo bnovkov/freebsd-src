@@ -722,7 +722,7 @@ struct vm_exit {
 			 * 'inst_error' and 'inst_type' are valid
 			 * only if 'status' is non-zero.
 			 */
-			int		inst_type;
+			int inst_type;
 			int		inst_error;
 		} vmx;
 		/*
