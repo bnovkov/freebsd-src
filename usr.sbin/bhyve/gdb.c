@@ -758,8 +758,8 @@ _gdb_set_step(struct vcpu *vcpu, int val)
 	if (error) {
 		error = vm_set_capability(vcpu, VM_CAP_RFLAGS_TF, val);
 	}
-	if (error == 0)
-		vm_set_capability(vcpu, VM_CAP_MASK_HWINTR, val);
+		if (error == 0)
+			vm_set_capability(vcpu, VM_CAP_MASK_HWINTR, val);
 
 	return error;
 }
@@ -800,7 +800,7 @@ gdb_cpu_add(struct vcpu *vcpu)
 	CPU_SET(vcpuid, &vcpus_active);
 	if (!TAILQ_EMPTY(&breakpoints)) {
 		vm_set_capability(vcpu, VM_CAP_BPT_EXIT, 1);
-		debug("$vCPU %d enabled breakpoint exits\n", vcpu);
+		debug("$vCPU %d enabled breakpoint exits\n", vcpuid);
 	}
 
 	/*
@@ -836,9 +836,6 @@ gdb_cpu_resume(struct vcpu *vcpu)
 	if (vs->stepping) {
 		error = _gdb_set_step(vcpu, 1);
 		assert(error == 0);
-
-		error = vm_set_capability(vcpu, VM_CAP_MASK_HWINTR, 1);
-		assert(error == 0);
 	}
 }
 
@@ -863,18 +860,20 @@ gdb_cpu_step(struct vcpu *vcpu)
 {
         struct vcpu_state *vs;
         int vcpuid = vcpu_id(vcpu);
+        int error;
 
-        debug("$vCPU %d stepped\n", vcpu);
+        debug("$vCPU %d stepped\n", vcpuid);
         pthread_mutex_lock(&gdb_lock);
         vs = &vcpu_state[vcpuid];
         if (vs->stepping) {
                 vs->stepping = false;
                 vs->stepped = true;
-                _gdb_set_step(vcpu, 0);
+                error = _gdb_set_step(vcpu, 0);
+                assert(error == 0);
 
                 while (vs->stepped) {
                         if (stopped_vcpu == -1) {
-                                debug("$vCPU %d reporting step\n", vcpu);
+                                debug("$vCPU %d reporting step\n", vcpuid);
                                 stopped_vcpu = vcpuid;
                                 gdb_suspend_vcpus();
                         }
@@ -908,6 +907,8 @@ gdb_cpu_debug(struct vcpu *vcpu, struct vm_exit *vmexit)
 void
 gdb_cpu_mtrap(struct vcpu *vcpu)
 {
+        if (!gdb_active)
+                return;
         if(vm_get_capability(vcpu, VM_CAP_MTRAP_EXIT, 0)){
 		gdb_cpu_step(vcpu);
 	}
