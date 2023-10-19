@@ -1421,6 +1421,13 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			break;
 
 		case IDT_BP:
+			vmexit->exitcode = VM_EXITCODE_BPT;
+			vmexit->u.bpt.inst_length = vmexit->inst_length;
+			vmexit->inst_length = 0;
+
+			reflect = 0;
+			handled = 0;
+			break;
 		case IDT_OF:
 		case IDT_BR:
 			/*
@@ -1442,11 +1449,12 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			info1 = 0;
 			break;
 		}
-		KASSERT(vmexit->inst_length == 0, ("invalid inst_length (%d) "
-		    "when reflecting exception %d into guest",
-		    vmexit->inst_length, idtvec));
 
 		if (reflect) {
+			KASSERT(vmexit->inst_length == 0,
+			    ("invalid inst_length (%d) "
+			     "when reflecting exception %d into guest",
+				vmexit->inst_length, idtvec));
 			/* Reflect the exception back into the guest */
 			SVM_CTR2(vcpu, "Reflecting exception "
 			    "%d/%#x into the guest", idtvec, (int)info1);
@@ -1454,8 +1462,8 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			    errcode_valid, info1, 0);
 			KASSERT(error == 0, ("%s: vm_inject_exception error %d",
 			    __func__, error));
+			handled = 1;
 		}
-		handled = 1;
 		break;
 	case VMCB_EXIT_MSR:	/* MSR access. */
 		eax = state->rax;
@@ -2332,6 +2340,9 @@ svm_setcap(void *vcpui, int type, int val)
 		if (val == 0)
 			error = EINVAL;
 		break;
+	case VM_CAP_BPT_EXIT:
+		svm_set_intercept(vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP), val);
+		break;
 	case VM_CAP_IPI_EXIT:
 		vlapic = vm_lapic(vcpu->vcpu);
 		vlapic->ipi_exit = val;
@@ -2364,6 +2375,9 @@ svm_getcap(void *vcpui, int type, int *retval)
 		break;
 	case VM_CAP_UNRESTRICTED_GUEST:
 		*retval = 1;	/* unrestricted guest is always enabled */
+		break;
+	case VM_CAP_BPT_EXIT:
+		*retval = svm_get_intercept(vcpu, VMCB_EXC_INTCPT, BIT(IDT_BP));
 		break;
 	case VM_CAP_IPI_EXIT:
 		vlapic = vm_lapic(vcpu->vcpu);
