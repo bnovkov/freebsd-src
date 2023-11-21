@@ -185,6 +185,9 @@ coresight_backend_init(struct hwt_context *ctx)
 {
 	int error;
 
+	/* Coresight does not require kva, since TMC uses raw pages */
+	ctx->kva_req = 0;
+
 	if (ctx->mode == HWT_MODE_THREAD)
 		error = coresight_backend_init_thread(ctx);
 	else
