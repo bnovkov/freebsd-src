@@ -343,13 +343,17 @@ vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
 static void
 vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size, int domain)
 {
-	vmem_t *arena = vmd_kstack_arena[domain];
+	vmem_t *arena;
 
 	size = round_page(size);
+#ifdef __ILP32__
+	arena = kernel_arena;
+#else
+	arena = vmd_kstack_arena[domain];
 	if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
 		arena = vm_dom[domain].vmd_kernel_arena;
 	}
-
+#endif
 	vmem_free(arena, addr, size);
 }
 
