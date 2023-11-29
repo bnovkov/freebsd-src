@@ -3497,6 +3497,88 @@ vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 	return (rv);
 }
 
+static int
+vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry){
+  vm_pindex_t pindex;
+  vm_offset_t cur, start, end;
+  vm_page_t m;
+  vm_object_t obj = entry->object.vm_object;
+  int rv = KERN_SUCCESS;
+
+#if VM_NRESERVLEVEL > 0
+  const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
+  const size_t reserv_npages = 1 << VM_LEVEL_0_ORDER;
+  bool retry = false;
+  vm_page_t mt;
+#endif
+
+  start = entry->start;
+  end = entry->end;
+
+  VM_OBJECT_WLOCK(obj);
+
+  /* Populate entry's object with pages. */
+  cur = start;
+  while(cur < end){
+#if VM_NRESERVLEVEL > 0
+    /* First run - try to map using a superpage */
+    pindex = atop(cur);
+    alloc:
+    if((cur & (reserv_size - 1)) == 0 && (cur - end) >= reserv_size && !retry){
+      m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED, reserv_npages, 0, ~0, 0, 0, VM_MEMATTR_DEFAULT);
+      if (m == NULL){
+        /* Alloc failed, fall back to 0-order pages */
+        retry = true;
+        goto alloc;
+      }
+
+      for(mt = m; mt < (m + reserv_npages); mt++){
+        vm_page_valid(mt);
+        vm_page_xunbusy(mt);
+      }
+
+      cur += reserv_size;
+    } else {
+#endif
+    m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED);
+      if(m == NULL){
+        /* OOM? */
+        rv = KERN_NO_SPACE;
+        break;
+      }
+      /* We got a 0-order page */
+      cur += PAGE_SIZE;
+      vm_page_valid(m);
+      vm_page_xunbusy(m);
+
+#if VM_NRESERVLEVEL > 0
+      if(retry)
+        retry = false;
+     }
+#endif
+  }
+  VM_OBJECT_WUNLOCK(obj);
+
+  cur = start;
+  while (cur < end) {
+    /*
+     * Simulate a fault to get the page and enter
+     * it into the physical map.
+     */
+    rv = vm_fault(map, cur, VM_PROT_NONE,
+                  VM_FAULT_WIRE, NULL);
+    if (rv != KERN_SUCCESS)
+      break;
+
+    VM_OBJECT_RLOCK(obj);
+    m = vm_page_lookup(obj, atop(cur));
+    VM_OBJECT_RUNLOCK(obj);
+
+    cur += pagesizes[m->psind];
+  }
+  return (rv);
+}
+
 /*
  *	vm_map_wire_locked:
  *
@@ -3595,17 +3677,22 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 			vm_map_busy(map);
 			vm_map_unlock(map);
 
-			for (faddr = saved_start; faddr < saved_end;
-			    faddr += incr) {
-				/*
-				 * Simulate a fault to get the page and enter
-				 * it into the physical map.
-				 */
-				rv = vm_fault(map, faddr, VM_PROT_NONE,
-				    VM_FAULT_WIRE, NULL);
-				if (rv != KERN_SUCCESS)
-					break;
-			}
+      if(user_wire && !holes_ok && start == entry->start && end == entry->end){
+              vm_map_wire_prefault_entry(map, entry);
+      } else {
+              for (faddr = saved_start; faddr < saved_end;
+                   faddr += incr) {
+                      /*
+                       * Simulate a fault to get the page and enter
+                       * it into the physical map.
+                       */
+                      rv = vm_fault(map, faddr, VM_PROT_NONE,
+                                    VM_FAULT_WIRE, NULL);
+                      if (rv != KERN_SUCCESS)
+                              break;
+              }
+      }
+
 			vm_map_lock(map);
 			vm_map_unbusy(map);
 			if (last_timestamp + 1 != map->timestamp) {
