@@ -74,6 +74,10 @@ PMC_SOFT_DEFINE( , , page_fault, read);
 PMC_SOFT_DEFINE( , , page_fault, write);
 #endif
 
+#ifdef HWT_HOOKS
+#include "opt_hwt_hooks.h"
+#endif
+
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
@@ -259,6 +263,12 @@ trap(struct trapframe *frame)
 		if (pmc_intr != NULL &&
 		    (*pmc_intr)(frame) != 0)
 			return;
+#endif
+
+#ifdef HWT_HOOKS
+    if(hwt_intr != NULL &&
+       (*hwt_intr)(frame) != 0)
+      return;
 #endif
 	}
 

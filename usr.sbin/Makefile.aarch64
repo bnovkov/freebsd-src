@@ -1,4 +1,5 @@
 
 .if ${MK_ACPI} != "no"
 SUBDIR+=	acpi
+SUBDIR+=	hwt
 .endif
