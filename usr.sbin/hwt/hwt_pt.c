@@ -139,73 +139,56 @@ hwt_pt_set_config(struct trace_context *tc)
 }
 
 
-/*
-  static int dump_packet(uint64_t offset, const struct pt_packet *packet,
-  struct ptdump_tracking *tracking,
-  const struct ptdump_options *options,
-  const struct pt_config *config)
-  {
+static int
+hwt_print_packet(struct trace_context *tc, struct pt_packet *pkt)
+{
+  int error = 0;
 
+
+  switch (pkt->type) {
+  default:
+    printf("%s: unknown packet type encountered: %d\n", __func__, pkt->type);
+    error = -1;
   }
+  return (error);
+}
 
 
-  static int
-  hwt_pt_dump_packet(struct trace_context *tc, struct pt_packet *pkt)
-  {
-  struct ptdump_buffer buffer;
-	int error;
+static int
+hwt_pt_decode_chunk(struct trace_context *tc, size_t offs, size_t len __unused, size_t *processed){
+  struct pt_packet packet;
+  int error = -1;
 
-	memset(&buffer, 0, sizeof(buffer));
+#if 0
+  pt_packet_sync_set(decoder, offset);
 
-	print_field(buffer.offset, "%016" PRIx64, offset);
+  while(1) {
+    error = pt_pkt_get_offset(decoder, &offset);
+    if (error < 0){
+       diag("error getting offset", offset, error);
+       break;
+    }
 
-  if(tc->raw){
-  // TODO: dump raw packet bytes to tc->raw_f
-  } else {
-  error = print_packet(&buffer, offset, packet, tracking, options,
-  config);
-  if (error < 0)
-  return error;
+    error = pt_pkt_next(decoder, &packet, sizeof(packet));
+    if (error < 0) {
+      if (error == -pte_eos){
+        error = 0;
+      }else {
+        diag("error decoding packet", offset, error);
+      }
+      break;
+    }
 
-  // TODO: print buffer
+    error = hwt_pt_process_packet(offset, &packet);
+    if (error < 0){
+      printf("Error while processing packet: %s\n" );
+      break;
+    }
   }
-  return (0);
-  }
-*/
-
-/* static int */
-/* hwt_pt_decode_chunk(struct trace_context *tc, size_t offs, size_t len, size_t *processed){ */
-/*   struct pt_packet packet; */
-
-
-/*   error = pt_pkt_get_offset(decoder, &offset); */
-/*   if (error < 0) */
-/*     return diag("error getting offset", offset, error); */
-
-/*   error = pt_pkt_next(decoder, &packet, sizeof(packet)); */
-/*   if (error < 0) { */
-/*     if (error == -pte_eos){ */
-/*       if (new_offs < cursor){ */
-/*         /\* EOS but new data is available - reset decoder position *\/ */
-/*       } else { */
-/*         /\* We've reached the end of the mapped buffer - call kqueue and wait *\/ */
-/*         continue; */
-/*       } */
-/*       return 0; */
-/*     } */
-
-/*     return diag("error decoding packet", offset, error); */
-/*   } */
-
-/*   error = hwt_pt_process_packet(offset, &packet, tracking, options, */
-/*                                 config); */
-/*   if (error < 0){ */
-/*     printf("Error while processing packet: %s\n", ); */
-/*     return (EXIT_FAILURE); */
-/*   } */
-
-/*   return (0); */
-/* } */
+#endif
+  
+  return (error);
+}
 
 /*
  * Dumps raw packet bytes into tc->raw_f.
@@ -230,11 +213,8 @@ pt_process_chunk(struct trace_context *tc, size_t offs, size_t len, uint32_t *pr
   if(tc->raw){
     return hwt_pt_dump_chunk(tc, offs, len, processed);
   } else {
-    return (-1);
+    hwt_pt_decode_chunk(tc);
   }
-    //   } else {
-    //    hwt_pt_decode_chunk(tc)
-    //  }
 }
 
 static int

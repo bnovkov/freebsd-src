@@ -68,19 +68,6 @@
 
 #define	PT_XSAVE_MASK	(XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
 
-// TODO: move to specialreg.h
-
-#define APIC_LVT_PCINT_DELIVERY_MASK 0x700
-
-#define APIC_LVT_PCINT_DELIVERY_FIXED 0
-#define APIC_LVT_PCINT_DELIVERY_SMI 0x200
-#define APIC_LVT_PCINT_DELIVERY_NMI 0x400
-#define APIC_LVT_PCINT_DELIVERY_INIT 0x500
-#define APIC_LVT_PCINT_DELIVERY_EXTINT 0x700
-
-#define APIC_LVT_PCINT_VECTOR_MASK 0xff
-
-
 MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
 static struct mtx pt_mtx;
@@ -255,6 +242,8 @@ pt_init_cpu(struct hwt_cpu *cpu, struct thread *hwt_td){
 static int
 pt_backend_init_thread(struct hwt_context *ctx)
 {
+  /* TODO: thread mode will require a per-thread PT xsave block */
+  // hwt_hook = pt_hwt_hook;
 	return (-1);
 }
 
@@ -334,7 +323,7 @@ pt_configure_ranges(struct pt_cpu *pt_cpu, struct pt_cpu_config *cfg)
 		case 2:
 			pt_ext->rtit_ctl |= (1UL << RTIT_CTL_ADDR_CFG_S(1));
 			pt_ext->rtit_addr1_a = cfg->ip_ranges[1].start;
-			pt_ext->rtit_addr1_b = cfg->ip_ranges[1].end;
+			pt_ext->rtit_addr1_b = cfg->ip_ranges[1].end; 
     case 1:
 			pt_ext->rtit_ctl |= (1UL << RTIT_CTL_ADDR_CFG_S(0));
 			pt_ext->rtit_addr0_a = cfg->ip_ranges[0].start;
@@ -548,11 +537,8 @@ pt_init(void){
   dprintf("%s: lvt_pm_msr 0x%x\n", __func__, lvt_pm_msr);
   wrmsr(MSR_APIC_LVT_PCINT, lvt_pm_msr);
 
- 
-  /* Install ToPA PMI handler and PT hwt hook. */
+  /* Install ToPA PMI handler. */
   hwt_intr = pt_topa_intr;
-  /* XXX: how do we make sure that hwt_hook is called only for actively traced threads? */
-  // hwt_hook = pt_hwt_hook;
 
   return (0);
 }
