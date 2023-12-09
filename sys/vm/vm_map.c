@@ -3500,7 +3500,7 @@ vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 static int
 vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry){
   vm_pindex_t pindex;
-  vm_offset_t cur, start, end;
+  vm_offset_t cur, end;
   vm_page_t m;
   vm_object_t obj = entry->object.vm_object;
   int rv = KERN_SUCCESS;
@@ -3512,19 +3512,19 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry){
   vm_page_t mt;
 #endif
 
-  start = entry->start;
-  end = entry->end;
 
   VM_OBJECT_WLOCK(obj);
 
   /* Populate entry's object with pages. */
-  cur = start;
+  end = entry->end;
+  cur = entry->start;
   while(cur < end){
 #if VM_NRESERVLEVEL > 0
     /* First run - try to map using a superpage */
-    pindex = atop(cur);
+    pindex = OFF_TO_IDX((cur - entry->start) + entry->offset);
+
     alloc:
-    if((cur & (reserv_size - 1)) == 0 && (cur - end) >= reserv_size && !retry){
+    if((cur & (reserv_size - 1)) == 0 && (end - cur) >= reserv_size && !retry){
       m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED, reserv_npages, 0, ~0, 0, 0, VM_MEMATTR_DEFAULT);
       if (m == NULL){
         /* Alloc failed, fall back to 0-order pages */
@@ -3559,7 +3559,7 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry){
   }
   VM_OBJECT_WUNLOCK(obj);
 
-  cur = start;
+  cur = entry->start;
   while (cur < end) {
     /*
      * Simulate a fault to get the page and enter
