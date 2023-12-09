@@ -3576,7 +3576,7 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry){
       break;
 
     VM_OBJECT_RLOCK(obj);
-    m = vm_page_lookup(obj, atop(cur));
+    m = vm_page_lookup(obj, OFF_TO_IDX((cur - entry->start) + entry->offset));
     VM_OBJECT_RUNLOCK(obj);
 
     cur += pagesizes[m->psind];
