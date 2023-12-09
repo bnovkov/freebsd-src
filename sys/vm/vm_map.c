@@ -3497,6 +3497,12 @@ vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 	return (rv);
 }
 
+
+/*
+ *
+ * Assumes that the entire entry is not populated.
+ */
+
 static int
 vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry){
   vm_pindex_t pindex;
@@ -3511,7 +3517,6 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry){
   bool retry = false;
   vm_page_t mt;
 #endif
-
 
   VM_OBJECT_WLOCK(obj);
 
@@ -3677,7 +3682,10 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 			vm_map_busy(map);
 			vm_map_unlock(map);
 
-      if(user_wire && !holes_ok && start == entry->start && end == entry->end){
+      if(flags & VM_MAP_WIRE_PREFAULT){
+              KASSERT(user_wire, ("%s: attempting to prefault non-userspace entry\n", __func__));
+              KASSERT(!holes_ok, ("%s: attempting to prefault noncontig entry", __func__));
+              KASSERT(start == entry->start && end == entry->end, ("%s: ", __func__));
               vm_map_wire_prefault_entry(map, entry);
       } else {
               for (faddr = saved_start; faddr < saved_end;
