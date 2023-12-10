@@ -59,7 +59,6 @@
 
 #include "pt.h"
 
-#define PT_DEBUG
 #ifdef  PT_DEBUG
 #define	dprintf(fmt, ...)	printf(fmt, ##__VA_ARGS__)
 #else
@@ -189,7 +188,7 @@ pt_topa_prepare(struct pt_cpu *cpu){
   struct pt_buffer *buf = &cpu->buf;
   size_t topa_size = TOPA_SIZE_4K; /* 4K only for now */
 
-  KASSERT(cpu->topa_hw == NULL, ("%s: ToPA info already exists"));
+  KASSERT(buf->topa_hw == NULL, ("%s: ToPA info already exists", __func__));
   /* Allocate array of TOPA entries. */
   buf->topa_hw = malloc((vm->npages + 1) * sizeof(uint64_t), M_PT, M_WAITOK | M_ZERO);
   for(i = 0; i < vm->npages; i++){
@@ -215,12 +214,14 @@ pt_init_cpu(struct hwt_cpu *cpu, struct thread *hwt_td){
   pt_ext = &pt_cpu->save_area.pt_ext_area;
   hdr = &pt_cpu->save_area.header;
 
+  dprintf("%s\n", __func__);
   KASSERT(pt_cpu->vm == NULL, ("%s: active hwt_vm context in cpu %d\n", __func__, cpu->cpu_id));
   KASSERT(pt_cpu->buf.topa_hw == NULL, ("%s: active ToPA buffer in cpu %d\n", __func__, cpu->cpu_id));
 
   memset(pt_cpu, 0, sizeof(struct pt_cpu));
   pt_cpu->vm = cpu->vm;
   if(pt_topa_prepare(pt_cpu)){
+    dprintf("%s: failed to prepare ToPA buffer\n", __func__);
     pt_cpu->vm = NULL;
     return (-1);
   }
@@ -622,13 +623,13 @@ pt_modevent(module_t mod, int type, void *data)
  
   return (0);
 }
- 
+
 static moduledata_t pt_mod = {
 	"intel_pt",
   pt_modevent,
   NULL
 };
-   
+
 DECLARE_MODULE(intel_pt, pt_mod, SI_SUB_DRIVERS, SI_ORDER_FIRST);
 MODULE_DEPEND(intel_pt, hwt, 1, 1, 1);
 MODULE_VERSION(intel_pt, 1);

@@ -65,7 +65,6 @@
 #include <dev/hwt/hwt_record.h>
 
 #define	HWT_THREAD_DEBUG
-#undef	HWT_THREAD_DEBUG
 
 #ifdef	HWT_THREAD_DEBUG
 #define	dprintf(fmt, ...)	printf(fmt, ##__VA_ARGS__)
@@ -419,12 +418,14 @@ hwt_vm_alloc(size_t bufsize, char *path, struct hwt_vm **vm0)
 
 	error = hwt_vm_alloc_buffers(vm);
 	if (error) {
+		dprintf("%s: failed to alloc buffers\n", __func__);
 		free(vm, M_HWT_VM);
 		return (error);
 	}
 
 	error = hwt_vm_create_cdev(vm, path);
 	if (error) {
+		dprintf("%s: failed to create cdev\n", __func__);
 		hwt_vm_free(vm);
 		return (error);
 	}

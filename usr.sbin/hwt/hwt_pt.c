@@ -35,6 +35,7 @@
 #include <sys/sysctl.h>
 #include <sys/event.h>
 
+#include <err.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -54,6 +55,7 @@ hwt_pt_init(struct trace_context *tc, struct pt_packet_decoder **decoder)
 	int error;
   struct pt_packet_decoder *dec;
   struct pt_config config;
+	struct kevent event;
 
   if(tc->raw == 0){
     memset(&config, 0, sizeof(config));
@@ -84,17 +86,18 @@ hwt_pt_init(struct trace_context *tc, struct pt_packet_decoder **decoder)
   }
 
   tc->kqueue_fd = kqueue();
-	if (tc->kqueue_fd == -1)
-		err(EXIT_FAILURE, "kqueue() failed");
+	if (tc->kqueue_fd == -1){
+    printf("%s:  kqueue() failed\n", __func__);
+		return -1;
+  }
 
-	EV_SET(&event, ARM_SPE_BUF_FULL_EV, EVFILT_USER, EV_ADD | EV_CLEAR, NOTE_FFCOPY, 0, NULL);
+	EV_SET(&event, HWT_PT_BUF_RDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR, NOTE_FFCOPY, 0, NULL);
 
-	ret = kevent(tc->kqueue_fd, &event, 1, NULL, 0, NULL);
-	if (ret == -1)
-		err(EXIT_FAILURE, "kevent register");
+	error = kevent(tc->kqueue_fd, &event, 1, NULL, 0, NULL);
+	if (error == -1)
+    errx(EXIT_FAILURE, "kevent");
 	if (event.flags & EV_ERROR)
 		errx(EXIT_FAILURE, "Event error: %s", strerror(event.data));
-
 
 	return (0);
 }
@@ -138,12 +141,11 @@ hwt_pt_set_config(struct trace_context *tc)
 	return (error);
 }
 
-
+#if 0
 static int
-hwt_print_packet(struct trace_context *tc, struct pt_packet *pkt)
+hwt_pt_print_packet(struct trace_context *tc __unused, struct pt_packet *pkt)
 {
   int error = 0;
-
 
   switch (pkt->type) {
   default:
@@ -152,14 +154,14 @@ hwt_print_packet(struct trace_context *tc, struct pt_packet *pkt)
   }
   return (error);
 }
-
+#endif
 
 static int
-hwt_pt_decode_chunk(struct trace_context *tc, size_t offs, size_t len __unused, size_t *processed){
-  struct pt_packet packet;
+hwt_pt_decode_chunk(struct trace_context *tc __unused, size_t offs __unused, size_t len __unused, uint32_t *processed __unused){
   int error = -1;
-
 #if 0
+  struct pt_packet packet;
+
   pt_packet_sync_set(decoder, offset);
 
   while(1) {
@@ -179,14 +181,14 @@ hwt_pt_decode_chunk(struct trace_context *tc, size_t offs, size_t len __unused, 
       break;
     }
 
-    error = hwt_pt_process_packet(offset, &packet);
+    error = hwt_pt_print_packet(offset, &packet);
     if (error < 0){
       printf("Error while processing packet: %s\n" );
       break;
     }
   }
 #endif
-  
+
   return (error);
 }
 
@@ -213,7 +215,7 @@ pt_process_chunk(struct trace_context *tc, size_t offs, size_t len, uint32_t *pr
   if(tc->raw){
     return hwt_pt_dump_chunk(tc, offs, len, processed);
   } else {
-    hwt_pt_decode_chunk(tc);
+    return hwt_pt_decode_chunk(tc, offs, len, processed);
   }
 }
 
@@ -256,8 +258,8 @@ hwt_pt_process(struct trace_context *tc)
 
 	while (1) {
 
-		ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
-		if (ret == -1)
+		error = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
+		if (error == -1)
 			err(EXIT_FAILURE, "kevent wait");
 
     /* TODO: MD "cookie" pointer in tc */

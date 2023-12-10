@@ -29,6 +29,7 @@
 
 #include <sys/types.h>
 
+#include <x86/include/specialreg.h>
 
 #define IP_FILTER_MAX_RANGES (4) /* Intel SDM Vol. 3C, 33-29 */
 
