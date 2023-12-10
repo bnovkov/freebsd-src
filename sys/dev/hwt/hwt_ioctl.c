@@ -56,9 +56,7 @@
 #include <dev/hwt/hwt_record.h>
 #include <dev/hwt/hwt_ioctl.h>
 #include <dev/hwt/hwt_vm.h>
-
 #define	HWT_IOCTL_DEBUG
-#undef	HWT_IOCTL_DEBUG
 
 #ifdef	HWT_IOCTL_DEBUG
 #define	dprintf(fmt, ...)	printf(fmt, ##__VA_ARGS__)
@@ -266,7 +264,7 @@ hwt_ioctl_alloc_mode_cpu(struct thread *td, struct hwt_owner *ho,
 	struct hwt_cpu *cpu;
 	struct hwt_vm *vm;
 	char path[MAXPATHLEN];
-	size_t cpusetsize;
+	//size_t cpusetsize;
 	cpuset_t cpu_map;
 	int cpu_count;
 	int cpu_id;
@@ -274,10 +272,12 @@ hwt_ioctl_alloc_mode_cpu(struct thread *td, struct hwt_owner *ho,
 
 	cpu_count = 0;
 
-	cpusetsize = min(halloc->cpusetsize, sizeof(cpuset_t));
-	error = copyin(halloc->cpu_map, &cpu_map, cpusetsize);
-	if (error)
-		return (error);
+  /* cpusetsize = min(halloc->cpusetsize, sizeof(cpuset_t)); */
+	/* error = copyin(halloc->cpu_map, &cpu_map, cpusetsize); */
+	/* if (error) */
+	/* 	return (error); */
+
+  cpu_map = halloc->cpu_map;
 
 	CPU_FOREACH(cpu_id) {
 		if (!CPU_ISSET(cpu_id, &cpu_map))
@@ -291,13 +291,12 @@ hwt_ioctl_alloc_mode_cpu(struct thread *td, struct hwt_owner *ho,
 		if (ctx)
 			return (EEXIST);
 #endif
-
 		cpu_count++;
 	}
 
 	if (cpu_count == 0)
 		return (ENODEV);
-
+	dprintf("%s: allocating cpu hwt context\n", __func__);
 	/* Allocate a new HWT context. */
 	error = hwt_ctx_alloc(&ctx);
 	if (error)
@@ -321,6 +320,7 @@ hwt_ioctl_alloc_mode_cpu(struct thread *td, struct hwt_owner *ho,
 			continue;
 
 		sprintf(path, "hwt_%d_%d", ctx->ident, cpu_id);
+    dprintf("%s: cpud_id %d, path %s\n", __func__, cpu_id, path);
 		error = hwt_vm_alloc(ctx->bufsize, path, &vm);
 		if (error) {
 			/* TODO: remove all allocated cpus. */

@@ -49,8 +49,6 @@
 #include <dev/hwt/hwt_thread.h>
 #include <dev/hwt/hwt_backend.h>
 
-#define	HWT_BACKEND_DEBUG
-#undef	HWT_BACKEND_DEBUG
 
 #ifdef	HWT_BACKEND_DEBUG
 #define	dprintf(fmt, ...)	printf(fmt, ##__VA_ARGS__)
@@ -150,9 +148,12 @@ hwt_backend_lookup(const char *name)
 	struct hwt_backend_entry *entry;
 	struct hwt_backend *backend;
 
+  dprintf("%s: looking up %s\n", __func__, name);
+
 	HWT_BACKEND_LOCK();
 	LIST_FOREACH(entry, &hwt_backends, next) {
 		backend = entry->backend;
+    dprintf("%s: entry %s\n", __func__, backend->name);
 		if (strcmp(backend->name, name) == 0) {
 			HWT_BACKEND_UNLOCK();
 			return (backend);
