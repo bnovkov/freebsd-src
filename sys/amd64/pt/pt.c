@@ -38,6 +38,10 @@
 #include <sys/taskqueue.h>
 #include <sys/event.h>
 #include <sys/types.h>
+#include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
+
 
 #include <x86/include/x86_var.h>
 #include <x86/include/intr_machdep.h>
@@ -68,6 +72,9 @@
 #define	PT_XSAVE_MASK	(XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
 
 MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
+
+SDT_PROVIDER_DECLARE(pt);
+SDT_PROBE_DEFINE(pt, , , topa__intr);
 
 static struct mtx pt_mtx;
 static struct hwt_backend_ops pt_ops;
@@ -140,8 +147,7 @@ xsaves(char *addr, uint64_t mask)
 static void
 pt_save_restore(struct pt_cpu *pt_pc, bool save)
 {
-	u_long xcr0;
-	u_long cr0;
+	u_long xcr0, cr0;
 	u_long xss;
 
   //	KASSERT((curthread)->td_critnest >= 1, ("Not in critical section"));
@@ -172,11 +178,13 @@ pt_save_restore(struct pt_cpu *pt_pc, bool save)
 
 static void
 pt_cpu_start(struct pt_cpu *cpu){
+  dprintf("%s\n", __func__);
   pt_save_restore(cpu, false);
 };
 
 static void
 pt_cpu_stop(struct pt_cpu *cpu){
+  dprintf("%s\n", __func__);
   pt_save_restore(cpu, true);
 };
 
@@ -266,12 +274,14 @@ pt_backend_init(struct hwt_context *ctx)
 {
 	int error;
 
+  dprintf("%s\n", __func__);
 	if (ctx->mode == HWT_MODE_THREAD)
 		error = pt_backend_init_thread(ctx);
 	else
 		error = pt_backend_init_cpu(ctx);
 
   if(error == 0){
+    dprintf("%s: kqueue fd: %d\n", __func__, ctx->kqueue_fd);
     kqueue_fd = ctx->kqueue_fd;
   }
 
@@ -285,6 +295,7 @@ pt_backend_deinit(struct hwt_context *ctx)
   struct pt_cpu *pt_cpu;
   struct pt_buffer *buf;
 
+  dprintf("%s\n", __func__);
   TAILQ_FOREACH(cpu, &ctx->cpus, next) {
     pt_cpu = &pt_pcpu[cpu->cpu_id];
     buf = &pt_cpu->buf;
@@ -381,18 +392,23 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 static void
 pt_backend_enable(int cpu_id)
 {
+  dprintf("%s\n", __func__);
+
   pt_cpu_start(&pt_pcpu[cpu_id]);
 }
 
 static void
 pt_backend_disable(int cpu_id)
 {
+  dprintf("%s\n", __func__);
+
   pt_cpu_stop(&pt_pcpu[cpu_id]);
 }
 
 static int
 pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset){
   struct pt_cpu *pt_cpu = &pt_pcpu[cpu_id];
+  dprintf("%s\n", __func__);
 
   if(pt_cpu->vm == NULL)
     return (-1);
@@ -463,8 +479,8 @@ pt_topa_intr(struct trapframe *tf)
   struct pt_cpu *pt_cpu;
   struct pt_buffer *buf;
 
+  SDT_PROBE0(pt, , , topa__intr);
   /* TODO: handle possible double entry */
-
   /* Check ToPA PMI status on curcpu. */
   reg = rdmsr(MSR_IA_GLOBAL_STATUS);
   if((reg & GLOBAL_STATUS_FLAG_TRACETOPAPMI) == 0)
