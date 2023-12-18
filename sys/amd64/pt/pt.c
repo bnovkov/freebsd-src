@@ -76,6 +76,9 @@ MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 SDT_PROVIDER_DECLARE(pt);
 SDT_PROBE_DEFINE(pt, , , topa__intr);
 
+/* IPI handler */
+extern inthand_t IDTVEC(pt_toggle_isr);
+
 static struct mtx pt_mtx;
 static struct hwt_backend_ops pt_ops;
 bool loaded = false;
@@ -105,6 +108,7 @@ static struct pt_cpu {
   struct thread *hwt_td;
   struct pt_buffer buf;
   struct task	task;
+  uint32_t  lvt_pm_msr;
 } pt_pcpu[MAXCPU];
 
 struct pt_cpu_info {
@@ -114,6 +118,9 @@ struct pt_cpu_info {
 	uint32_t			l1_eax;
 	uint32_t			l1_ebx;
 } pt_info;
+
+
+static int pt_ipinum = -1;
 
 static int kqueue_fd;
 static struct hwt_backend backend = {
@@ -149,8 +156,9 @@ pt_save_restore(struct pt_cpu *pt_pc, bool save)
 {
 	u_long xcr0, cr0;
 	u_long xss;
+  uint32_t lvt_pcint_msr;
 
-  //	KASSERT((curthread)->td_critnest >= 1, ("Not in critical section"));
+  KASSERT((curthread)->td_critnest >= 1, ("Not in critical section"));
 	cr0 = rcr0();
 	if (cr0 & CR0_TS)
 		clts();
@@ -163,9 +171,20 @@ pt_save_restore(struct pt_cpu *pt_pc, bool save)
 		KASSERT((rdmsr(MSR_IA32_RTIT_CTL) & RTIT_CTL_TRACEEN) != 0,
             ("%s: PT is disabled", __func__));
 		xsaves((char *)&pt_pc->save_area, XFEATURE_ENABLED_PT);
+    /* Clear PCINT MSR. */
+    lvt_pcint_msr = rdmsr32();
+    lvt_pcint_msr |= APIC_LVT_PCINT_MASK_BIT;
+    lvt_pcint_msr &= ~APIC_LVT_PCINT_DELIVERY_MASK;
+    wrmsr(MSR_APIC_LVT_PCINT, lvt_pcint_msr);
 	} else {
 		KASSERT((rdmsr(MSR_IA32_RTIT_CTL) & RTIT_CTL_TRACEEN) == 0,
             ("%s: PT is enabled", __func__));
+    /* Set PCINT MSR. */
+    lvt_pcint_msr = rdmsr32();
+    lvt_pcint_msr &= ~(APIC_LVT_PCINT_MASK_BIT | APIC_LVT_PCINT_DELIVERY_MASK);
+    /* Deliver ToPA interrupt using NMI */
+    lvt_pcint_msr |= APIC_LVT_PCINT_DELIVERY_NMI;
+    wrmsr(MSR_APIC_LVT_PCINT, lvt_pcint_msr);
 		xrstors((char *)&pt_pc->save_area, XFEATURE_ENABLED_PT);
 	}
 	wrmsr(MSR_IA32_XSS, xss);
@@ -175,19 +194,17 @@ pt_save_restore(struct pt_cpu *pt_pc, bool save)
 		load_cr0(cr0);
 }
 
-
 static void
 pt_cpu_start(struct pt_cpu *cpu){
   dprintf("%s\n", __func__);
   pt_save_restore(cpu, false);
-};
+}
 
 static void
 pt_cpu_stop(struct pt_cpu *cpu){
   dprintf("%s\n", __func__);
   pt_save_restore(cpu, true);
-};
-
+}
 
 static int
 pt_topa_prepare(struct pt_cpu *cpu){
@@ -212,38 +229,12 @@ pt_topa_prepare(struct pt_cpu *cpu){
   return (0);
 }
 
+/*
+ * Starts tracing on target CPU by sending an IPI.
+ */
 static int
-pt_init_cpu(struct hwt_cpu *cpu, struct thread *hwt_td){
-  struct pt_cpu *pt_cpu;
-  struct pt_ext_area *pt_ext;
-  struct xsave_header *hdr;
-
-  pt_cpu = &pt_pcpu[cpu->cpu_id];
-  pt_ext = &pt_cpu->save_area.pt_ext_area;
-  hdr = &pt_cpu->save_area.header;
-
-  dprintf("%s\n", __func__);
-  KASSERT(pt_cpu->vm == NULL, ("%s: active hwt_vm context in cpu %d\n", __func__, cpu->cpu_id));
-  KASSERT(pt_cpu->buf.topa_hw == NULL, ("%s: active ToPA buffer in cpu %d\n", __func__, cpu->cpu_id));
-
-  memset(pt_cpu, 0, sizeof(struct pt_cpu));
-  pt_cpu->vm = cpu->vm;
-  if(pt_topa_prepare(pt_cpu)){
-    dprintf("%s: failed to prepare ToPA buffer\n", __func__);
-    pt_cpu->vm = NULL;
-    return (-1);
-  }
-  /* Save hwt_td for kevent */
-  pt_cpu->hwt_td = hwt_td;
-  /* Prepare ToPA MSR values. */
-  pt_ext->rtit_ctl = RTIT_CTL_TOPA;
-  pt_ext->rtit_output_base = (uint64_t)vtophys(pt_cpu->buf.topa_hw);
-  pt_ext->rtit_output_mask_ptrs = 0x7f; /* TODO: ? */
-  /* Init header */
-  hdr->xsave_bv = XFEATURE_ENABLED_PT;
-  hdr->xcomp_bv = XFEATURE_ENABLED_PT | (1ULL << 63) /* compaction */;
-  /* Enable tracing. */
-  pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
+pt_init_cpu(int cpu_id){
+  ipi_cpu(cpu_id, pt_ipinum);
 
 	return (0);
 }
@@ -272,7 +263,7 @@ pt_backend_init_cpu(struct hwt_context *ctx)
 static int
 pt_backend_init(struct hwt_context *ctx)
 {
-	int error;
+	int error = 0;
 
   dprintf("%s\n", __func__);
 	if (ctx->mode == HWT_MODE_THREAD)
@@ -280,10 +271,15 @@ pt_backend_init(struct hwt_context *ctx)
 	else
 		error = pt_backend_init_cpu(ctx);
 
-  if(error == 0){
-    dprintf("%s: kqueue fd: %d\n", __func__, ctx->kqueue_fd);
-    kqueue_fd = ctx->kqueue_fd;
-  }
+  if(error != 0)
+    return (error);
+
+  dprintf("%s: kqueue fd: %d\n", __func__, ctx->kqueue_fd);
+  kqueue_fd = ctx->kqueue_fd;
+
+  /* Install ToPA PMI handler. */
+  KASSERT(hwt_intr == NULL, ("%s: ToPA PMI handler already present", __func__));
+  hwt_intr = pt_topa_intr;
 
 	return (error);
 }
@@ -296,6 +292,10 @@ pt_backend_deinit(struct hwt_context *ctx)
   struct pt_buffer *buf;
 
   dprintf("%s\n", __func__);
+  /* Remove ToPA PMI handler. */
+  KASSERT(hwt_intr != NULL, ("%s: ToPA PMI handler not present", __func__));
+  hwt_intr = NULL;
+
   TAILQ_FOREACH(cpu, &ctx->cpus, next) {
     pt_cpu = &pt_pcpu[cpu->cpu_id];
     buf = &pt_cpu->buf;
@@ -304,6 +304,8 @@ pt_backend_deinit(struct hwt_context *ctx)
       free(buf->topa_hw, M_PT);
       buf->topa_hw = NULL;
       pt_cpu->vm = NULL;
+      /* Stop tracing - HWT_IOC_STOP is not implemented yet */
+      pt_cpu_stop(pt_cpu);
     }
   }
 }
@@ -355,9 +357,20 @@ static int
 pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 {
   struct pt_cpu *pt_cpu = &pt_pcpu[cpu_id];
+  struct pt_ext_area *pt_ext;
+  struct xsave_header *hdr;
   struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
   int error = 0;
 
+  dprintf("%s\n", __func__);
+
+  KASSERT(pt_cpu->vm == NULL, ("%s: active hwt_vm context in cpu %d\n", __func__, cpu->cpu_id));
+  KASSERT(pt_cpu->buf.topa_hw == NULL, ("%s: active ToPA buffer in cpu %d\n", __func__, cpu->cpu_id));
+
+  pt_ext = &pt_cpu->save_area.pt_ext_area;
+  hdr = &pt_cpu->save_area.header;
+
+  /* TODO: sanitize input with 'supported' mask. */
 	if (cfg->rtit_ctl & RTIT_CTL_MTCEN){
     if((pt_info.l0_ebx & CPUPT_MTC) == 0 ){
       printf("%s: CPU does not support generating MTC packets\n", __func__);
@@ -385,6 +398,26 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
   if((error = pt_configure_ranges(pt_cpu, cfg)) != 0){
     return error;
   }
+
+  memset(pt_cpu, 0, sizeof(struct pt_cpu));
+  pt_cpu->vm = cpu->vm;
+  if(pt_topa_prepare(pt_cpu)){
+    dprintf("%s: failed to prepare ToPA buffer\n", __func__);
+    pt_cpu->vm = NULL;
+    return (-1);
+  }
+
+  /* Save hwt_td for kevent */
+  pt_cpu->hwt_td = hwt_td;
+  /* Prepare ToPA MSR values. */
+  pt_ext->rtit_ctl = RTIT_CTL_TOPA;
+  pt_ext->rtit_output_base = (uint64_t)vtophys(pt_cpu->buf.topa_hw);
+  pt_ext->rtit_output_mask_ptrs = 0x7f; /* TODO: ? */
+  /* Init header */
+  hdr->xsave_bv = XFEATURE_ENABLED_PT;
+  hdr->xcomp_bv = XFEATURE_ENABLED_PT | (1ULL << 63) /* compaction */;
+  /* Enable tracing. */
+  pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
 
 	return (0);
 }
@@ -450,6 +483,11 @@ pt_hwt_hook(struct thread *td, int func, void *arg){
   }
 }
 
+void
+pt_handle_toggle_intr(struct trapframe *tf){
+  return;
+}
+
 /*
  * ToPA PMI kqueue task.
  */
@@ -486,6 +524,11 @@ pt_topa_intr(struct trapframe *tf)
   if((reg & GLOBAL_STATUS_FLAG_TRACETOPAPMI) == 0)
     return (retval);
 
+  /*
+   * Disable preemption.
+   */
+  critical_enter();
+
   retval = 1;
   pt_cpu = &pt_pcpu[curcpu];
   buf = &pt_cpu->buf;
@@ -515,14 +558,17 @@ pt_topa_intr(struct trapframe *tf)
   /* Re-enable tracing. */
   pt_cpu_start(pt_cpu);
 
+  /*
+   * Enable preemption.
+   */
+  critical_exit();
+
   return (retval);
 }
 
 static int
 pt_init(void){
   u_int cp[4];
-  uint32_t lvt_pm_msr = 0;
-
 
 	dprintf("Enumerating part 1\n");
 
@@ -545,17 +591,11 @@ pt_init(void){
 	pt_info.l1_eax = cp[0];
 	pt_info.l1_ebx = cp[1];
 
-  dprintf("LVT PMC INT info\n");
-
-  lvt_pm_msr = rdmsr32(MSR_APIC_LVT_PCINT);
-  /* Deliver ToPA interrupt using NMI. */
-  lvt_pm_msr &= ~APIC_LVT_PCINT_DELIVERY_MASK;
-  lvt_pm_msr |= APIC_LVT_PCINT_DELIVERY_NMI;
-  dprintf("%s: lvt_pm_msr 0x%x\n", __func__, lvt_pm_msr);
-  wrmsr(MSR_APIC_LVT_PCINT, lvt_pm_msr);
-
-  /* Install ToPA PMI handler. */
-  hwt_intr = pt_topa_intr;
+  pt_ipinum = lapic_ipi_alloc(pt_cpu_handle_ipi);
+  if (pt_ipinum < 0) {
+    printf("%s: cannot allocate and IDT vector\n");
+    return ENXIO;
+  }
 
   return (0);
 }
