@@ -53,6 +53,8 @@ struct pt_cpu_config {
 
 #define	PT_CPUID	0x14
 
+void pt_handle_toggle_intr(struct trapframe *tf);
+
 struct xsave_header {
 	uint64_t	xsave_bv;
 	uint64_t	xcomp_bv;
