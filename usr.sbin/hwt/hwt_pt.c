@@ -25,23 +25,21 @@
  */
 
 #include <sys/param.h>
-#include <sys/socket.h>
+#include <sys/cpuset.h>
+#include <sys/errno.h>
+#include <sys/event.h>
+#include <sys/hwt.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/errno.h>
-#include <sys/cpuset.h>
-#include <sys/hwt.h>
-#include <sys/wait.h>
+#include <sys/socket.h>
 #include <sys/sysctl.h>
-#include <sys/event.h>
+#include <sys/wait.h>
 
 #include <err.h>
+#include <libipt/intel-pt.h>
+#include <libxo/xo.h>
 #include <stdio.h>
 #include <string.h>
-
-#include <libxo/xo.h>
-
-#include <libipt/intel-pt.h>
 
 #include "hwt.h"
 #include "hwt_pt.h"
@@ -51,51 +49,52 @@
 static int
 hwt_pt_init(struct trace_context *tc, struct pt_packet_decoder **decoder)
 {
-  //	int cpu_id;
+	//	int cpu_id;
 	int error;
-  struct pt_packet_decoder *dec;
-  struct pt_config config;
+	struct pt_packet_decoder *dec;
+	struct pt_config config;
 	struct kevent event;
 
-  if(tc->raw == 0){
-    memset(&config, 0, sizeof(config));
-    config.size = sizeof(config);
-    config.begin = tc->base;
-    config.end = (uint8_t*)tc->base + tc->bufsize;
-    //config.cpu = cpu_id;
+	if (tc->raw == 0) {
+		memset(&config, 0, sizeof(config));
+		config.size = sizeof(config);
+		config.begin = tc->base;
+		config.end = (uint8_t *)tc->base + tc->bufsize;
+		// config.cpu = cpu_id;
 
-    dec = pt_pkt_alloc_decoder(&config);
-    if (!dec)
-      //pt_strreror(errcode);?
-      return (-1);
+		dec = pt_pkt_alloc_decoder(&config);
+		if (!dec)
+			// pt_strreror(errcode);?
+			return (-1);
 
-    error = pt_pkt_sync_forward(dec);
-    if (error < 0){
-      //        <handle error>(error);
-      return error;
-    }
+		error = pt_pkt_sync_forward(dec);
+		if (error < 0) {
+			//        <handle error>(error);
+			return error;
+		}
 
-    *decoder = dec;
-  } else {
-    /* No decoder needed, just a file for raw data. */
-    tc->raw_f = fopen(tc->filename, "w");
-    if (tc->raw_f == NULL) {
-      printf("could not open file %s\n", tc->filename);
-      return (ENXIO);
-    }
-  }
+		*decoder = dec;
+	} else {
+		/* No decoder needed, just a file for raw data. */
+		tc->raw_f = fopen(tc->filename, "w");
+		if (tc->raw_f == NULL) {
+			printf("could not open file %s\n", tc->filename);
+			return (ENXIO);
+		}
+	}
 
-  tc->kqueue_fd = kqueue();
-	if (tc->kqueue_fd == -1){
-    printf("%s:  kqueue() failed\n", __func__);
+	tc->kqueue_fd = kqueue();
+	if (tc->kqueue_fd == -1) {
+		printf("%s:  kqueue() failed\n", __func__);
 		return -1;
-  }
+	}
 
-	EV_SET(&event, HWT_PT_BUF_RDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR, NOTE_FFCOPY, 0, NULL);
+	EV_SET(&event, HWT_PT_BUF_RDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
+	    NOTE_FFCOPY, 0, NULL);
 
 	error = kevent(tc->kqueue_fd, &event, 1, NULL, 0, NULL);
 	if (error == -1)
-    errx(EXIT_FAILURE, "kevent");
+		errx(EXIT_FAILURE, "kevent");
 	if (event.flags & EV_ERROR)
 		errx(EXIT_FAILURE, "Event error: %s", strerror(event.data));
 
@@ -108,27 +107,27 @@ hwt_pt_set_config(struct trace_context *tc)
 	struct hwt_set_config sconf;
 	struct pt_cpu_config *config;
 	int i, error;
-  uint64_t rtit_ctl = 0;
+	uint64_t rtit_ctl = 0;
 
 	config = calloc(1, sizeof(struct pt_cpu_config));
-  /* Fill config */
-  if (tc->mode == HWT_MODE_THREAD)
+	/* Fill config */
+	if (tc->mode == HWT_MODE_THREAD)
 		rtit_ctl |= RTIT_CTL_USER;
 	else
 		rtit_ctl |= RTIT_CTL_OS;
 
-  if(tc->nranges){
-    /* IP range filtering. */
-    config->nranges = tc->nranges;
-    for (i = 0; i < tc->nranges; i++) {
-      config->ip_ranges[i].start = tc->addr_ranges[i*2];
-      config->ip_ranges[i].end = tc->addr_ranges[i*2 + 1];
-    }
-  }
+	if (tc->nranges) {
+		/* IP range filtering. */
+		config->nranges = tc->nranges;
+		for (i = 0; i < tc->nranges; i++) {
+			config->ip_ranges[i].start = tc->addr_ranges[i * 2];
+			config->ip_ranges[i].end = tc->addr_ranges[i * 2 + 1];
+		}
+	}
 
-  rtit_ctl |= RTIT_CTL_BRANCHEN;
+	rtit_ctl |= RTIT_CTL_BRANCHEN;
 
-  config->rtit_ctl = rtit_ctl;
+	config->rtit_ctl = rtit_ctl;
 	tc->config = config;
 
 	sconf.config = config;
@@ -157,8 +156,10 @@ hwt_pt_print_packet(struct trace_context *tc __unused, struct pt_packet *pkt)
 #endif
 
 static int
-hwt_pt_decode_chunk(struct trace_context *tc __unused, size_t offs __unused, size_t len __unused, uint32_t *processed __unused){
-  int error = -1;
+hwt_pt_decode_chunk(struct trace_context *tc __unused, size_t offs __unused,
+    size_t len __unused, uint32_t *processed __unused)
+{
+	int error = -1;
 #if 0
   struct pt_packet packet;
 
@@ -189,43 +190,47 @@ hwt_pt_decode_chunk(struct trace_context *tc __unused, size_t offs __unused, siz
   }
 #endif
 
-  return (error);
+	return (error);
 }
 
 /*
  * Dumps raw packet bytes into tc->raw_f.
  */
 static int
-hwt_pt_dump_chunk(struct trace_context *tc, size_t offs, size_t len, uint32_t *processed){
+hwt_pt_dump_chunk(struct trace_context *tc, size_t offs, size_t len,
+    uint32_t *processed)
+{
 
 	void *base;
 
-  base = (void *)((uintptr_t)tc->base + (uintptr_t)offs);
-  fwrite(base, len, 1, tc->raw_f);
+	base = (void *)((uintptr_t)tc->base + (uintptr_t)offs);
+	fwrite(base, len, 1, tc->raw_f);
 	fflush(tc->raw_f);
 
-  *processed = len;
+	*processed = len;
 
-  return (0);
+	return (0);
 }
 
 static int
-pt_process_chunk(struct trace_context *tc, size_t offs, size_t len, uint32_t *processed){
+pt_process_chunk(struct trace_context *tc, size_t offs, size_t len,
+    uint32_t *processed)
+{
 
-  if(tc->raw){
-    return hwt_pt_dump_chunk(tc, offs, len, processed);
-  } else {
-    return hwt_pt_decode_chunk(tc, offs, len, processed);
-  }
+	if (tc->raw) {
+		return hwt_pt_dump_chunk(tc, offs, len, processed);
+	} else {
+		return hwt_pt_decode_chunk(tc, offs, len, processed);
+	}
 }
 
 static int
 hwt_pt_process(struct trace_context *tc)
 {
 	size_t curoff, newoff;
-  size_t totals;
-  int error;
-	int len;//, ncpu;
+	size_t totals;
+	int error;
+	int len; //, ncpu;
 	uint32_t processed;
 	struct pt_packet_decoder *dec;
 	struct kevent tevent;
@@ -233,7 +238,7 @@ hwt_pt_process(struct trace_context *tc)
 	xo_open_container("trace");
 	xo_open_list("entries");
 
-  //	ncpu = hwt_ncpu();
+	//	ncpu = hwt_ncpu();
 
 	error = hwt_pt_init(tc, &dec);
 	if (error)
@@ -247,7 +252,7 @@ hwt_pt_process(struct trace_context *tc)
 
 	printf("Decoder started. Press ctrl+c to stop.\n");
 
-  curoff = 0;
+	curoff = 0;
 	processed = 0;
 	totals = 0;
 	len = newoff;
@@ -262,35 +267,35 @@ hwt_pt_process(struct trace_context *tc)
 		if (error == -1)
 			err(EXIT_FAILURE, "kevent wait");
 
-    /* TODO: MD "cookie" pointer in tc */
-    /* TODO: pass buffer layout through MD cookie */
-    newoff = tevent.data;
+		/* TODO: MD "cookie" pointer in tc */
+		/* TODO: pass buffer layout through MD cookie */
+		newoff = tevent.data;
 		if (newoff == curoff) {
 			if (tc->terminate)
 				break;
 		} else if (newoff > curoff) {
 			/* New entries in the trace buffer. */
 			len = newoff - curoff;
-			if(pt_process_chunk(tc, curoff, len, &processed)){
-        break;
-      }
+			if (pt_process_chunk(tc, curoff, len, &processed)) {
+				break;
+			}
 			curoff += processed;
 			totals += processed;
 
 		} else if (newoff < curoff) {
 			/* New entries in the trace buffer. Buffer wrapped. */
 			len = tc->bufsize - curoff;
-			if(pt_process_chunk(tc, curoff, len, &processed)){
-        break;
-      }
+			if (pt_process_chunk(tc, curoff, len, &processed)) {
+				break;
+			}
 			curoff += processed;
 			totals += processed;
 
 			curoff = 0;
 			len = newoff;
-			if(pt_process_chunk(tc, curoff, len, &processed)){
-        break;
-      }
+			if (pt_process_chunk(tc, curoff, len, &processed)) {
+				break;
+			}
 			curoff += processed;
 			totals += processed;
 		}
@@ -310,4 +315,3 @@ struct trace_dev_methods pt_methods = {
 	.process = hwt_pt_process,
 	.set_config = hwt_pt_set_config,
 };
-

@@ -36,41 +36,41 @@
 #define HWT_PT_BUF_RDY_EV 138
 
 struct pt_cpu_config {
-  uint64_t rtit_ctl;
-  register_t cr3_filter;
-  int nranges;
-  struct ipf_range {
-    vm_offset_t start;
-    vm_offset_t end;
-  } ip_ranges[IP_FILTER_MAX_RANGES];
-  uint32_t mtc_freq;
-  uint32_t cyc_thresh;
-  uint32_t psb_freq;
+	uint64_t rtit_ctl;
+	register_t cr3_filter;
+	int nranges;
+	struct ipf_range {
+		vm_offset_t start;
+		vm_offset_t end;
+	} ip_ranges[IP_FILTER_MAX_RANGES];
+	uint32_t mtc_freq;
+	uint32_t cyc_thresh;
+	uint32_t psb_freq;
 };
 
 #ifdef _KERNEL
 #include <sys/malloc.h>
 
-#define	PT_CPUID	0x14
+#define PT_CPUID 0x14
 
 void pt_handle_toggle_intr(struct trapframe *tf);
 
 struct xsave_header {
-	uint64_t	xsave_bv;
-	uint64_t	xcomp_bv;
-	uint8_t		reserved[48];
+	uint64_t xsave_bv;
+	uint64_t xcomp_bv;
+	uint8_t reserved[48];
 };
 
 struct pt_ext_area {
-	uint64_t	rtit_ctl;
-	uint64_t	rtit_output_base;
-	uint64_t	rtit_output_mask_ptrs;
-	uint64_t	rtit_status;
-	uint64_t	rtit_cr3_match;
-	uint64_t	rtit_addr0_a;
-	uint64_t	rtit_addr0_b;
-	uint64_t	rtit_addr1_a;
-	uint64_t	rtit_addr1_b;
+	uint64_t rtit_ctl;
+	uint64_t rtit_output_base;
+	uint64_t rtit_output_mask_ptrs;
+	uint64_t rtit_status;
+	uint64_t rtit_cr3_match;
+	uint64_t rtit_addr0_a;
+	uint64_t rtit_addr0_b;
+	uint64_t rtit_addr1_a;
+	uint64_t rtit_addr1_b;
 };
 
 MALLOC_DECLARE(M_PT);
