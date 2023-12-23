@@ -25,53 +25,51 @@
  */
 
 #include <sys/cdefs.h>
+#include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/rman.h>
+#include <sys/bus.h>
+#include <sys/event.h>
+#include <sys/hwt.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
-#include <sys/smp.h>
-#include <sys/hwt.h>
-#include <sys/bus.h>
-#include <sys/taskqueue.h>
-#include <sys/event.h>
-#include <sys/types.h>
-#include <sys/param.h>
 #include <sys/queue.h>
+#include <sys/rman.h>
 #include <sys/sdt.h>
-
-
-#include <x86/include/x86_var.h>
-#include <x86/include/intr_machdep.h>
-#include <x86/include/apicvar.h>
-#include <x86/include/specialreg.h>
-
-#include <machine/smp.h>
-#include <machine/cpufunc.h>
+#include <sys/smp.h>
+#include <sys/taskqueue.h>
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
 
-#include <dev/hwt/hwt_context.h>
-#include <dev/hwt/hwt_config.h>
-#include <dev/hwt/hwt_cpu.h>
-#include <dev/hwt/hwt_thread.h>
+#include <machine/cpufunc.h>
+#include <machine/smp.h>
+
+#include <x86/include/apicvar.h>
+#include <x86/include/intr_machdep.h>
+#include <x86/include/specialreg.h>
+#include <x86/include/x86_var.h>
+
 #include <dev/hwt/hwt_backend.h>
-#include <dev/hwt/hwt_vm.h>
+#include <dev/hwt/hwt_config.h>
+#include <dev/hwt/hwt_context.h>
+#include <dev/hwt/hwt_cpu.h>
 #include <dev/hwt/hwt_hook.h>
 #include <dev/hwt/hwt_intr.h>
+#include <dev/hwt/hwt_thread.h>
+#include <dev/hwt/hwt_vm.h>
 
 #include "pt.h"
 
-#ifdef  PT_DEBUG
-#define	dprintf(fmt, ...)	printf(fmt, ##__VA_ARGS__)
+#ifdef PT_DEBUG
+#define dprintf(fmt, ...) printf(fmt, ##__VA_ARGS__)
 #else
-#define	dprintf(fmt, ...)
+#define dprintf(fmt, ...)
 #endif
 
-#define	PT_XSAVE_MASK	(XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
+#define PT_XSAVE_MASK (XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
 
 MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
@@ -93,52 +91,50 @@ bool loaded = false;
 /* }; */
 
 struct pt_save_area {
-	uint8_t			legacy_state[512];
-	struct xsave_header	header;
-	struct pt_ext_area	pt_ext_area;
+	uint8_t legacy_state[512];
+	struct xsave_header header;
+	struct pt_ext_area pt_ext_area;
 } __aligned(64);
 
-struct pt_buffer{
-  uint64_t		*topa_hw; /* ToPA table entries. */
-  int curpage;
-  vm_offset_t offset;
+struct pt_buffer {
+	uint64_t *topa_hw; /* ToPA table entries. */
+	int curpage;
+	vm_offset_t offset;
 };
 
-enum pt_toggle_msg{
-  PT_CPU_UNDEF = 0,
-  PT_CPU_START_TRACE,
-  PT_CPU_STOP_TRACE,
+enum pt_toggle_msg {
+	PT_CPU_UNDEF = 0,
+	PT_CPU_START_TRACE,
+	PT_CPU_STOP_TRACE,
 };
 
 static struct pt_cpu {
-  struct pt_save_area save_area; /* PT XSAVE area */
-  struct hwt_vm *vm; /* VM context active on CPU */
-  struct thread *hwt_td; /* hwt thread */
-  struct pt_buffer buf;
-  struct task	task; /* PT buffer kevent task */
+	struct pt_save_area save_area; /* PT XSAVE area */
+	struct hwt_vm *vm;	       /* VM context active on CPU */
+	struct thread *hwt_td;	       /* hwt thread */
+	struct pt_buffer buf;
+	struct task task; /* PT buffer kevent task */
 
-  enum pt_toggle_msg toggle; /*  */
-  struct mtx ipi_mtx; /* Used to wait for PT toggle to complete */
+	enum pt_toggle_msg toggle; /*  */
+	struct mtx ipi_mtx;	   /* Used to wait for PT toggle to complete */
 } pt_pcpu[MAXCPU];
 
 struct pt_cpu_info {
-  uint32_t			l0_eax;
-	uint32_t			l0_ebx;
-	uint32_t			l0_ecx;
-	uint32_t			l1_eax;
-	uint32_t			l1_ebx;
+	uint32_t l0_eax;
+	uint32_t l0_ebx;
+	uint32_t l0_ecx;
+	uint32_t l1_eax;
+	uint32_t l1_ebx;
 } pt_info;
-
 
 static int pt_ipinum = -1;
 static int kqueue_fd;
 static struct hwt_backend backend = {
-  .ops = &pt_ops,
-  .name = "pt",
+	.ops = &pt_ops,
+	.name = "pt",
 };
 
 extern struct taskqueue *taskqueue_hwt;
-
 
 static int pt_topa_intr(struct trapframe *tf);
 
@@ -149,7 +145,7 @@ xrstors(char *addr, uint64_t mask)
 
 	low = mask;
 	hi = mask >> 32;
-	__asm __volatile("xrstors %0" : : "m" (*addr), "a" (low), "d" (hi));
+	__asm __volatile("xrstors %0" : : "m"(*addr), "a"(low), "d"(hi));
 }
 
 static __inline void
@@ -159,8 +155,10 @@ xsaves(char *addr, uint64_t mask)
 
 	low = mask;
 	hi = mask >> 32;
-	__asm __volatile("xsaves %0" : "=m" (*addr) : "a" (low), "d" (hi) :
-                   "memory");
+	__asm __volatile("xsaves %0"
+			 : "=m"(*addr)
+			 : "a"(low), "d"(hi)
+			 : "memory");
 }
 
 static void
@@ -168,11 +166,11 @@ pt_cpu_toggle_local(struct pt_cpu *pt_pc, bool enable)
 {
 	u_long xcr0, cr0;
 	u_long xss;
-  uint32_t lvt_pcint_msr;
+	uint32_t lvt_pcint_msr;
 
-  KASSERT((curthread)->td_critnest >= 1, ("Not in critical section"));
+	KASSERT((curthread)->td_critnest >= 1, ("Not in critical section"));
 
-  lvt_pcint_msr = rdmsr32(MSR_APIC_LVT_PCINT);
+	lvt_pcint_msr = rdmsr32(MSR_APIC_LVT_PCINT);
 	cr0 = rcr0();
 	if (cr0 & CR0_TS)
 		clts();
@@ -183,22 +181,23 @@ pt_cpu_toggle_local(struct pt_cpu *pt_pc, bool enable)
 	wrmsr(MSR_IA32_XSS, xss | XFEATURE_ENABLED_PT);
 	if (!enable) {
 		KASSERT((rdmsr(MSR_IA32_RTIT_CTL) & RTIT_CTL_TRACEEN) != 0,
-            ("%s: PT is disabled", __func__));
+		    ("%s: PT is disabled", __func__));
 		xsaves((char *)&pt_pc->save_area, XFEATURE_ENABLED_PT);
-    /* Clear PCINT MSR. */
-    lvt_pcint_msr |= APIC_LVT_PCINT_MASK_BIT;
-    lvt_pcint_msr &= ~APIC_LVT_PCINT_DELIVERY_MASK;
+		/* Clear PCINT MSR. */
+		lvt_pcint_msr |= APIC_LVT_PCINT_MASK_BIT;
+		lvt_pcint_msr &= ~APIC_LVT_PCINT_DELIVERY_MASK;
 	} else {
 		KASSERT((rdmsr(MSR_IA32_RTIT_CTL) & RTIT_CTL_TRACEEN) == 0,
-            ("%s: PT is enabled", __func__));
-    /* Set PCINT MSR. */
-    lvt_pcint_msr = rdmsr32(MSR_APIC_LVT_PCINT);
-    lvt_pcint_msr &= ~(APIC_LVT_PCINT_MASK_BIT | APIC_LVT_PCINT_DELIVERY_MASK);
-    /* Deliver ToPA interrupt using NMI */
-    lvt_pcint_msr |= APIC_LVT_PCINT_DELIVERY_NMI;
+		    ("%s: PT is enabled", __func__));
+		/* Set PCINT MSR. */
+		lvt_pcint_msr = rdmsr32(MSR_APIC_LVT_PCINT);
+		lvt_pcint_msr &= ~(
+		    APIC_LVT_PCINT_MASK_BIT | APIC_LVT_PCINT_DELIVERY_MASK);
+		/* Deliver ToPA interrupt using NMI */
+		lvt_pcint_msr |= APIC_LVT_PCINT_DELIVERY_NMI;
 		xrstors((char *)&pt_pc->save_area, XFEATURE_ENABLED_PT);
 	}
-  wrmsr(MSR_APIC_LVT_PCINT, lvt_pcint_msr);
+	wrmsr(MSR_APIC_LVT_PCINT, lvt_pcint_msr);
 	wrmsr(MSR_IA32_XSS, xss);
 	if ((xcr0 & PT_XSAVE_MASK) != PT_XSAVE_MASK)
 		load_xcr(XCR0, xcr0);
@@ -207,46 +206,51 @@ pt_cpu_toggle_local(struct pt_cpu *pt_pc, bool enable)
 }
 /* TODO: maybe allocate two ipi vectors instead of this scheme? */
 static void
-pt_cpu_toggle_trace(int cpu_id, bool start){
-  struct pt_cpu *cpu = &pt_pcpu[cpu_id];
-  dprintf("%s\n", __func__);
+pt_cpu_toggle_trace(int cpu_id, bool start)
+{
+	struct pt_cpu *cpu = &pt_pcpu[cpu_id];
+	dprintf("%s\n", __func__);
 
-  KASSERT(cpu->toggle == PT_CPU_UNDEF, ("%s: toggle message already set\n"));
-  cpu->toggle = start ? PT_CPU_START_TRACE : PT_CPU_STOP_TRACE;
-  wmb();
+	KASSERT(cpu->toggle == PT_CPU_UNDEF,
+	    ("%s: toggle message already set\n"));
+	cpu->toggle = start ? PT_CPU_START_TRACE : PT_CPU_STOP_TRACE;
+	wmb();
 
-  ipi_cpu(cpu_id, pt_ipinum);
-  /* TODO: wait? */
+	ipi_cpu(cpu_id, pt_ipinum);
+	/* TODO: wait? */
 }
 
 static int
-pt_topa_prepare(struct pt_cpu *cpu){
-  int i;
-  struct hwt_vm *vm = cpu->vm;
-  struct pt_buffer *buf = &cpu->buf;
-  size_t topa_size = TOPA_SIZE_4K; /* 4K only for now */
+pt_topa_prepare(struct pt_cpu *cpu)
+{
+	int i;
+	struct hwt_vm *vm = cpu->vm;
+	struct pt_buffer *buf = &cpu->buf;
+	size_t topa_size = TOPA_SIZE_4K; /* 4K only for now */
 
-  KASSERT(buf->topa_hw == NULL, ("%s: ToPA info already exists", __func__));
-  /* Allocate array of TOPA entries. */
-  buf->topa_hw = malloc((vm->npages + 1) * sizeof(uint64_t), M_PT, M_WAITOK | M_ZERO);
-  for(i = 0; i < vm->npages; i++){
-    buf->topa_hw[i] = VM_PAGE_TO_PHYS(vm->pages[i]) | topa_size;
-    if(i == vm->npages/2 || i + 1 == vm->npages){
-      /* Raise interrupt when entry is filled. */
-      buf->topa_hw[i] |= TOPA_INT;
-    }
-  }
-  /* Circular buffer - point last entry to first */
-  buf->topa_hw[vm->npages] = buf->topa_hw[0] | TOPA_END;
+	KASSERT(buf->topa_hw == NULL,
+	    ("%s: ToPA info already exists", __func__));
+	/* Allocate array of TOPA entries. */
+	buf->topa_hw = malloc((vm->npages + 1) * sizeof(uint64_t), M_PT,
+	    M_WAITOK | M_ZERO);
+	for (i = 0; i < vm->npages; i++) {
+		buf->topa_hw[i] = VM_PAGE_TO_PHYS(vm->pages[i]) | topa_size;
+		if (i == vm->npages / 2 || i + 1 == vm->npages) {
+			/* Raise interrupt when entry is filled. */
+			buf->topa_hw[i] |= TOPA_INT;
+		}
+	}
+	/* Circular buffer - point last entry to first */
+	buf->topa_hw[vm->npages] = buf->topa_hw[0] | TOPA_END;
 
-  return (0);
+	return (0);
 }
 
 static int
 pt_backend_init_thread(struct hwt_context *ctx)
 {
-  /* TODO: thread mode will require a per-thread PT xsave block */
-  // hwt_hook = pt_hwt_hook;
+	/* TODO: thread mode will require a per-thread PT xsave block */
+	// hwt_hook = pt_hwt_hook;
 	return (-1);
 }
 
@@ -268,19 +272,20 @@ pt_backend_init(struct hwt_context *ctx)
 {
 	int error = 0;
 
-  dprintf("%s\n", __func__);
+	dprintf("%s\n", __func__);
 	if (ctx->mode == HWT_MODE_THREAD)
 		error = pt_backend_init_thread(ctx);
 
-  if(error != 0)
-    return (error);
+	if (error != 0)
+		return (error);
 
-  dprintf("%s: kqueue fd: %d\n", __func__, ctx->kqueue_fd);
-  kqueue_fd = ctx->kqueue_fd;
+	dprintf("%s: kqueue fd: %d\n", __func__, ctx->kqueue_fd);
+	kqueue_fd = ctx->kqueue_fd;
 
-  /* Install ToPA PMI handler. */
-  KASSERT(hwt_intr == NULL, ("%s: ToPA PMI handler already present", __func__));
-  hwt_intr = pt_topa_intr;
+	/* Install ToPA PMI handler. */
+	KASSERT(hwt_intr == NULL,
+	    ("%s: ToPA PMI handler already present", __func__));
+	hwt_intr = pt_topa_intr;
 
 	return (error);
 }
@@ -288,28 +293,29 @@ pt_backend_init(struct hwt_context *ctx)
 static void
 pt_backend_deinit(struct hwt_context *ctx)
 {
-  struct hwt_cpu *cpu;
-  struct pt_cpu *pt_cpu;
-  struct pt_buffer *buf;
+	struct hwt_cpu *cpu;
+	struct pt_cpu *pt_cpu;
+	struct pt_buffer *buf;
 
-  dprintf("%s\n", __func__);
-  /* Remove ToPA PMI handler. */
-  KASSERT(hwt_intr != NULL, ("%s: ToPA PMI handler not present", __func__));
-  hwt_intr = NULL;
+	dprintf("%s\n", __func__);
+	/* Remove ToPA PMI handler. */
+	KASSERT(hwt_intr != NULL,
+	    ("%s: ToPA PMI handler not present", __func__));
+	hwt_intr = NULL;
 
-  TAILQ_FOREACH(cpu, &ctx->cpus, next) {
-    pt_cpu = &pt_pcpu[cpu->cpu_id];
-    buf = &pt_cpu->buf;
+	TAILQ_FOREACH (cpu, &ctx->cpus, next) {
+		pt_cpu = &pt_pcpu[cpu->cpu_id];
+		buf = &pt_cpu->buf;
 
-    if(pt_cpu->vm == cpu->vm && buf->topa_hw != NULL){
-      free(buf->topa_hw, M_PT);
-      buf->topa_hw = NULL;
-      pt_cpu->vm = NULL;
-      /* Stop tracing - HWT_IOC_STOP is not implemented yet */
-      pt_cpu_toggle_trace(cpu->cpu_id, false);
-      // wait?
-    }
-  }
+		if (pt_cpu->vm == cpu->vm && buf->topa_hw != NULL) {
+			free(buf->topa_hw, M_PT);
+			buf->topa_hw = NULL;
+			pt_cpu->vm = NULL;
+			/* Stop tracing - HWT_IOC_STOP is not implemented yet */
+			pt_cpu_toggle_trace(cpu->cpu_id, false);
+			// wait?
+		}
+	}
 }
 
 static int
@@ -324,145 +330,160 @@ pt_configure_ranges(struct pt_cpu *pt_cpu, struct pt_cpu_config *cfg)
 
 	if (pt_info.l0_ebx & CPUPT_IPF) {
 		/* How many ranges CPU does support ? */
-		nranges_supp = (pt_info.l1_eax & CPUPT_NADDR_M) >> CPUPT_NADDR_S;
+		nranges_supp = (pt_info.l1_eax & CPUPT_NADDR_M) >>
+		    CPUPT_NADDR_S;
 
 		/* xsave/xrstor supports two ranges only */
 		if (nranges_supp > 2)
 			nranges_supp = 2;
-    n = cfg->nranges;
-    if(n > nranges_supp){
-      printf("%s: %d IP filtering ranges requested, CPU supports %d, truncating\n", __func__, n, nranges_supp);
-      n = nranges_supp;
-    }
+		n = cfg->nranges;
+		if (n > nranges_supp) {
+			printf(
+			    "%s: %d IP filtering ranges requested, CPU supports %d, truncating\n",
+			    __func__, n, nranges_supp);
+			n = nranges_supp;
+		}
 
 		switch (n) {
 		case 2:
 			pt_ext->rtit_ctl |= (1UL << RTIT_CTL_ADDR_CFG_S(1));
 			pt_ext->rtit_addr1_a = cfg->ip_ranges[1].start;
-			pt_ext->rtit_addr1_b = cfg->ip_ranges[1].end; 
-    case 1:
+			pt_ext->rtit_addr1_b = cfg->ip_ranges[1].end;
+		case 1:
 			pt_ext->rtit_ctl |= (1UL << RTIT_CTL_ADDR_CFG_S(0));
 			pt_ext->rtit_addr0_a = cfg->ip_ranges[0].start;
 			pt_ext->rtit_addr0_b = cfg->ip_ranges[0].end;
 		default:
-      error = (EINVAL);
+			error = (EINVAL);
 			break;
 		};
 	} else {
-    error = (ENXIO);
-  }
+		error = (ENXIO);
+	}
 
-  return error;
+	return error;
 }
 
 static int
 pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 {
-  struct pt_cpu *pt_cpu;
-  struct hwt_cpu *hwt_cpu;
-  struct pt_ext_area *pt_ext;
-  struct xsave_header *hdr;
-  struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
-  int error = 0;
+	struct pt_cpu *pt_cpu;
+	struct hwt_cpu *hwt_cpu;
+	struct pt_ext_area *pt_ext;
+	struct xsave_header *hdr;
+	struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
+	int error = 0;
 
-  dprintf("%s\n", __func__);
+	dprintf("%s\n", __func__);
 
-  /* Validate user configuration */
-  /* TODO: sanitize input with 'supported' mask. */
-	if (cfg->rtit_ctl & RTIT_CTL_MTCEN){
-    if((pt_info.l0_ebx & CPUPT_MTC) == 0 ){
-      printf("%s: CPU does not support generating MTC packets\n", __func__);
-      return (ENXIO);
-    }
-  }
+	/* Validate user configuration */
+	/* TODO: sanitize input with 'supported' mask. */
+	if (cfg->rtit_ctl & RTIT_CTL_MTCEN) {
+		if ((pt_info.l0_ebx & CPUPT_MTC) == 0) {
+			printf(
+			    "%s: CPU does not support generating MTC packets\n",
+			    __func__);
+			return (ENXIO);
+		}
+	}
 
-  if (cfg->rtit_ctl & RTIT_CTL_CR3FILTER){
-    if((pt_info.l0_ebx & CPUPT_CR3) == 0 ){
-      printf("%s: CPU does not support CR3 filtering\n", __func__);
-      return (ENXIO);
-    }
-  }
+	if (cfg->rtit_ctl & RTIT_CTL_CR3FILTER) {
+		if ((pt_info.l0_ebx & CPUPT_CR3) == 0) {
+			printf("%s: CPU does not support CR3 filtering\n",
+			    __func__);
+			return (ENXIO);
+		}
+	}
 
-  if (cfg->rtit_ctl & RTIT_CTL_DIS_TNT){
-    if((pt_info.l0_ebx & CPUPT_DIS_TNT) == 0 ){
-      printf("%s: CPU does not support CR3 filtering\n", __func__);
-      return (ENXIO);
-    }
-  }
-  /* TODO: support for more config bits */
+	if (cfg->rtit_ctl & RTIT_CTL_DIS_TNT) {
+		if ((pt_info.l0_ebx & CPUPT_DIS_TNT) == 0) {
+			printf("%s: CPU does not support CR3 filtering\n",
+			    __func__);
+			return (ENXIO);
+		}
+	}
+	/* TODO: support for more config bits */
 
-  TAILQ_FOREACH(hwt_cpu, &ctx->cpus, next){
-    pt_cpu = &pt_pcpu[hwt_cpu->cpu_id];
-    pt_ext = &pt_cpu->save_area.pt_ext_area;
-    hdr = &pt_cpu->save_area.header;
+	TAILQ_FOREACH (hwt_cpu, &ctx->cpus, next) {
+		pt_cpu = &pt_pcpu[hwt_cpu->cpu_id];
+		pt_ext = &pt_cpu->save_area.pt_ext_area;
+		hdr = &pt_cpu->save_area.header;
 
-    KASSERT(pt_cpu->vm == NULL, ("%s: active hwt_vm context in cpu %d\n", __func__, cpu->cpu_id));
-    KASSERT(pt_cpu->buf.topa_hw == NULL, ("%s: active ToPA buffer in cpu %d\n", __func__, cpu->cpu_id));
+		KASSERT(pt_cpu->vm == NULL,
+		    ("%s: active hwt_vm context in cpu %d\n", __func__,
+			cpu->cpu_id));
+		KASSERT(pt_cpu->buf.topa_hw == NULL,
+		    ("%s: active ToPA buffer in cpu %d\n", __func__,
+			cpu->cpu_id));
 
-    memset(pt_cpu, 0, sizeof(struct pt_cpu));
+		memset(pt_cpu, 0, sizeof(struct pt_cpu));
 
-    pt_cpu->save_area.pt_ext_area.rtit_ctl |= cfg->rtit_ctl;
-    if((error = pt_configure_ranges(pt_cpu, cfg)) != 0){
-      return error;
-    }
+		pt_cpu->save_area.pt_ext_area.rtit_ctl |= cfg->rtit_ctl;
+		if ((error = pt_configure_ranges(pt_cpu, cfg)) != 0) {
+			return error;
+		}
 
-    pt_cpu->vm = hwt_cpu->vm;
-    if(pt_topa_prepare(pt_cpu)){
-      dprintf("%s: failed to prepare ToPA buffer\n", __func__);
-      pt_cpu->vm = NULL;
-      return (-1);
-    }
+		pt_cpu->vm = hwt_cpu->vm;
+		if (pt_topa_prepare(pt_cpu)) {
+			dprintf("%s: failed to prepare ToPA buffer\n",
+			    __func__);
+			pt_cpu->vm = NULL;
+			return (-1);
+		}
 
-    /* Save hwt_td for kevent */
-    pt_cpu->hwt_td = ctx->hwt_td;
-    /* Prepare ToPA MSR values. */
-    pt_ext->rtit_ctl = RTIT_CTL_TOPA;
-    pt_ext->rtit_output_base = (uint64_t)vtophys(pt_cpu->buf.topa_hw);
-    pt_ext->rtit_output_mask_ptrs = 0x7f; /* TODO: ? */
-    /* Init header */
-    hdr->xsave_bv = XFEATURE_ENABLED_PT;
-    hdr->xcomp_bv = XFEATURE_ENABLED_PT | (1ULL << 63) /* compaction */;
-    /* Enable tracing. */
-    pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
-  }
+		/* Save hwt_td for kevent */
+		pt_cpu->hwt_td = ctx->hwt_td;
+		/* Prepare ToPA MSR values. */
+		pt_ext->rtit_ctl = RTIT_CTL_TOPA;
+		pt_ext->rtit_output_base = (uint64_t)vtophys(
+		    pt_cpu->buf.topa_hw);
+		pt_ext->rtit_output_mask_ptrs = 0x7f; /* TODO: ? */
+		/* Init header */
+		hdr->xsave_bv = XFEATURE_ENABLED_PT;
+		hdr->xcomp_bv = XFEATURE_ENABLED_PT |
+		    (1ULL << 63) /* compaction */;
+		/* Enable tracing. */
+		pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
+	}
 	return (0);
 }
 
 static void
 pt_backend_enable(int cpu_id)
 {
-  dprintf("%s\n", __func__);
+	dprintf("%s\n", __func__);
 
-  pt_cpu_toggle_trace(cpu_id, true);
+	pt_cpu_toggle_trace(cpu_id, true);
 }
 
 static void
 pt_backend_disable(int cpu_id)
 {
-  dprintf("%s\n", __func__);
+	dprintf("%s\n", __func__);
 
-  pt_cpu_toggle_trace(cpu_id, false);
+	pt_cpu_toggle_trace(cpu_id, false);
 }
 
 static int
-pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset){
-  struct pt_cpu *pt_cpu = &pt_pcpu[cpu_id];
-  dprintf("%s\n", __func__);
+pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset)
+{
+	struct pt_cpu *pt_cpu = &pt_pcpu[cpu_id];
+	dprintf("%s\n", __func__);
 
-  if(pt_cpu->vm == NULL)
-    return (-1);
+	if (pt_cpu->vm == NULL)
+		return (-1);
 
-  *curpage = pt_cpu->buf.curpage;
-  *curpage_offset =  pt_cpu->buf.offset;
+	*curpage = pt_cpu->buf.curpage;
+	*curpage_offset = pt_cpu->buf.offset;
 
-  return (0);
+	return (0);
 }
 
 static void
-pt_backend_dump(int cpu_id){
-  return;
+pt_backend_dump(int cpu_id)
+{
+	return;
 }
-
 
 static struct hwt_backend_ops pt_ops = {
 	.hwt_backend_init = pt_backend_init,
@@ -478,25 +499,29 @@ static struct hwt_backend_ops pt_ops = {
 };
 
 static void
-pt_hwt_hook(struct thread *td, int func, void *arg){
-  struct pt_cpu *cpu __diagused = &pt_pcpu[curcpu];
-  switch(func){
-  default:
-  case HWT_SWITCH_IN:
-  case HWT_SWITCH_OUT:
-    //pt_save_restore(cpu, func == HWT_SWITCH_OUT);
-    break;
-  }
+pt_hwt_hook(struct thread *td, int func, void *arg)
+{
+	struct pt_cpu *cpu __diagused = &pt_pcpu[curcpu];
+	switch (func) {
+	default:
+	case HWT_SWITCH_IN:
+	case HWT_SWITCH_OUT:
+		// pt_save_restore(cpu, func == HWT_SWITCH_OUT);
+		break;
+	}
 }
 
 void
-pt_handle_toggle_intr(struct trapframe *tf){
-  struct pt_cpu *cpu = &pt_pcpu[curcpu];
+pt_handle_toggle_intr(struct trapframe *tf)
+{
+	struct pt_cpu *cpu = &pt_pcpu[curcpu];
 
-  KASSERT(cpu->toggle != PT_CPU_UNDEF, ("%s: IPI triggered without a toggle message", __func__));
-  pt_cpu_toggle_local(cpu, cpu->toggle == PT_CPU_START_TRACE ? true : false);
+	KASSERT(cpu->toggle != PT_CPU_UNDEF,
+	    ("%s: IPI triggered without a toggle message", __func__));
+	pt_cpu_toggle_local(cpu,
+	    cpu->toggle == PT_CPU_START_TRACE ? true : false);
 
-  return;
+	return;
 }
 
 /*
@@ -512,9 +537,10 @@ pt_buffer_ready(void *arg, int pending __unused)
 	int64_t data = cpu->buf.offset;
 
 	EV_SET(&kev, HWT_PT_BUF_RDY_EV, EVFILT_USER, 0,
-         NOTE_TRIGGER | NOTE_FFCOPY | uflags, data, NULL);
+	    NOTE_TRIGGER | NOTE_FFCOPY | uflags, data, NULL);
 	ret = kqfd_register(kqueue_fd, &kev, cpu->hwt_td, M_WAITOK);
-  KASSERT(ret == 0, ("%s: kqueue fd register failed: %d\n", __func__, ret));
+	KASSERT(ret == 0,
+	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
 }
 
 /*
@@ -523,33 +549,34 @@ pt_buffer_ready(void *arg, int pending __unused)
 static int
 pt_topa_intr(struct trapframe *tf)
 {
-  int retval = 0;
-  uint64_t reg;
-  struct pt_cpu *pt_cpu;
-  struct pt_buffer *buf;
+	int retval = 0;
+	uint64_t reg;
+	struct pt_cpu *pt_cpu;
+	struct pt_buffer *buf;
 
-  SDT_PROBE0(pt, , , topa__intr);
-  /* TODO: handle possible double entry */
-  /* Check ToPA PMI status on curcpu. */
-  reg = rdmsr(MSR_IA_GLOBAL_STATUS);
-  if((reg & GLOBAL_STATUS_FLAG_TRACETOPAPMI) == 0)
-    return (retval);
+	SDT_PROBE0(pt, , , topa__intr);
+	/* TODO: handle possible double entry */
+	/* Check ToPA PMI status on curcpu. */
+	reg = rdmsr(MSR_IA_GLOBAL_STATUS);
+	if ((reg & GLOBAL_STATUS_FLAG_TRACETOPAPMI) == 0)
+		return (retval);
 
-  /*
-   * Disable preemption.
-   */
-  critical_enter();
+	/*
+	 * Disable preemption.
+	 */
+	critical_enter();
 
-  retval = 1;
-  pt_cpu = &pt_pcpu[curcpu];
-  buf = &pt_cpu->buf;
-  KASSERT(buf->topa_hw != NULL && pt_cpu->vm != NULL, ("%s: ToPA PMI interrupt with invalid pt_cpu", __func__ ));
+	retval = 1;
+	pt_cpu = &pt_pcpu[curcpu];
+	buf = &pt_cpu->buf;
+	KASSERT(buf->topa_hw != NULL && pt_cpu->vm != NULL,
+	    ("%s: ToPA PMI interrupt with invalid pt_cpu", __func__));
 
-  /* Disable tracing so we don't trace the PMI handler. */
-  pt_cpu_toggle_local(pt_cpu, false);
+	/* Disable tracing so we don't trace the PMI handler. */
+	pt_cpu_toggle_local(pt_cpu, false);
 
-  /* Update buffer offset. */
-  reg = rdmsr(MSR_IA32_RTIT_CTL);
+	/* Update buffer offset. */
+	reg = rdmsr(MSR_IA32_RTIT_CTL);
 	if (reg & RTIT_CTL_TRACEEN)
 		reg = rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS);
 	else
@@ -557,30 +584,31 @@ pt_topa_intr(struct trapframe *tf)
 	buf->curpage = (reg & 0xffffff80) >> 7;
 	buf->offset = reg >> 32;
 
-  /* Notify userspace. */
-  TASK_INIT(&pt_cpu->task, 0, (task_fn_t *)pt_buffer_ready, pt_cpu);
-  taskqueue_enqueue(taskqueue_hwt, &pt_cpu->task);
+	/* Notify userspace. */
+	TASK_INIT(&pt_cpu->task, 0, (task_fn_t *)pt_buffer_ready, pt_cpu);
+	taskqueue_enqueue(taskqueue_hwt, &pt_cpu->task);
 
-  /* Clear ToPA PMI status. */
-  reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
-  reg &= ~GLOBAL_STATUS_FLAG_TRACETOPAPMI;
-  reg |= GLOBAL_STATUS_FLAG_TRACETOPAPMI;
-  wrmsr(MSR_IA_GLOBAL_STATUS_RESET, reg);
+	/* Clear ToPA PMI status. */
+	reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
+	reg &= ~GLOBAL_STATUS_FLAG_TRACETOPAPMI;
+	reg |= GLOBAL_STATUS_FLAG_TRACETOPAPMI;
+	wrmsr(MSR_IA_GLOBAL_STATUS_RESET, reg);
 
-  /* Re-enable tracing. */
-  pt_cpu_toggle_local(pt_cpu, true);
+	/* Re-enable tracing. */
+	pt_cpu_toggle_local(pt_cpu, true);
 
-  /*
-   * Enable preemption.
-   */
-  critical_exit();
+	/*
+	 * Enable preemption.
+	 */
+	critical_exit();
 
-  return (retval);
+	return (retval);
 }
 
 static int
-pt_init(void){
-  u_int cp[4];
+pt_init(void)
+{
+	u_int cp[4];
 
 	dprintf("Enumerating part 1\n");
 
@@ -589,7 +617,7 @@ pt_init(void){
 	dprintf("%s: ebx %x\n", __func__, cp[1]);
 	dprintf("%s: ecx %x\n", __func__, cp[2]);
 
-  /* Save relevant cpuid info */
+	/* Save relevant cpuid info */
 	pt_info.l0_eax = cp[0];
 	pt_info.l0_ebx = cp[1];
 	pt_info.l0_ecx = cp[2];
@@ -603,33 +631,34 @@ pt_init(void){
 	pt_info.l1_eax = cp[0];
 	pt_info.l1_ebx = cp[1];
 
-  pt_ipinum = lapic_ipi_alloc(&IDTVEC(pt_toggle_isr));
-  if (pt_ipinum < 0) {
-    printf("%s: cannot allocate and IDT vector\n", __func__);
-    return (ENXIO);
-  }
+	pt_ipinum = lapic_ipi_alloc(&IDTVEC(pt_toggle_isr));
+	if (pt_ipinum < 0) {
+		printf("%s: cannot allocate and IDT vector\n", __func__);
+		return (ENXIO);
+	}
 
-  return (0);
+	return (0);
 }
 
-
 static bool
-pt_supported(void){
-  u_int cp[4];
+pt_supported(void)
+{
+	u_int cp[4];
 
-  /* Intel SDM Vol. 3C, 33-30 */
-  if ((cpu_stdext_feature & CPUID_STDEXT_PROCTRACE) == 0){
-    printf("Intel PT: CPU does not support Intel Processor Trace\n");
-    return (false);
-  }
+	/* Intel SDM Vol. 3C, 33-30 */
+	if ((cpu_stdext_feature & CPUID_STDEXT_PROCTRACE) == 0) {
+		printf(
+		    "Intel PT: CPU does not support Intel Processor Trace\n");
+		return (false);
+	}
 
-  /* Require XSAVE support. */
+	/* Require XSAVE support. */
 	if ((cpu_feature2 & CPUID2_XSAVE) == 0) {
 		printf("Intel PT: XSAVE is not supported\n");
 		return (false);
 	}
 
-  cpuid_count(0xd, 0x0, cp);
+	cpuid_count(0xd, 0x0, cp);
 	if ((cp[0] & PT_XSAVE_MASK) != PT_XSAVE_MASK) {
 		printf("Intel PT: CPU0 does not support X87 or SSE: %x", cp[0]);
 		return (false);
@@ -645,58 +674,55 @@ pt_supported(void){
 		return (false);
 	}
 
-  /* Require TOPA support. */
-  cpuid_count(PT_CPUID, 0, cp);
-  if((cp[2] & CPUPT_TOPA) == 0){
-    printf("Intel PT: ToPA is not supported\n");
-    return (false);
-  }
-  if((cp[2] & CPUPT_TOPA_MULTI) == 0){
-    printf("Intel PT: multiple ToPA outputs are not supported\n");
-    return (false);
-  }
+	/* Require TOPA support. */
+	cpuid_count(PT_CPUID, 0, cp);
+	if ((cp[2] & CPUPT_TOPA) == 0) {
+		printf("Intel PT: ToPA is not supported\n");
+		return (false);
+	}
+	if ((cp[2] & CPUPT_TOPA_MULTI) == 0) {
+		printf("Intel PT: multiple ToPA outputs are not supported\n");
+		return (false);
+	}
 
-  return (true);
+	return (true);
 }
-
 
 static int
 pt_modevent(module_t mod, int type, void *data)
 {
-  int error;
+	int error;
 
 	switch (type) {
 	case MOD_LOAD:
-    if(!pt_supported()){
-      return (ENXIO);
-    }
-    pt_init();
-    error = hwt_backend_register(&backend);
+		if (!pt_supported()) {
+			return (ENXIO);
+		}
+		pt_init();
+		error = hwt_backend_register(&backend);
 		if (error != 0) {
-      printf("Intel PT: unable to register hwt backend, error %d\n", error);
+			printf(
+			    "Intel PT: unable to register hwt backend, error %d\n",
+			    error);
 			return (error);
 		}
 		mtx_init(&pt_mtx, "Intel PT", NULL, MTX_DEF);
-    loaded = true;
+		loaded = true;
 		break;
 	case MOD_UNLOAD:
-    if(loaded){
-      mtx_destroy(&pt_mtx);
-      hwt_backend_unregister(&backend);
-    }
+		if (loaded) {
+			mtx_destroy(&pt_mtx);
+			hwt_backend_unregister(&backend);
+		}
 		break;
 	default:
 		break;
 	}
 
-  return (0);
+	return (0);
 }
 
-static moduledata_t pt_mod = {
-	"intel_pt",
-  pt_modevent,
-  NULL
-};
+static moduledata_t pt_mod = { "intel_pt", pt_modevent, NULL };
 
 DECLARE_MODULE(intel_pt, pt_mod, SI_SUB_DRIVERS, SI_ORDER_FIRST);
 MODULE_DEPEND(intel_pt, hwt, 1, 1, 1);
