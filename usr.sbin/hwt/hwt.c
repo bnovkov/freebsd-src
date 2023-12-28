@@ -695,6 +695,12 @@ main(int argc, char **argv, char **env)
 
 	argc += optind;
 	argv += optind;
+	/* Initialize decoder */
+	error = tc->trace_dev->methods->init(tc);
+        if (error) {
+                printf("Can't init decoder, error %d\n", error);
+                return (error);
+        }
 
 	if (tc->mode == HWT_MODE_THREAD) {
 		if (*argv == NULL && tc->attach == 0)

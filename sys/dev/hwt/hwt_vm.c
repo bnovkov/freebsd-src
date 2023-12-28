@@ -208,7 +208,14 @@ hwt_vm_start_cpu_mode(struct hwt_context *ctx)
 			return;
 
 		hwt_backend_configure(ctx, cpu_id, cpu_id);
-		hwt_backend_enable(ctx, cpu_id);
+		if(!ctx->hwt_backend->ops->hwt_backend_enable_smp)
+			hwt_backend_enable(ctx, cpu_id);
+	}
+
+	/* Some backends required enabling all CPUs at once */
+	if(ctx->hwt_backend->ops->hwt_backend_enable_smp){
+		//KASSERT backend_enable_cpu != NULL
+		hwt_backend_enable_smp(ctx);
 	}
 }
 
