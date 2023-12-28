@@ -36,6 +36,7 @@
 #include <sys/cdefs.h>
 #include "opt_atpic.h"
 #include "opt_hwpmc_hooks.h"
+#include "opt_hwt_hooks.h"
 
 #include "opt_ddb.h"
 
@@ -819,6 +820,28 @@ lapic_reenable_pmc(void)
 	lapic_write32(LAPIC_LVT_PCINT, value);
 #endif
 }
+
+#ifdef HWT_HOOKS
+void
+lapic_enable_pt_pmi(void)
+{
+        uint32_t value = 0;
+        value |= APIC_LVT_DM_NMI;
+        lapic_write32(LAPIC_LVT_PCINT, value);
+}
+
+void
+lapic_disable_pt_pmi(void)
+{
+        uint32_t value;
+
+        value = lapic_read32(LAPIC_LVT_PCINT);
+        value |= APIC_LVT_M;
+        lapic_write32(LAPIC_LVT_PCINT, value);
+}
+
+#endif
+
 
 #ifdef HWPMC_HOOKS
 static void

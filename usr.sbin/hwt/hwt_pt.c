@@ -47,11 +47,11 @@
 #define pt_perror(errcode) pt_errstr(pt_errcode((errcode)))
 
 static int
-hwt_pt_init(struct trace_context *tc, struct pt_packet_decoder **decoder)
+hwt_pt_init(struct trace_context *tc)
 {
 	//	int cpu_id;
 	int error;
-	struct pt_packet_decoder *dec;
+//	struct pt_packet_decoder *dec;
 	struct pt_config config;
 	struct kevent event;
 
@@ -62,18 +62,18 @@ hwt_pt_init(struct trace_context *tc, struct pt_packet_decoder **decoder)
 		config.end = (uint8_t *)tc->base + tc->bufsize;
 		// config.cpu = cpu_id;
 
-		dec = pt_pkt_alloc_decoder(&config);
-		if (!dec)
+//		dec = pt_pkt_alloc_decoder(&config);
+//		if (!dec)
 			// pt_strreror(errcode);?
-			return (-1);
+//			return (-1);
 
-		error = pt_pkt_sync_forward(dec);
-		if (error < 0) {
+//		error = pt_pkt_sync_forward(dec);
+//		if (error < 0) {
 			//        <handle error>(error);
-			return error;
-		}
+//			return error;
+//		}
 
-		*decoder = dec;
+//		*decoder = dec;
 	} else {
 		/* No decoder needed, just a file for raw data. */
 		tc->raw_f = fopen(tc->filename, "w");
@@ -232,7 +232,6 @@ hwt_pt_process(struct trace_context *tc)
 	int error;
 	int len; //, ncpu;
 	uint32_t processed;
-	struct pt_packet_decoder *dec;
 	struct kevent tevent;
 
 	xo_open_container("trace");
@@ -240,33 +239,23 @@ hwt_pt_process(struct trace_context *tc)
 
 	//	ncpu = hwt_ncpu();
 
-	error = hwt_pt_init(tc, &dec);
+	error = hwt_pt_init(tc);
 	if (error)
 		return (error);
-
-	error = hwt_get_offs(tc, &newoff);
-	if (error) {
-		printf("%s: cant get offset\n", __func__);
-		return (-1);
-	}
 
 	printf("Decoder started. Press ctrl+c to stop.\n");
 
 	curoff = 0;
 	processed = 0;
 	totals = 0;
-	len = newoff;
-
-	pt_process_chunk(tc, curoff, len, &processed);
-	curoff += processed;
-	totals += processed;
+	len = 0;
 
 	while (1) {
 
 		error = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
 		if (error == -1)
 			err(EXIT_FAILURE, "kevent wait");
-
+		printf("%s: kevent\n", __func__);
 		/* TODO: MD "cookie" pointer in tc */
 		/* TODO: pass buffer layout through MD cookie */
 		newoff = tevent.data;
@@ -312,6 +301,7 @@ hwt_pt_process(struct trace_context *tc)
 }
 
 struct trace_dev_methods pt_methods = {
+	.init = hwt_pt_init,
 	.process = hwt_pt_process,
 	.set_config = hwt_pt_set_config,
 };

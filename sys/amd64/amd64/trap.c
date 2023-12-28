@@ -47,6 +47,7 @@
 #include "opt_clock.h"
 #include "opt_cpu.h"
 #include "opt_hwpmc_hooks.h"
+#include "opt_hwt_hooks.h"
 #include "opt_isa.h"
 #include "opt_kdb.h"
 
@@ -77,7 +78,7 @@ PMC_SOFT_DEFINE( , , page_fault, write);
 #endif
 
 #ifdef HWT_HOOKS
-#include "opt_hwt_hooks.h"
+#include <dev/hwt/hwt_intr.h>
 #endif
 
 #include <vm/vm.h>
@@ -255,6 +256,13 @@ trap(struct trapframe *frame)
 	}
 
 	if (type == T_NMI) {
+		printf("%s: NMI\n", __func__);
+#ifdef HWT_HOOKS
+	    	if(hwt_intr != NULL &&
+		    (*hwt_intr)(frame) != 0)
+      			return;
+#endif
+
 #ifdef HWPMC_HOOKS
 		/*
 		 * CPU PMCs interrupt using an NMI.  If the PMC module is
@@ -265,12 +273,6 @@ trap(struct trapframe *frame)
 		if (pmc_intr != NULL &&
 		    (*pmc_intr)(frame) != 0)
 			return;
-#endif
-
-#ifdef HWT_HOOKS
-    if(hwt_intr != NULL &&
-       (*hwt_intr)(frame) != 0)
-      return;
 #endif
 	}
 

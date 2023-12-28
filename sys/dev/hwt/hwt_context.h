@@ -65,7 +65,7 @@ struct hwt_context {
 	struct mtx			mtx;
 	int				state;
 #define	CTX_STATE_RUNNING		(1 << 0)
-	int				refcnt;
+  int				refcnt;
 };
 
 #define	HWT_CTX_LOCK(ctx)		mtx_lock_spin(&(ctx)->mtx)
