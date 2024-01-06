@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2023 Bojan Novkovic  <bnovkov@freebsd.org>
+ * Copyright (c) 2023 Bojan Novković  <bnovkov@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,63 +40,98 @@
 #include <libxo/xo.h>
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 #include "hwt.h"
 #include "hwt_pt.h"
+#include "sys/_stdint.h"
+#include "sys/systm.h"
+#include "sys/types.h"
 
-#define pt_perror(errcode) pt_errstr(pt_errcode((errcode)))
+#define pt_strerror(errcode) pt_errstr(pt_errcode((errcode)))
+
+static struct hwt_pt_cpu {
+	size_t curoff;
+	void *tracebuf;
+	struct pt_packet_decoder *dec;
+} *hwt_pt_pcpu;
 
 static int
 hwt_pt_init(struct trace_context *tc)
 {
-	//	int cpu_id;
-	int error;
-//	struct pt_packet_decoder *dec;
-	struct pt_config config;
-	struct kevent event;
 
-	if (tc->raw == 0) {
-		memset(&config, 0, sizeof(config));
-		config.size = sizeof(config);
-		config.begin = tc->base;
-		config.end = (uint8_t *)tc->base + tc->bufsize;
-		// config.cpu = cpu_id;
+	hwt_pt_pcpu = calloc(hwt_ncpu(), sizeof(struct hwt_pt_cpu));
+	if (!hwt_pt_pcpu) {
+		printf("%s: failed to allocate decoder\n", __func__);
+		return (-1);
+	}
 
-//		dec = pt_pkt_alloc_decoder(&config);
-//		if (!dec)
-			// pt_strreror(errcode);?
-//			return (-1);
-
-//		error = pt_pkt_sync_forward(dec);
-//		if (error < 0) {
-			//        <handle error>(error);
-//			return error;
-//		}
-
-//		*decoder = dec;
-	} else {
+	if (tc->raw) {
 		/* No decoder needed, just a file for raw data. */
 		tc->raw_f = fopen(tc->filename, "w");
 		if (tc->raw_f == NULL) {
-			printf("could not open file %s\n", tc->filename);
+			printf("%s: could not open file %s\n", __func__,
+			    tc->filename);
 			return (ENXIO);
 		}
 	}
 
-	tc->kqueue_fd = kqueue();
-	if (tc->kqueue_fd == -1) {
-		printf("%s:  kqueue() failed\n", __func__);
-		return -1;
+	return (0);
+}
+
+static int
+hwt_pt_mmap(struct trace_context *tc){
+	int error, i;
+	int cpu_id, tc_fd = -1, _fd;
+	int nranges;
+	struct hwt_pt_cpu *cpu;
+	struct pt_config config;
+	uint64_t *cfg_ip_ranges = &config.addr_filter.addr0_a;
+
+
+	if(tc->mode == HWT_MODE_CPU){
+		CPU_FOREACH_ISSET (cpu_id, &tc->cpu_map) {
+			cpu = &hwt_pt_pcpu[cpu_id];
+
+			error = hwt_map_tracebuf(tc, cpu_id, tc_fd == -1 ? &tc_fd : &_fd, &cpu->tracebuf);
+			if (error != 0) {
+				printf(
+					"%s: failed to map tracing buffer for cpu %d: %s\n",
+					__func__, cpu_id, strerror(errno));
+				return (-1);
+			}
+
+			if (!tc->raw) {
+				memset(&config, 0, sizeof(config));
+				config.size = sizeof(config);
+				config.begin = cpu->tracebuf;
+				config.end = (uint8_t *)cpu->tracebuf + tc->bufsize;
+				config.addr_filter.config.ctl.addr0_cfg=1;
+				//config.cpu = cpu_id;
+				/* IP range filtering. */
+				nranges = tc->nranges <= 2 ? tc->nranges : 0;
+				for (i = 0; i < nranges; i++) {
+					cfg_ip_ranges[i * 2] = tc->addr_ranges[i * 2];
+					cfg_ip_ranges[i * 2 +1] = tc->addr_ranges[i * 2 + 1];
+				}
+
+				cpu->dec = pt_pkt_alloc_decoder(&config);
+				if (cpu->dec == NULL) {
+					printf(
+						"%s: failed to allocate PT decoder for cpu %d\n",
+						__func__, cpu_id);
+					return (-1);
+				}
+			}
+		}
+	} else {
+		return (-1);
 	}
 
-	EV_SET(&event, HWT_PT_BUF_RDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
-	    NOTE_FFCOPY, 0, NULL);
-
-	error = kevent(tc->kqueue_fd, &event, 1, NULL, 0, NULL);
-	if (error == -1)
-		errx(EXIT_FAILURE, "kevent");
-	if (event.flags & EV_ERROR)
-		errx(EXIT_FAILURE, "Event error: %s", strerror(event.data));
+	/* thr_fd is used to issue ioctls which control all cores
+	 * use fd to the first cpu for this (thread is always 0) */
+	assert(tc_fd != -1);
+	tc->thr_fd = tc_fd;
 
 	return (0);
 }
@@ -140,55 +175,219 @@ hwt_pt_set_config(struct trace_context *tc)
 	return (error);
 }
 
-#if 0
-static int
-hwt_pt_print_packet(struct trace_context *tc __unused, struct pt_packet *pkt)
+static struct pmcstat_symbol *
+symbol_lookup(const struct trace_context *tc, uint64_t ip,
+			  struct pmcstat_image **img, uint64_t *newpc0)
 {
-  int error = 0;
+	struct pmcstat_image *image;
+	struct pmcstat_symbol *sym;
+	struct pmcstat_pcmap *map;
+	uint64_t newpc;
 
-  switch (pkt->type) {
-  default:
-    printf("%s: unknown packet type encountered: %d\n", __func__, pkt->type);
-    error = -1;
-  }
-  return (error);
+	map = pmcstat_process_find_map(tc->pp, ip);
+	if (map != NULL) {
+		image = map->ppm_image;
+		newpc = ip - ((unsigned long)map->ppm_lowpc +
+					  (image->pi_vaddr - image->pi_start));
+		sym = pmcstat_symbol_search(image, newpc); /* Could be NULL. */
+		newpc += image->pi_vaddr;
+
+		*img = image;
+		*newpc0 = newpc;
+
+		return (sym);
+	} else
+		*img = NULL;
+
+	return (NULL);
 }
-#endif
+
+static void
+hwt_pt_print_tnt(const struct pt_packet_tnt *packet)
+{
+	uint64_t tnt;
+	uint8_t bits;
+
+	bits = packet->bit_size;
+	tnt = packet->payload;
+
+	while (--bits)
+		putc(tnt & (1ull << (bits - 1)) ? '!' : '.', stdout);
+}
+
+static void
+hwt_pt_print_mode(const struct pt_packet_mode *pkt)
+{
+	enum pt_exec_mode mode;
+
+	switch(pkt->leaf){
+		case pt_mol_exec: {
+			printf(".exec: ");
+			mode = pt_get_exec_mode(&pkt->bits.exec);
+			switch (mode) {
+				case ptem_64bit:
+					printf("64-bit");
+					break;
+				case ptem_32bit:
+					printf("32-bit");
+					break;
+				case ptem_16bit:
+					printf("16-bit");
+					break;
+				default:
+					printf("unknown");
+					break;
+			}
+			break;
+		}
+		case pt_mol_tsx:
+			printf(".tsx");
+			break;
+	}
+}
 
 static int
-hwt_pt_decode_chunk(struct trace_context *tc __unused, size_t offs __unused,
-    size_t len __unused, uint32_t *processed __unused)
+hwt_pt_print_packet(const struct pt_packet *pkt)
 {
-	int error = -1;
-#if 0
-  struct pt_packet packet;
 
-  pt_packet_sync_set(decoder, offset);
+	switch (pkt->type) {
+	case ppt_unknown:
+		printf("<unknown>");
+		break;
+	case ppt_invalid:
+		printf("<invalid>");
+		break;
+	case ppt_tnt_8:
+		printf("tnt.8\n");
+		hwt_pt_print_tnt(&pkt->payload.tnt);
+		break;
+	case ppt_tnt_64:
+		printf("tnt.64\n");
+		hwt_pt_print_tnt(&pkt->payload.tnt);
+		break;
+	case ppt_mode:
+		printf("mode");
+		hwt_pt_print_mode(&pkt->payload.mode);
+		break;
+	case ppt_pip:
+		printf("pip: cr3 %p", (void *)pkt->payload.pip.cr3);
+		break;
+	case ppt_vmcs:
+		printf("vmcs: %p", (void *)pkt->payload.vmcs.base);
+		break;
+	case ppt_cbr:
+		printf("cbr: ratio %u", pkt->payload.cbr.ratio);
+		break;
+	case ppt_tip_pge:
+		printf("pge: TRACE START @%p", (void *)pkt->payload.ip.ip);
+		break;
+	case ppt_tip_pgd:
+		printf("pgd: TRACE STOP @%p", (void *)pkt->payload.ip.ip);
+		break;
+	case ppt_fup:
+		printf("fup: @%p", (void *)pkt->payload.ip.ip);
+		break;
+	case ppt_pad:
+	case ppt_psb:
+	case ppt_psbend:
+		/* Ignore */
+		return (0);
+	default:
+		printf("%s: unknown packet type encountered: %d\n", __func__,
+		    pkt->type);
+		return (-1);
+	}
 
-  while(1) {
-    error = pt_pkt_get_offset(decoder, &offset);
-    if (error < 0){
-       diag("error getting offset", offset, error);
-       break;
-    }
+	printf("\n");
 
-    error = pt_pkt_next(decoder, &packet, sizeof(packet));
-    if (error < 0) {
-      if (error == -pte_eos){
-        error = 0;
-      }else {
-        diag("error decoding packet", offset, error);
-      }
-      break;
-    }
+	sym = symbol_lookup(tc, ip, &image, &newpc);
 
-    error = hwt_pt_print_packet(offset, &packet);
-    if (error < 0){
-      printf("Error while processing packet: %s\n" );
-      break;
-    }
-  }
-#endif
+	if (sym || image) {
+		xo_open_instance("entry");
+		xo_emit_h(dec->xop, "{:pc/pc 0x%08lx/%x}", ip);
+		xo_emit_h(dec->xop, " ");
+	}
+
+	if (image) {
+		if (tc->mode == HWT_MODE_THREAD) {
+			xo_emit_h(dec->xop, "{:newpc/(%lx)/%x}", newpc);
+			xo_emit_h(dec->xop, "\t");
+		}
+
+		piname = pmcstat_string_unintern(image->pi_name);
+		xo_emit_h(dec->xop, "{:piname/%12s/%s}", piname);
+	}
+
+	if (sym) {
+		psname = pmcstat_string_unintern(sym->ps_name);
+		offset = newpc - (sym->ps_start + image->pi_vaddr);
+		xo_emit_h(dec->xop, "\t");
+		xo_emit_h(dec->xop, "{:psname/%s/%s}", psname);
+		xo_emit_h(dec->xop, "{:offset/+0x%lx/%ju}", offset);
+	}
+
+	if (sym || image) {
+		xo_emit_h(dec->xop, "\n");
+		xo_close_instance("entry");
+	}
+
+	xo_flush();
+
+
+	return (0);
+}
+
+static int
+hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
+    uint64_t *processed)
+{
+	int error = 0;
+	uint64_t prevoffs, offs;
+	int ret;
+	struct pt_packet packet;
+
+	printf("%s: start %zu, len %zu\n", __func__, start, len);
+
+	offs = prevoffs = start;
+
+		pt_pkt_sync_set(dec, start);
+		/* error = pt_pkt_sync_forward(dec); */
+		/* if (error < 0) { */
+		/* 	printf("%s: error while syncing decoder: %s\n", */
+		/* 		   __func__, pt_strerror(error)); */
+		/* 	return (-1); */
+		/* } */
+
+	do {
+		ret = pt_pkt_next(dec, &packet, sizeof(packet));
+		if (ret < 0) {
+			if (ret == -pte_eos) {
+				/* Restore previous offset */
+				pt_pkt_sync_set(dec, prevoffs);
+				offs = prevoffs;
+			} else {
+				error = ret;
+				printf("%s: error decoding next packet: %s\n",
+				    __func__, pt_strerror(error));
+			}
+			break;
+		}
+		error = hwt_pt_print_packet(&packet);
+		if (error < 0) {
+			printf("%s: error while processing packet: %s\n",
+			    __func__, pt_strerror(error));
+			break;
+		}
+
+		prevoffs = offs;
+		offs += ret;
+
+		// XXX: is this even possible?
+		if (offs > (start + len))
+			break;
+	} while (1);
+
+	*processed = offs - start;
 
 	return (error);
 }
@@ -197,15 +396,14 @@ hwt_pt_decode_chunk(struct trace_context *tc __unused, size_t offs __unused,
  * Dumps raw packet bytes into tc->raw_f.
  */
 static int
-hwt_pt_dump_chunk(struct trace_context *tc, size_t offs, size_t len,
-    uint32_t *processed)
+hwt_pt_dump_chunk(struct hwt_pt_cpu *cpu, FILE *raw_f, uint64_t offs, size_t len,
+    uint64_t *processed)
 {
-
 	void *base;
 
-	base = (void *)((uintptr_t)tc->base + (uintptr_t)offs);
-	fwrite(base, len, 1, tc->raw_f);
-	fflush(tc->raw_f);
+	base = (void *)((uintptr_t)cpu->tracebuf + (uintptr_t)offs);
+	fwrite(base, len, 1, raw_f);
+	fflush(raw_f);
 
 	*processed = len;
 
@@ -213,35 +411,28 @@ hwt_pt_dump_chunk(struct trace_context *tc, size_t offs, size_t len,
 }
 
 static int
-pt_process_chunk(struct trace_context *tc, size_t offs, size_t len,
-    uint32_t *processed)
+pt_process_chunk(struct trace_context *tc, struct hwt_pt_cpu *cpu, uint64_t offs, size_t len,
+    uint64_t *processed)
 {
-
 	if (tc->raw) {
-		return hwt_pt_dump_chunk(tc, offs, len, processed);
+		return hwt_pt_dump_chunk(cpu, tc->raw_f, offs, len, processed);
 	} else {
-		return hwt_pt_decode_chunk(tc, offs, len, processed);
+		return hwt_pt_decode_chunk(cpu->dec, offs, len, processed);
 	}
 }
 
 static int
 hwt_pt_process(struct trace_context *tc)
 {
-	size_t curoff, newoff;
+	uint64_t curoff, newoff;
 	size_t totals;
 	int error;
-	int len; //, ncpu;
-	uint32_t processed;
-	struct kevent tevent;
+	int len, cpu_id = 0; // assume cpu_id == 0 for now
+	uint64_t processed;
+	struct hwt_pt_cpu *cpu;
 
 	xo_open_container("trace");
 	xo_open_list("entries");
-
-	//	ncpu = hwt_ncpu();
-
-	error = hwt_pt_init(tc);
-	if (error)
-		return (error);
 
 	printf("Decoder started. Press ctrl+c to stop.\n");
 
@@ -251,21 +442,22 @@ hwt_pt_process(struct trace_context *tc)
 	len = 0;
 
 	while (1) {
+		printf("%s: fetching new offset\n", __func__);
+		error = hwt_get_offs(tc, &newoff);
+		if (error < 0)
+			err(EXIT_FAILURE, "hwt_get_offs");
+		printf("%s: new offset %zu\n", __func__, newoff);
 
-		error = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
-		if (error == -1)
-			err(EXIT_FAILURE, "kevent wait");
-		printf("%s: kevent\n", __func__);
-		/* TODO: MD "cookie" pointer in tc */
-		/* TODO: pass buffer layout through MD cookie */
-		newoff = tevent.data;
+		cpu = &hwt_pt_pcpu[cpu_id];
+		curoff = cpu->curoff;
 		if (newoff == curoff) {
 			if (tc->terminate)
 				break;
 		} else if (newoff > curoff) {
 			/* New entries in the trace buffer. */
 			len = newoff - curoff;
-			if (pt_process_chunk(tc, curoff, len, &processed)) {
+			if (pt_process_chunk(tc, cpu, curoff, len,
+				&processed)) {
 				break;
 			}
 			curoff += processed;
@@ -274,7 +466,8 @@ hwt_pt_process(struct trace_context *tc)
 		} else if (newoff < curoff) {
 			/* New entries in the trace buffer. Buffer wrapped. */
 			len = tc->bufsize - curoff;
-			if (pt_process_chunk(tc, curoff, len, &processed)) {
+			if (pt_process_chunk(tc, cpu, curoff, len,
+				&processed)) {
 				break;
 			}
 			curoff += processed;
@@ -282,12 +475,15 @@ hwt_pt_process(struct trace_context *tc)
 
 			curoff = 0;
 			len = newoff;
-			if (pt_process_chunk(tc, curoff, len, &processed)) {
+			if (pt_process_chunk(tc, cpu, curoff, len,
+				&processed)) {
 				break;
 			}
 			curoff += processed;
 			totals += processed;
 		}
+		/* Save current offset for cpu */
+		cpu->curoff = curoff;
 	}
 
 	printf("\nBytes processed: %ld\n", totals);
@@ -302,6 +498,7 @@ hwt_pt_process(struct trace_context *tc)
 
 struct trace_dev_methods pt_methods = {
 	.init = hwt_pt_init,
+	.mmap = hwt_pt_mmap,
 	.process = hwt_pt_process,
 	.set_config = hwt_pt_set_config,
 };

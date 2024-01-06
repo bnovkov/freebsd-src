@@ -36,6 +36,7 @@ struct trace_context;
 
 struct trace_dev_methods {
 	int (*init)(struct trace_context *tc);
+	int (*mmap)(struct trace_context *tc);
 	int (*process)(struct trace_context *tc);
 	int (*set_config)(struct trace_context *tc);
 };
@@ -95,6 +96,7 @@ void hwt_sleep(int msec);
 int hwt_elf_count_libs(const char *elf_path, uint32_t *nlibs0);
 int hwt_find_sym(struct trace_context *tc);
 int hwt_start_tracing(struct trace_context *tc);
+int hwt_map_tracebuf(struct trace_context *tc, int id, int *fd, void **addr);
 int hwt_mmap_received(struct trace_context *tc,
     struct hwt_record_user_entry *entry);
 int hwt_ncpu(void);
