@@ -125,6 +125,30 @@ hwt_unsuspend_proc(struct trace_context *tc)
 }
 
 int
+hwt_map_tracebuf(struct trace_context *tc, int id, int *fd, void **addr)
+{
+	char filename[32];
+
+	sprintf(filename, "/dev/hwt_%d_%d", tc->ident, id);
+
+	*fd = open(filename, O_RDONLY);
+	if (*fd < 0) {
+		printf("Can't open %s\n", filename);
+		return (-1);
+	}
+
+	*addr = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, *fd, 0);
+	if (*addr == MAP_FAILED) {
+		printf("mmap failed: err %d\n", errno);
+		return (-1);
+	}
+
+	printf("%s: addr: %p\n", __func__, *addr);
+
+	return (0);
+}
+
+int
 hwt_mmap_received(struct trace_context *tc,
     struct hwt_record_user_entry *entry __unused)
 {
@@ -166,6 +190,13 @@ hwt_ctx_alloc(struct trace_context *tc)
 {
 	struct hwt_alloc al;
 	int error;
+
+		/* Initialize decoder */
+	error = tc->trace_dev->methods->init(tc);
+        if (error) {
+                printf("Can't init decoder, error %d\n", error);
+                return (error);
+        }
 
 	memset(&al, 0, sizeof(struct hwt_alloc));
 
@@ -336,9 +367,17 @@ hwt_mode_cpu(struct trace_context *tc)
 	/*
 	 * TODO: It is Coresight-specific to map memory from the first CPU.
 	 */
+	/*
 	error = hwt_map_memory(tc, CPU_FFS(&tc->cpu_map) - 1);
 	if (error != 0) {
 		printf("can't map memory");
+		return (error);
+	}
+	*/
+
+	error = tc->trace_dev->methods->mmap(tc);
+	if (error) {
+		printf("Can't map tracing buffers, error %d\n", error);
 		return (error);
 	}
 
@@ -695,12 +734,6 @@ main(int argc, char **argv, char **env)
 
 	argc += optind;
 	argv += optind;
-	/* Initialize decoder */
-	error = tc->trace_dev->methods->init(tc);
-        if (error) {
-                printf("Can't init decoder, error %d\n", error);
-                return (error);
-        }
 
 	if (tc->mode == HWT_MODE_THREAD) {
 		if (*argv == NULL && tc->attach == 0)

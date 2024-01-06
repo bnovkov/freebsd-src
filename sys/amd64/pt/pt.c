@@ -67,6 +67,7 @@
 #include "pt.h"
 #include "sys/_stdint.h"
 #include "sys/domainset.h"
+#include "sys/errno.h"
 #include "sys/sleepqueue.h"
 #include "x86/include/apicvar.h"
 #include "x86/include/specialreg.h"
@@ -103,6 +104,8 @@ struct pt_save_area {
 
 struct pt_buffer {
 	uint64_t *topa_hw; /* ToPA table entries. */
+	struct mtx pmi_mtx;
+	bool ready;
 	vm_offset_t offset;
 	int curpage;
 };
@@ -243,7 +246,9 @@ pt_cpu_stop(void *dummy)
 {
 	struct pt_cpu *cpu = &pt_pcpu[curcpu];
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
-
+	/* Check if the CPU was initialized */
+	if(cpu->ctx.buf.topa_hw == NULL)
+		return;
 	pt_cpu_toggle_local(&cpu->ctx.save_area, false);
 }
 
@@ -549,14 +554,29 @@ pt_backend_disable(int cpu_id)
 static int
 pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset)
 {
-	struct pt_ctx *ctx = &pt_pcpu[cpu_id].ctx;
+	struct pt_buffer *buf = &pt_pcpu[cpu_id].ctx.buf;
 	dprintf("%s\n", __func__);
 
-	if (ctx->buf.topa_hw == NULL)
+	if (buf->topa_hw == NULL)
 		return (-1);
 
-	*curpage = ctx->buf.curpage;
-	*curpage_offset = ctx->buf.offset;
+	mtx_lock_spin(&buf->pmi_mtx);
+
+	if(!buf->ready){
+		if(msleep_spin(buf, &buf->pmi_mtx, "ptread", 0) == EWOULDBLOCK){
+			mtx_unlock_spin(&buf->pmi_mtx);
+			return (ENOENT);
+		}
+		if(!buf->ready){
+			return -1;
+		}
+	}
+	*curpage = buf->curpage;
+	*curpage_offset = buf->offset;
+	buf->ready = false;
+	wmb();
+
+	mtx_unlock_spin(&buf->pmi_mtx);
 
 	return (0);
 }
@@ -594,13 +614,13 @@ pt_buffer_ready(void *arg, int pending __unused)
 	struct pt_ctx *ctx = arg;
 	struct kevent kev;
 	int ret __diagused;
-	u_int uflags = 0x00ffffff;
 	int64_t data = (ctx->buf.curpage * PAGE_SIZE) + ctx->buf.offset;
 
-	dprintf("%s: cpu %d, kqueue_fd %d, data 0x%zx\n", __func__, curcpu, kqueue_fd, data);
+	dprintf("%s: cpu %d, kqueue_fd %d, data 0x%zx, td %p\n", __func__, curcpu, ctx->kqueue_fd, data, ctx->hwt_td);
 	EV_SET(&kev, HWT_PT_BUF_RDY_EV, EVFILT_USER, 0,
-	    NOTE_TRIGGER | NOTE_FFCOPY | uflags, data, NULL);
+	    NOTE_TRIGGER, data, NULL);
 	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->hwt_td, M_WAITOK);
+	dprintf("%s: kqfd ret %d\n", __func__, ret);
 	KASSERT(ret == 0,
 	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
 }
@@ -641,12 +661,21 @@ pt_topa_intr(struct trapframe *tf)
 	/* Update buffer offset. */
 	reg = rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS);
 
+	mtx_lock_spin(&buf->pmi_mtx);
+
 	buf->curpage = (reg & 0xffffff80) >> 7;
 	buf->offset = reg >> 32;
+	buf->ready = true;
+	wmb();
+	mtx_unlock_spin(&buf->pmi_mtx);
+	/* Notify pt_backend_read. */
+	wakeup(buf);
+	printf("Woke up pt_backend_read\n");
 
-	/* Notify userspace. */
-	TASK_INIT(&ctx->task, 0, (task_fn_t *)pt_buffer_ready, ctx);
-	taskqueue_enqueue(taskqueue_hwt, &ctx->task);
+
+	/* TASK_INIT(&ctx->task, 0, (task_fn_t *)pt_buffer_ready, ctx); */
+	/* taskqueue_enqueue(taskqueue_hwt, &ctx->task); */
+
 
 	/* Clear ToPA PMI status. */
 	reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
@@ -764,6 +793,8 @@ pt_modevent(module_t mod, int type, void *data)
 		mtx_init(&pt_mtx, "Intel PT", NULL, MTX_DEF);
 		pt_pcpu = malloc(sizeof(struct pt_cpu) * mp_ncpus, M_PT,
 		    M_ZERO | M_WAITOK);
+		for(int i=0; i<mp_ncpus; i++)
+			mtx_init(&pt_pcpu[i].ctx.buf.pmi_mtx, "ToPA PMI", NULL, MTX_SPIN);
 		loaded = true;
 		break;
 	case MOD_UNLOAD:
