@@ -175,33 +175,6 @@ hwt_pt_set_config(struct trace_context *tc)
 	return (error);
 }
 
-static struct pmcstat_symbol *
-symbol_lookup(const struct trace_context *tc, uint64_t ip,
-			  struct pmcstat_image **img, uint64_t *newpc0)
-{
-	struct pmcstat_image *image;
-	struct pmcstat_symbol *sym;
-	struct pmcstat_pcmap *map;
-	uint64_t newpc;
-
-	map = pmcstat_process_find_map(tc->pp, ip);
-	if (map != NULL) {
-		image = map->ppm_image;
-		newpc = ip - ((unsigned long)map->ppm_lowpc +
-					  (image->pi_vaddr - image->pi_start));
-		sym = pmcstat_symbol_search(image, newpc); /* Could be NULL. */
-		newpc += image->pi_vaddr;
-
-		*img = image;
-		*newpc0 = newpc;
-
-		return (sym);
-	} else
-		*img = NULL;
-
-	return (NULL);
-}
-
 static void
 hwt_pt_print_tnt(const struct pt_packet_tnt *packet)
 {
@@ -300,40 +273,6 @@ hwt_pt_print_packet(const struct pt_packet *pkt)
 
 	printf("\n");
 
-	sym = symbol_lookup(tc, ip, &image, &newpc);
-
-	if (sym || image) {
-		xo_open_instance("entry");
-		xo_emit_h(dec->xop, "{:pc/pc 0x%08lx/%x}", ip);
-		xo_emit_h(dec->xop, " ");
-	}
-
-	if (image) {
-		if (tc->mode == HWT_MODE_THREAD) {
-			xo_emit_h(dec->xop, "{:newpc/(%lx)/%x}", newpc);
-			xo_emit_h(dec->xop, "\t");
-		}
-
-		piname = pmcstat_string_unintern(image->pi_name);
-		xo_emit_h(dec->xop, "{:piname/%12s/%s}", piname);
-	}
-
-	if (sym) {
-		psname = pmcstat_string_unintern(sym->ps_name);
-		offset = newpc - (sym->ps_start + image->pi_vaddr);
-		xo_emit_h(dec->xop, "\t");
-		xo_emit_h(dec->xop, "{:psname/%s/%s}", psname);
-		xo_emit_h(dec->xop, "{:offset/+0x%lx/%ju}", offset);
-	}
-
-	if (sym || image) {
-		xo_emit_h(dec->xop, "\n");
-		xo_close_instance("entry");
-	}
-
-	xo_flush();
-
-
 	return (0);
 }
 
@@ -350,13 +289,7 @@ hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
 
 	offs = prevoffs = start;
 
-		pt_pkt_sync_set(dec, start);
-		/* error = pt_pkt_sync_forward(dec); */
-		/* if (error < 0) { */
-		/* 	printf("%s: error while syncing decoder: %s\n", */
-		/* 		   __func__, pt_strerror(error)); */
-		/* 	return (-1); */
-		/* } */
+	pt_pkt_sync_set(dec, start);
 
 	do {
 		ret = pt_pkt_next(dec, &packet, sizeof(packet));
