@@ -1379,6 +1379,7 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 
 	if (sv->sv_protect != NULL)
 		sv->sv_protect(imgp, SVP_IMAGE);
+
 #ifdef HWT_HOOKS
 	/* HWT: record main binary. */
 	struct hwt_record_entry ent;
