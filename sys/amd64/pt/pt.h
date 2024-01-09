@@ -52,7 +52,8 @@ struct pt_cpu_config {
 #include <sys/malloc.h>
 
 #define PT_CPUID 0x14
-#define PT_SUPPORTED_FLAGS (RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT)
+#define PT_SUPPORTED_FLAGS \
+	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT)
 
 struct xsave_header {
 	uint64_t xsave_bv;

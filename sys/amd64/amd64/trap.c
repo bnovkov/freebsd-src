@@ -256,7 +256,6 @@ trap(struct trapframe *frame)
 	}
 
 	if (type == T_NMI) {
-		printf("%s: NMI\n", __func__);
 #ifdef HWT_HOOKS
 	    	if(hwt_intr != NULL &&
 		    (*hwt_intr)(frame) != 0)
