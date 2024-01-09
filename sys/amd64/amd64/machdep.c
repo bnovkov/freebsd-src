@@ -1299,9 +1299,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	kernphys = amd64_loadaddr();
 
 	physfree += kernphys;
-#ifdef EARLY_PRINTF
-	cnputs("HAIIII\n");
-#endif
+
 	kmdp = init_ops.parse_preload_data(modulep);
 
 	efi_boot = preload_search_info(kmdp, MODINFO_METADATA |

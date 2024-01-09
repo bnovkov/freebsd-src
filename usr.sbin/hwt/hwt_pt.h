@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2023 Bojan Novkovic <bnovkov@freebsd.org>
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,8 +24,8 @@
  * SUCH DAMAGE.
  */
 
-#ifndef	_HWT_PT_H_
-#define	_HWT_PT_H_
+#ifndef _HWT_PT_H_
+#define _HWT_PT_H_
 
 #include <amd64/pt/pt.h>
 

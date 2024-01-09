@@ -50,6 +50,9 @@
 
 #define pt_strerror(errcode) pt_errstr(pt_errcode((errcode)))
 
+/*
+ * Decoder per-cpu state.
+ */
 static struct hwt_pt_cpu {
 	size_t curoff;
 	void *tracebuf;
@@ -65,7 +68,6 @@ hwt_pt_init(struct trace_context *tc)
 		printf("%s: failed to allocate decoder\n", __func__);
 		return (-1);
 	}
-
 	if (tc->raw) {
 		/* No decoder needed, just a file for raw data. */
 		tc->raw_f = fopen(tc->filename, "w");
@@ -80,24 +82,23 @@ hwt_pt_init(struct trace_context *tc)
 }
 
 static int
-hwt_pt_mmap(struct trace_context *tc){
-	int error, i;
+hwt_pt_mmap(struct trace_context *tc)
+{
+	int error;
 	int cpu_id, tc_fd = -1, _fd;
-	int nranges;
 	struct hwt_pt_cpu *cpu;
 	struct pt_config config;
-	uint64_t *cfg_ip_ranges = &config.addr_filter.addr0_a;
 
-
-	if(tc->mode == HWT_MODE_CPU){
+	if (tc->mode == HWT_MODE_CPU) {
 		CPU_FOREACH_ISSET (cpu_id, &tc->cpu_map) {
 			cpu = &hwt_pt_pcpu[cpu_id];
 
-			error = hwt_map_tracebuf(tc, cpu_id, tc_fd == -1 ? &tc_fd : &_fd, &cpu->tracebuf);
+			error = hwt_map_tracebuf(tc, cpu_id,
+			    tc_fd == -1 ? &tc_fd : &_fd, &cpu->tracebuf);
 			if (error != 0) {
 				printf(
-					"%s: failed to map tracing buffer for cpu %d: %s\n",
-					__func__, cpu_id, strerror(errno));
+				    "%s: failed to map tracing buffer for cpu %d: %s\n",
+				    __func__, cpu_id, strerror(errno));
 				return (-1);
 			}
 
@@ -105,21 +106,14 @@ hwt_pt_mmap(struct trace_context *tc){
 				memset(&config, 0, sizeof(config));
 				config.size = sizeof(config);
 				config.begin = cpu->tracebuf;
-				config.end = (uint8_t *)cpu->tracebuf + tc->bufsize;
-				config.addr_filter.config.ctl.addr0_cfg=1;
-				//config.cpu = cpu_id;
-				/* IP range filtering. */
-				nranges = tc->nranges <= 2 ? tc->nranges : 0;
-				for (i = 0; i < nranges; i++) {
-					cfg_ip_ranges[i * 2] = tc->addr_ranges[i * 2];
-					cfg_ip_ranges[i * 2 +1] = tc->addr_ranges[i * 2 + 1];
-				}
+				config.end = (uint8_t *)cpu->tracebuf +
+				    tc->bufsize;
 
 				cpu->dec = pt_pkt_alloc_decoder(&config);
 				if (cpu->dec == NULL) {
 					printf(
-						"%s: failed to allocate PT decoder for cpu %d\n",
-						__func__, cpu_id);
+					    "%s: failed to allocate PT decoder for cpu %d\n",
+					    __func__, cpu_id);
 					return (-1);
 				}
 			}
@@ -193,29 +187,29 @@ hwt_pt_print_mode(const struct pt_packet_mode *pkt)
 {
 	enum pt_exec_mode mode;
 
-	switch(pkt->leaf){
-		case pt_mol_exec: {
-			printf(".exec: ");
-			mode = pt_get_exec_mode(&pkt->bits.exec);
-			switch (mode) {
-				case ptem_64bit:
-					printf("64-bit");
-					break;
-				case ptem_32bit:
-					printf("32-bit");
-					break;
-				case ptem_16bit:
-					printf("16-bit");
-					break;
-				default:
-					printf("unknown");
-					break;
-			}
+	switch (pkt->leaf) {
+	case pt_mol_exec: {
+		printf(".exec: ");
+		mode = pt_get_exec_mode(&pkt->bits.exec);
+		switch (mode) {
+		case ptem_64bit:
+			printf("64-bit");
+			break;
+		case ptem_32bit:
+			printf("32-bit");
+			break;
+		case ptem_16bit:
+			printf("16-bit");
+			break;
+		default:
+			printf("unknown");
 			break;
 		}
-		case pt_mol_tsx:
-			printf(".tsx");
-			break;
+		break;
+	}
+	case pt_mol_tsx:
+		printf(".tsx");
+		break;
 	}
 }
 
@@ -270,7 +264,6 @@ hwt_pt_print_packet(const struct pt_packet *pkt)
 		    pkt->type);
 		return (-1);
 	}
-
 	printf("\n");
 
 	return (0);
@@ -288,7 +281,7 @@ hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
 	printf("%s: start %zu, len %zu\n", __func__, start, len);
 
 	offs = prevoffs = start;
-
+	/* Set decoder to current offset. */
 	pt_pkt_sync_set(dec, start);
 
 	do {
@@ -315,11 +308,9 @@ hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
 		prevoffs = offs;
 		offs += ret;
 
-		// XXX: is this even possible?
 		if (offs > (start + len))
 			break;
 	} while (1);
-
 	*processed = offs - start;
 
 	return (error);
@@ -329,8 +320,8 @@ hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
  * Dumps raw packet bytes into tc->raw_f.
  */
 static int
-hwt_pt_dump_chunk(struct hwt_pt_cpu *cpu, FILE *raw_f, uint64_t offs, size_t len,
-    uint64_t *processed)
+hwt_pt_dump_chunk(struct hwt_pt_cpu *cpu, FILE *raw_f, uint64_t offs,
+    size_t len, uint64_t *processed)
 {
 	void *base;
 
@@ -344,8 +335,8 @@ hwt_pt_dump_chunk(struct hwt_pt_cpu *cpu, FILE *raw_f, uint64_t offs, size_t len
 }
 
 static int
-pt_process_chunk(struct trace_context *tc, struct hwt_pt_cpu *cpu, uint64_t offs, size_t len,
-    uint64_t *processed)
+pt_process_chunk(struct trace_context *tc, struct hwt_pt_cpu *cpu,
+    uint64_t offs, size_t len, uint64_t *processed)
 {
 	if (tc->raw) {
 		return hwt_pt_dump_chunk(cpu, tc->raw_f, offs, len, processed);
