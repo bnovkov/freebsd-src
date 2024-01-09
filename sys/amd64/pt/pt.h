@@ -1,0 +1,78 @@
+/*-
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+#ifndef _AMD64_PT_PT_H_
+#define _AMD64_PT_PT_H_
+
+#include <sys/types.h>
+
+#include <x86/include/specialreg.h>
+
+#define IP_FILTER_MAX_RANGES (4) /* Intel SDM Vol. 3C, 33-29 */
+
+#define HWT_PT_BUF_RDY_EV 138
+
+struct pt_cpu_config {
+	uint64_t rtit_ctl;
+	register_t cr3_filter;
+	int nranges;
+	struct ipf_range {
+		vm_offset_t start;
+		vm_offset_t end;
+	} ip_ranges[IP_FILTER_MAX_RANGES];
+	uint32_t mtc_freq;
+	uint32_t cyc_thresh;
+	uint32_t psb_freq;
+};
+
+#ifdef _KERNEL
+#include <sys/malloc.h>
+
+#define PT_CPUID 0x14
+#define PT_SUPPORTED_FLAGS \
+	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT)
+
+struct xsave_header {
+	uint64_t xsave_bv;
+	uint64_t xcomp_bv;
+	uint8_t reserved[48];
+};
+
+struct pt_ext_area {
+	uint64_t rtit_ctl;
+	uint64_t rtit_output_base;
+	uint64_t rtit_output_mask_ptrs;
+	uint64_t rtit_status;
+	uint64_t rtit_cr3_match;
+	uint64_t rtit_addr0_a;
+	uint64_t rtit_addr0_b;
+	uint64_t rtit_addr1_a;
+	uint64_t rtit_addr1_b;
+};
+
+MALLOC_DECLARE(M_PT);
+#endif /* _KERNEL */
+#endif /* !_AMD64_PT_PT_H */
