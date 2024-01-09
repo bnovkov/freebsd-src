@@ -32,6 +32,7 @@
  */
 
 #include "opt_capsicum.h"
+#include "opt_hwt_hooks.h"
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -76,6 +77,10 @@
 #include <vm/vm_map.h>
 #include <vm/vm_object.h>
 #include <vm/vm_extern.h>
+
+#ifdef HWT_HOOKS
+#include <dev/hwt/hwt_hook.h>
+#endif
 
 #include <machine/elf.h>
 #include <machine/md_var.h>
@@ -1375,6 +1380,17 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	if (sv->sv_protect != NULL)
 		sv->sv_protect(imgp, SVP_IMAGE);
 
+#ifdef HWT_HOOKS
+	/* HWT: record main binary. */
+	struct hwt_record_entry ent;
+	if (td->td_proc->p_flag2 & P2_HWT) {
+		ent.fullpath = imgp->execpath;
+		ent.addr = (uintptr_t)entry;
+		ent.record_type = HWT_RECORD_EXECUTABLE;
+		HWT_CALL_HOOK(td, HWT_EXEC, &ent);
+	}
+#endif
+
 	if (interp != NULL) {
 		VOP_UNLOCK(imgp->vp);
 		if ((map->flags & MAP_ASLR) != 0) {
@@ -1390,6 +1406,17 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
 		if (error != 0)
 			goto ret;
+
+#ifdef HWT_HOOKS
+		/* HWT: Record interp. */
+		struct hwt_record_entry ent;
+		if (td->td_proc->p_flag2 & P2_HWT) {
+			ent.fullpath = interp;
+			ent.addr = (uintptr_t)imgp->entry_addr;
+			ent.record_type = HWT_RECORD_INTERP;
+			HWT_CALL_HOOK(td, HWT_EXEC, &ent);
+		}
+#endif
 	} else
 		addr = imgp->et_dyn_addr;
 
