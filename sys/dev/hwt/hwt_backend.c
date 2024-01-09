@@ -124,21 +124,21 @@ hwt_backend_enable_smp(struct hwt_context *ctx)
 {
 
 	dprintf("%s\n", __func__);
-  if(!ctx->hwt_backend->ops->hwt_backend_enable_smp)
-    return (ENOENT);
-  ctx->hwt_backend->ops->hwt_backend_enable_smp(ctx);
+	if (!ctx->hwt_backend->ops->hwt_backend_enable_smp)
+		return (ENOENT);
+	ctx->hwt_backend->ops->hwt_backend_enable_smp(ctx);
 
-  return (0);
+	return (0);
 }
 
 int
 hwt_backend_disable_smp(struct hwt_context *ctx)
 {
-  if(!ctx->hwt_backend->ops->hwt_backend_disable_smp)
-    return (ENOENT);
-  ctx->hwt_backend->ops->hwt_backend_disable_smp(ctx);
+	if (!ctx->hwt_backend->ops->hwt_backend_disable_smp)
+		return (ENOENT);
+	ctx->hwt_backend->ops->hwt_backend_disable_smp(ctx);
 
-  return (0);
+	return (0);
 }
 
 void __unused
@@ -170,12 +170,9 @@ hwt_backend_lookup(const char *name)
 	struct hwt_backend_entry *entry;
 	struct hwt_backend *backend;
 
-  dprintf("%s: looking up %s\n", __func__, name);
-
 	HWT_BACKEND_LOCK();
 	LIST_FOREACH(entry, &hwt_backends, next) {
 		backend = entry->backend;
-    dprintf("%s: entry %s\n", __func__, backend->name);
 		if (strcmp(backend->name, name) == 0) {
 			HWT_BACKEND_UNLOCK();
 			return (backend);

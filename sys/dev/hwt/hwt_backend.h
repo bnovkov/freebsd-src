@@ -40,8 +40,8 @@ struct hwt_backend_ops {
 	void (*hwt_backend_disable)(int cpu_id);
 	int (*hwt_backend_read)(int cpu_id, int *curpage,
 	    vm_offset_t *curpage_offset);
-  /* For backends that are tied to local CPU registers */
-  void (*hwt_backend_enable_smp)(struct hwt_context *);
+	/* For backends that are tied to local CPU registers */
+	void (*hwt_backend_enable_smp)(struct hwt_context *);
 	void (*hwt_backend_disable_smp)(struct hwt_context *);
 
 	/* Debugging only. */
