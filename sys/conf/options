@@ -662,7 +662,6 @@ TMPFS_PAGES_MINRESERVED		opt_tmpfs.h
 UART_PPS_ON_CTS		opt_uart.h
 UART_POLL_FREQ		opt_uart.h
 UART_DEV_TOLERANCE_PCT	opt_uart.h
-UART_NS8250_EARLY_PORT	opt_uart.h
 
 # options for bus/device framework
 BUS_DEBUG		opt_bus.h
