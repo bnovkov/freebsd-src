@@ -5204,7 +5204,6 @@ vm/swap_pager.c			standard
 vm/uma_core.c			standard
 vm/uma_dbg.c			standard
 vm/memguard.c			optional DEBUG_MEMGUARD
-vm/vm_compact.c		standard
 vm/vm_domainset.c		standard
 vm/vm_fault.c			standard
 vm/vm_glue.c			standard
