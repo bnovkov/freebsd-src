@@ -2392,7 +2392,7 @@ vm_phys_compact_search(struct vm_phys_compact_ctx *ctx, int domain)
 		}
 		idx = (idx + 1) % (sip->nchunks - 1);
 	}
-  
+
   ctx->regions_queued = regions_queued;
 	ctx->last_idx = (idx + 1) % (sip->nchunks - 1);
 
@@ -2446,7 +2446,6 @@ vm_phys_compact_region(vm_paddr_t start, vm_paddr_t end, int domain){
     vm_page_t free, scan;
     int error;
 
-
 		free = PHYS_TO_VM_PAGE(start);
 		scan = PHYS_TO_VM_PAGE(end - PAGE_SIZE);
 
@@ -2499,16 +2498,17 @@ static size_t
 vm_phys_compact(struct vm_phys_compact_ctx *ctx, int domain)
 {
 	size_t nrelocated = 0;
-	int i;
+	int i, idx;
   vm_paddr_t start, end;
   struct vm_phys_search_chunk *scp;
   struct vm_phys_subseg *ssp;
 
   for(i=0; i < ctx->regions_queued; i++){
-          scp = vm_phys_search_get_chunk(ctx->sip, i);
+          idx = ctx->region_idx[i];
+          scp = vm_phys_search_get_chunk(ctx->sip, idx);
           if(scp->shp == NULL){
-                  start = vm_phys_search_idx_to_paddr(i, domain);
-                  end = vm_phys_search_idx_to_paddr(i+1, domain);
+                  start = vm_phys_search_idx_to_paddr(idx, domain);
+                  end = vm_phys_search_idx_to_paddr(idx+1, domain);
                   nrelocated += vm_phys_compact_region(start, end, domain);
           } else {
                   SLIST_FOREACH (ssp, scp->shp, link) {
@@ -2591,13 +2591,12 @@ vm_phys_compact_thread(void *arg)
 				break;
 			}
 
-			old_frag_idx = frag_idx;
-
-
       /* Find eligible memory regions. */
       if (vm_phys_compact_search(ctx, domain) == 0) {
               nrelocated = 0;
       } else {
+              old_frag_idx = frag_idx;
+
               nrelocated = vm_phys_compact(ctx, domain);
               /* An error occured. */
               if (nrelocated < 0) {
