@@ -45,7 +45,7 @@
  *
  * /dev/hwt:
  *    .ioctl:
- *        hwt_ioctl(): 
+ *        hwt_ioctl():
  *               a) HWT_IOC_ALLOC
  *                  Allocates kernel tracing context CTX based on requested mode
  *                  of operation. Verifies the information that comes with the
@@ -72,6 +72,9 @@
  *               e) HWT_IOC_BUFPTR_GET
  *                  Transfers current hardware pointer in the filling buffer
  *                  to the userspace.
+ *               f) HWT_IOC_SVC_BUF
+ *                  To avoid data loss, userspace may notify kernel it has
+ *                  copied out the given buffer, so kernel is ok to overwrite
  *
  * HWT context lifecycle in THREAD mode of operation:
  * 1. User invokes HWT_IOC_ALLOC ioctl with information about pid to trace and

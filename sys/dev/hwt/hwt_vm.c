@@ -329,6 +329,19 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		if (error)
 			return (error);
 		break;
+
+	case HWT_IOC_SVC_BUF:
+		if (ctx->state == CTX_STATE_STOPPED) {
+			return (ENXIO);
+		}
+		cpu_id = *addr;
+		if (cpu_id > mp_ncpus)
+			return (ENXIO);
+		error = hwt_backend_svc_buf(ctx, cpu_id);
+		if (error)
+			return (error);
+		break;
+
 	default:
 		break;
 	}
