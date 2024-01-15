@@ -5642,26 +5642,16 @@ vm_page_relocate_page(vm_page_t src, vm_page_t dst, int domain)
 	vm_object_t obj = src->object;
 
 	vm_page_assert_xbusied(src);
-
+  vm_domain_free_assert_locked(vmd);
 	VM_OBJECT_ASSERT_WLOCKED(obj);
 	KASSERT(vm_page_domain(src) == domain,
 	    ("Source page is from a different domain"));
 	KASSERT(vm_page_domain(dst) == domain,
 	    ("Destination page is from a different domain"));
 
-	vm_domain_free_lock(vmd);
-	/* Check if the dst page is still eligible and remove it from the
-	 * freelist. */
-	if (dst->order != 0 || !vm_page_none_valid(dst)) {
-		error = 2;
-		vm_page_xunbusy(src);
-		vm_domain_free_unlock(vmd);
-		goto unlock;
-	}
-
+  // Assert freequeues locked
 	vm_page_dequeue(dst);
-	vm_phys_unfree_page(dst);
-	vm_domain_free_unlock(vmd);
+  vm_domain_free_unlock(vmd);
 	vm_domain_freecnt_inc(vmd, -1);
 
 	/* Unmap src page */

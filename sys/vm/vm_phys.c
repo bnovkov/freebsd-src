@@ -181,7 +181,6 @@ struct vm_phys_search_index {
 
 struct vm_phys_compact_ctx {
         struct thread *kthr;
-
         int last_idx; /* saved index of last chunk visited by the search fn */
         int region_idx[VM_PHYS_COMPACT_MAX_SEARCH_REGIONS]; /* indicies of candidate regions to compact */
         int regions_queued;
@@ -2058,13 +2057,13 @@ DB_SHOW_COMMAND_FLAGS(freepages, db_show_freepages, DB_CMD_MEMSAFE)
 }
 #endif
 
-#define VM_PHYS_SEARCH_CHUNK_ORDER (14)
+#define VM_PHYS_SEARCH_CHUNK_ORDER (15)
 #define VM_PHYS_SEARCH_CHUNK_NPAGES (1 << (VM_PHYS_SEARCH_CHUNK_ORDER))
 #define VM_PHYS_SEARCH_CHUNK_SIZE \
 	(1 << (PAGE_SHIFT + VM_PHYS_SEARCH_CHUNK_ORDER))
 #define VM_PHYS_SEARCH_CHUNK_MASK (VM_PHYS_SEARCH_CHUNK_SIZE - 1)
 #define VM_PHYS_HOLECNT_HI ((1 << (VM_PHYS_SEARCH_CHUNK_ORDER)) - 100)
-#define VM_PHYS_HOLECNT_LO (16)
+#define VM_PHYS_HOLECNT_LO (1)
 
 static __inline vm_paddr_t
 vm_phys_search_idx_to_paddr(int idx, int domain)
@@ -2345,37 +2344,82 @@ vm_phys_init_compact(void *arg)
 SYSINIT(vm_phys_compact, SI_SUB_KMEM + 1, SI_ORDER_ANY, vm_phys_init_compact,
     NULL);
 
+static void
+vm_phys_ctx_rshift_from(struct vm_phys_compact_ctx *ctx, int idx){
+
+        /* Rshift last element if array is not full. */
+        if (ctx->regions_queued < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS){
+                ctx->region_idx[ctx->regions_queued] = ctx->region_idx[ctx->regions_queued - 1];
+        }
+
+        for (int i = ctx->regions_queued - 1; i > idx; i--){
+                ctx->region_idx[i] = ctx->region_idx[i - 1];
+        }
+}
+
+static void
+vm_phys_ctx_insert_chunk_sorted(struct vm_phys_compact_ctx *ctx, struct vm_phys_search_index *sip,
+                                int idx){
+        struct vm_phys_search_chunk *scp, *tmp;
+        int i;
+
+        scp = vm_phys_search_get_chunk(sip, idx);
+        if (ctx->regions_queued == VM_PHYS_COMPACT_MAX_SEARCH_REGIONS){
+                /* Fetch last enqueued chunk */
+                tmp = vm_phys_search_get_chunk(sip, ctx->region_idx[VM_PHYS_COMPACT_MAX_SEARCH_REGIONS - 1]);
+                if (scp->score < tmp->score){
+                        return;
+                }
+        } else if (ctx->regions_queued == 0){
+                        ctx->region_idx[0] = idx;
+                        ctx->regions_queued++;
+                        return;
+        }
+
+        for(i = 0; i < ctx->regions_queued; i++){
+                tmp = vm_phys_search_get_chunk(sip, ctx->region_idx[i]);
+                if(scp->score > tmp->score){
+                        break;
+                }
+        }
+
+        if ((i +1) < ctx->regions_queued)
+                vm_phys_ctx_rshift_from(ctx, i);
+        ctx->region_idx[i] = idx;
+
+        if(ctx->regions_queued < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS){
+                ctx->regions_queued++;
+        }
+}
+
 /*
  * Scans the search index for physical memory regions that could be potential
  * compaction candidates. Eligible regions are enqueued on a slist.
  */
-static int
+static __noinline int
 vm_phys_compact_search(struct vm_phys_compact_ctx *ctx, int domain)
 {
 	int idx;
-	int regions_queued = 0;
 	int chunks_scanned = 0;
 	struct vm_phys_search_chunk *scp;
 	struct vm_phys_search_index *sip = &vm_phys_search_index[domain];
 
   /*
-   * Scan search index until we either fill up the region queue or do a full circle.
+   * Scan search index until we do a full circle.
    */
   ctx->regions_queued = 0;
   /* Continue where we left off. */
 	idx = ctx->last_idx;
-	while (chunks_scanned < (sip->nchunks -1) &&
-         regions_queued < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS) {
+	while (chunks_scanned < (sip->nchunks -1)) {
 		for (;
-		     chunks_scanned < (sip->nchunks-1) && idx < sip->nchunks - 1 &&
-		     regions_queued < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS;
+		     chunks_scanned < (sip->nchunks-1) && idx < sip->nchunks - 1;
 		     chunks_scanned++, idx++) {
 
 			scp = vm_phys_search_get_chunk(sip, idx);
 			/* Skip current chunk if it was marked as invalid */
 			if (scp->skipidx) {
 				idx = scp->skipidx - 1;
-				chunks_scanned += scp->skipidx - idx;
+				chunks_scanned += scp->skipidx - idx - 1;
 				continue;
 			}
 
@@ -2383,20 +2427,16 @@ vm_phys_compact_search(struct vm_phys_compact_ctx *ctx, int domain)
        * Determine whether the current chunk is
        * suitable for compaction.
        */
-			if (scp->score > 1 &&
-			    scp->holecnt >= VM_PHYS_HOLECNT_LO &&
-			    scp->holecnt <= VM_PHYS_HOLECNT_HI) {
-              ctx->region_idx[regions_queued] = idx;
-              regions_queued++;
+			if (scp->score > 0) {
+              vm_phys_ctx_insert_chunk_sorted(ctx, sip, idx);
 				}
 		}
 		idx = (idx + 1) % (sip->nchunks - 1);
 	}
 
-  ctx->regions_queued = regions_queued;
 	ctx->last_idx = (idx + 1) % (sip->nchunks - 1);
 
-return regions_queued;
+  return ctx->regions_queued;
 }
 
 /*
@@ -2405,7 +2445,7 @@ return regions_queued;
 static __noinline bool
 vm_phys_compact_page_free(vm_page_t p)
 {
-	return (p->order == 0);
+        return (p->order != VM_NFREEORDER);
 }
 
 /*
@@ -2444,7 +2484,9 @@ static size_t
 vm_phys_compact_region(vm_paddr_t start, vm_paddr_t end, int domain){
     size_t nrelocated = 0;
     vm_page_t free, scan;
-    int error;
+    struct vm_domain *vmd = VM_DOMAIN(domain);
+    struct vm_freelist *fl;
+    int error, order;
 
 		free = PHYS_TO_VM_PAGE(start);
 		scan = PHYS_TO_VM_PAGE(end - PAGE_SIZE);
@@ -2461,14 +2503,14 @@ vm_phys_compact_region(vm_paddr_t start, vm_paddr_t end, int domain){
 
 			/* Find suitable destination page ("hole"). */
 			while (free < scan && !vm_phys_compact_page_free(free)) {
-				free++;
+              free++;
 			}
 
 			if (__predict_false(free >= scan)) {
 				break;
 			}
 
-			/* Find suitable relocation candidate. */
+      /* Find suitable relocation candidate. */
 			while (free < scan &&
 			    !vm_phys_compact_page_relocatable(scan)) {
 				scan--;
@@ -2477,6 +2519,26 @@ vm_phys_compact_region(vm_paddr_t start, vm_paddr_t end, int domain){
 			if (__predict_false(free >= scan)) {
 				break;
 			}
+      vm_domain_free_lock(vmd);
+      /* Check if the dst page is still eligible and remove it from the
+         * freelist. */
+      if (free->order == VM_NFREEORDER || !vm_page_none_valid(free)) {
+              error = 2;
+
+              VM_OBJECT_WUNLOCK(scan->object);
+              vm_page_xunbusy(scan);
+              vm_domain_free_unlock(vmd);
+              free++;
+              continue;
+      }
+      /* Split page to 0-order if necessary */
+      if (free->order != 0){
+              fl = (*vm_phys_segs[free->segind].free_queues)[free->pool];
+              order = free->order;
+              vm_freelist_rem(fl, free, order);
+              vm_phys_split_pages(free, order, fl, 0, 0);
+      }
+      vm_phys_unfree_page(free);
 
 			/* Swap the two pages and move "fingers". */
 			error = vm_page_relocate_page(scan, free, domain);
@@ -2494,7 +2556,7 @@ vm_phys_compact_region(vm_paddr_t start, vm_paddr_t end, int domain){
     return nrelocated;
 }
 
-static size_t
+static __noinline size_t
 vm_phys_compact(struct vm_phys_compact_ctx *ctx, int domain)
 {
 	size_t nrelocated = 0;
@@ -2614,14 +2676,14 @@ vm_phys_compact_thread(void *arg)
 			} else {
 				nretries = 0;
 			}
-		} while (nretries < 5);
+		} while (nretries < 10);
 
 		/* If compaction was not able to lower the fragmentation score,
 		 * sleep for a longer period of time.  */
-		if (nretries == 5) {
-			timo = 10 * hz;
+		if (nretries == 10) {
+			timo = hz / 8;
 		} else {
-			timo = hz;
+			timo = 2 * hz;
 		}
 	}
 }
