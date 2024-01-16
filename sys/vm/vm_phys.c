@@ -2345,19 +2345,6 @@ SYSINIT(vm_phys_compact, SI_SUB_KMEM + 1, SI_ORDER_ANY, vm_phys_init_compact,
     NULL);
 
 static void
-vm_phys_ctx_rshift_from(struct vm_phys_compact_ctx *ctx, int idx){
-
-        /* Rshift last element if array is not full. */
-        if (ctx->regions_queued < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS){
-                ctx->region_idx[ctx->regions_queued] = ctx->region_idx[ctx->regions_queued - 1];
-        }
-
-        for (int i = ctx->regions_queued - 1; i > idx; i--){
-                ctx->region_idx[i] = ctx->region_idx[i - 1];
-        }
-}
-
-static void
 vm_phys_ctx_insert_chunk_sorted(struct vm_phys_compact_ctx *ctx, struct vm_phys_search_index *sip,
                                 int idx){
         struct vm_phys_search_chunk *scp, *tmp;
@@ -2367,7 +2354,7 @@ vm_phys_ctx_insert_chunk_sorted(struct vm_phys_compact_ctx *ctx, struct vm_phys_
         if (ctx->regions_queued == VM_PHYS_COMPACT_MAX_SEARCH_REGIONS){
                 /* Fetch last enqueued chunk */
                 tmp = vm_phys_search_get_chunk(sip, ctx->region_idx[VM_PHYS_COMPACT_MAX_SEARCH_REGIONS - 1]);
-                if (scp->score < tmp->score){
+                if (scp->score <= tmp->score){
                         return;
                 }
         } else if (ctx->regions_queued == 0){
@@ -2382,9 +2369,12 @@ vm_phys_ctx_insert_chunk_sorted(struct vm_phys_compact_ctx *ctx, struct vm_phys_
                         break;
                 }
         }
-
-        if ((i +1) < ctx->regions_queued)
-                vm_phys_ctx_rshift_from(ctx, i);
+        if (i < ctx->regions_queued - 1){
+                /* Shift every element from i onward to the right */
+                for (int j = ctx->regions_queued - 1; j > (i + 1); j--){
+                        ctx->region_idx[j] = ctx->region_idx[j - 1];
+                }
+        }
         ctx->region_idx[i] = idx;
 
         if(ctx->regions_queued < VM_PHYS_COMPACT_MAX_SEARCH_REGIONS){
@@ -2704,7 +2694,7 @@ vm_phys_compact_daemon(void)
 
                 error = kproc_kthread_add(vm_phys_compact_thread, (void *)i,
                                           &compactproc, &ctx->kthr, 0, 0,
-                                          "compactdaemon", "compact%zu", i);
+                                          "compactd", "compact%zu", i);
                 if (error) {
                         panic("%s: cannot start compaction thread, error: %d",
                               __func__, error);
