@@ -31,6 +31,11 @@
 #ifndef _DEV_HWT_HWT_CONTEXT_H_
 #define _DEV_HWT_HWT_CONTEXT_H_
 
+enum hwt_ctx_state {
+	CTX_STATE_STOPPED,
+	CTX_STATE_RUNNING,
+};
+
 struct hwt_context {
 	LIST_HEAD(, hwt_record_entry)	records;
 
@@ -65,8 +70,7 @@ struct hwt_context {
 	struct hwt_backend		*hwt_backend;
 
 	struct mtx			mtx;
-	int				state;
-#define	CTX_STATE_RUNNING		(1 << 0)
+	enum hwt_ctx_state		state;
 	int				refcnt;
 };
 

@@ -275,7 +275,11 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		break;
 
 	case HWT_IOC_STOP:
-		/* TODO */
+		if (ctx->state == CTX_STATE_STOPPED) {
+			return (ENXIO);
+		}
+		hwt_backend_stop(ctx);
+		ctx->state = CTX_STATE_STOPPED;
 		break;
 
 	case HWT_IOC_RECORD_GET:
