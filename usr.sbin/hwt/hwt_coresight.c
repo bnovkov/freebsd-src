@@ -741,6 +741,28 @@ catch_int(int sig_num __unused)
 }
 
 static int
+cs_get_offs(struct trace_context *tc, size_t *offs)
+{
+	struct hwt_bufptr_get bget;
+	vm_offset_t curpage_offset;
+	int curpage;
+	int error;
+
+	bget.curpage = &curpage;
+	bget.curpage_offset = &curpage_offset;
+
+	error = ioctl(tc->thr_fd, HWT_IOC_BUFPTR_GET, &bget);
+	if (error)
+		return (error);
+
+	dprintf("curpage %d curpage_offset %ld\n", curpage, curpage_offset);
+
+	*offs = curpage * PAGE_SIZE + curpage_offset;
+
+	return (0);
+}
+
+static int
 hwt_coresight_process(struct trace_context *tc)
 {
 	size_t offs;
@@ -769,7 +791,7 @@ hwt_coresight_process(struct trace_context *tc)
 	if (error)
 		return (error);
 
-	error = hwt_get_offs(tc, &offs);
+	error = cs_get_offs(tc, &offs);
 	if (error) {
 		printf("%s: cant get offset\n", __func__);
 		return (-1);
@@ -790,7 +812,7 @@ hwt_coresight_process(struct trace_context *tc)
 	t = 0;
 
 	while (1) {
-		error = hwt_get_offs(tc, &new_offs);
+		error = cs_get_offs(tc, &new_offs);
 		if (error)
 			return (-1);
 
