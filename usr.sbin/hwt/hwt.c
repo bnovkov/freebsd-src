@@ -266,6 +266,17 @@ hwt_start_tracing(struct trace_context *tc)
 	return (error);
 }
 
+int
+hwt_stop_tracing(struct trace_context *tc)
+{
+	struct hwt_stop s;
+	int error;
+
+	error = ioctl(tc->thr_fd, HWT_IOC_STOP, &s);
+
+	return (error);
+}
+
 static void
 usage(void)
 {
