@@ -3487,8 +3487,12 @@ vm_map_wire_entry_failure(vm_map_t map, vm_map_entry_t entry,
 }
 
 /*
+ *	vm_map_wire_prefault_entry:
  *
- * Assumes that the entire entry is not populated.
+ *	Preallocates pages in object to avoid performance penalties in 'vm_fault'.
+ *	Used for speeding up wirings of large regions.
+ *
+ *	Will not operate on non-empty entries.
  */
 
 static int
@@ -3496,20 +3500,26 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
 {
 	vm_pindex_t pindex;
 	vm_offset_t cur, end;
-	vm_page_t m;
 	vm_object_t obj = entry->object.vm_object;
 	int rv = KERN_SUCCESS;
+	vm_page_t m;
 #if VM_NRESERVLEVEL > 0
-	const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
 	vm_page_t mt;
 #endif
 
+	VM_MAP_ASSERT_UNLOCKED(map);
 	VM_OBJECT_WLOCK(obj);
+	/* Check if the entry is empty. */
+	if ((m = vm_page_find_least(obj, OFF_TO_IDX(entry->offset)) != NULL
+		&& m->pindex <= OFF_TO_IDX((entry->end - entry->start) + entry->offset)){
+		VM_OBJECT_WUNLOCK(obj);
+		return (KERN_RESTART);
+	}
 	/* Populate entry's object with pages. */
 	end = entry->end;
 	cur = entry->start;
 	while (cur < end) {
-		pindex = atop(cur);
+		pindex = OFF_TO_IDX((cur - entry->start) + entry->offset);
 
 #if VM_NRESERVLEVEL > 0
 		/* First run - try allocate a superpage. */
@@ -3542,19 +3552,18 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
 	}
 	VM_OBJECT_WUNLOCK(obj);
 
+	/*
+	 * Simulate faults to enter the previously
+	 * allocated pages into the physical map.
+	 */
 	cur = entry->start;
 	while (cur < end) {
-
-		/*
-		 * Simulate a fault to enter the page
-		 * into the physical map.
-		 */
 		rv = vm_fault(map, cur, VM_PROT_NONE, VM_FAULT_WIRE, NULL);
 		if (rv != KERN_SUCCESS)
 			break;
 
 		VM_OBJECT_RLOCK(obj);
-		m = vm_page_lookup(obj, atop(cur));
+		m = vm_page_lookup(obj, OFF_TO_IDX((cur - entry->start) + entry->offset));
 		VM_OBJECT_RUNLOCK(obj);
 
 		cur += pagesizes[m->psind];
@@ -3673,8 +3682,11 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 
 			if ((flags & VM_MAP_WIRE_PREFAULT) != 0 && user_wire &&
 			    !holes_ok) {
-				vm_map_wire_prefault_entry(map, entry);
-			} else {
+				rv = vm_map_wire_prefault_entry(map, entry);
+				if (rv != KERN_RESTART)
+					goto fault_done;
+				/* Fall back to regular wiring loop. */					
+			}
 				for (faddr = saved_start; faddr < saved_end;
 				     faddr += incr) {
 					/*
@@ -3685,9 +3697,7 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 					    VM_FAULT_WIRE, NULL);
 					if (rv != KERN_SUCCESS)
 						break;
-				}
-			}
-
+fault_done:
 			vm_map_lock(map);
 			vm_map_unbusy(map);
 			if (last_timestamp + 1 != map->timestamp) {

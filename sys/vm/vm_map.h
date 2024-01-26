@@ -426,7 +426,7 @@ long vmspace_resident_count(struct vmspace *vmspace);
 #define VM_MAP_WIRE_HOLESOK	2	/* region may have holes */
 
 #define VM_MAP_WIRE_WRITE	4	/* Validate writable. */
-#define VM_MAP_WIRE_PREFAULT 8		/* Populate whole entry. */
+#define VM_MAP_WIRE_PREFAULT	8	/* Pre-populate whole region. */
 
 typedef int vm_map_entry_reader(void *token, vm_map_entry_t addr, 
     vm_map_entry_t dest);
