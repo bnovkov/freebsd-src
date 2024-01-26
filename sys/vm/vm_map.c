@@ -3486,6 +3486,82 @@ vm_map_wire_entry_failure(vm_map_t map, vm_map_entry_t entry,
 	entry->wired_count = -1;
 }
 
+/*
+ *
+ * Assumes that the entire entry is not populated.
+ */
+
+static int
+vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
+{
+	vm_pindex_t pindex;
+	vm_offset_t cur, end;
+	vm_page_t m;
+	vm_object_t obj = entry->object.vm_object;
+	int rv = KERN_SUCCESS;
+#if VM_NRESERVLEVEL > 0
+	const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
+	vm_page_t mt;
+#endif
+
+	VM_OBJECT_WLOCK(obj);
+	/* Populate entry's object with pages. */
+	end = entry->end;
+	cur = entry->start;
+	while (cur < end) {
+		pindex = atop(cur);
+
+#if VM_NRESERVLEVEL > 0
+		/* First run - try allocate a superpage. */
+		if (cur & ((1 << VM_LEVEL_0_SHIFT) - 1) == 0 &&
+		    (end - cur) >= (1 << VM_LEVEL_0_SHIFT)) {
+			m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED,
+			    (1 << VM_LEVEL_0_ORDER), 0, ~0, 0, 0,
+			    VM_MEMATTR_DEFAULT);
+			if (m != NULL) {
+				for (mt = m; mt < (m + (1 << VM_LEVEL_0_ORDER));
+				     mt++) {
+					vm_page_valid(mt);
+					vm_page_xunbusy(mt);
+				}
+				cur += reserv_size;
+				continue;
+			}
+		}
+#endif
+		/* Fall back to 0-order pages. */
+		m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED);
+		if (m == NULL) {
+			VM_OBJECT_WUNLOCK(obj);
+			return (KERN_NO_SPACE);
+		}
+		/* We got a 0-order page. */
+		cur += PAGE_SIZE;
+		vm_page_valid(m);
+		vm_page_xunbusy(m);
+	}
+	VM_OBJECT_WUNLOCK(obj);
+
+	cur = entry->start;
+	while (cur < end) {
+
+		/*
+		 * Simulate a fault to enter the page
+		 * into the physical map.
+		 */
+		rv = vm_fault(map, cur, VM_PROT_NONE, VM_FAULT_WIRE, NULL);
+		if (rv != KERN_SUCCESS)
+			break;
+
+		VM_OBJECT_RLOCK(obj);
+		m = vm_page_lookup(obj, atop(cur));
+		VM_OBJECT_RUNLOCK(obj);
+
+		cur += pagesizes[m->psind];
+	}
+	return (rv);
+}
+
 int
 vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 {
@@ -3595,17 +3671,23 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 			vm_map_busy(map);
 			vm_map_unlock(map);
 
-			for (faddr = saved_start; faddr < saved_end;
-			    faddr += incr) {
-				/*
-				 * Simulate a fault to get the page and enter
-				 * it into the physical map.
-				 */
-				rv = vm_fault(map, faddr, VM_PROT_NONE,
-				    VM_FAULT_WIRE, NULL);
-				if (rv != KERN_SUCCESS)
-					break;
+			if ((flags & VM_MAP_WIRE_PREFAULT) != 0 && user_wire &&
+			    !holes_ok) {
+				vm_map_wire_prefault_entry(map, entry);
+			} else {
+				for (faddr = saved_start; faddr < saved_end;
+				     faddr += incr) {
+					/*
+					 * Simulate a fault to get the page and
+					 * enter it into the physical map.
+					 */
+					rv = vm_fault(map, faddr, VM_PROT_NONE,
+					    VM_FAULT_WIRE, NULL);
+					if (rv != KERN_SUCCESS)
+						break;
+				}
 			}
+
 			vm_map_lock(map);
 			vm_map_unbusy(map);
 			if (last_timestamp + 1 != map->timestamp) {
