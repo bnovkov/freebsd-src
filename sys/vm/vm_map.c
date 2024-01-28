@@ -3489,8 +3489,8 @@ vm_map_wire_entry_failure(vm_map_t map, vm_map_entry_t entry,
 /*
  *	vm_map_wire_prefault_entry:
  *
- *	Preallocates pages in object to avoid performance penalties in 'vm_fault'.
- *	Used for speeding up wirings of large regions.
+ *	Preallocates pages in object to avoid performance penalties in
+ *	'vm_fault'. Used for speeding up wirings of large regions.
  *
  *	Will not operate on non-empty entries.
  */
@@ -3505,12 +3505,13 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
 	vm_page_t m;
 #if VM_NRESERVLEVEL > 0
 	vm_page_t mt;
+	const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
 #endif
 
-	VM_MAP_ASSERT_UNLOCKED(map);
 	VM_OBJECT_WLOCK(obj);
 	/* Check if the entry is empty. */
-	if ((m = vm_page_find_least(obj, OFF_TO_IDX(entry->offset)) != NULL
+	m = vm_page_find_least(obj, OFF_TO_IDX(entry->offset));
+	if (m != NULL
 		&& m->pindex <= OFF_TO_IDX((entry->end - entry->start) + entry->offset)){
 		VM_OBJECT_WUNLOCK(obj);
 		return (KERN_RESTART);
@@ -3523,8 +3524,8 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
 
 #if VM_NRESERVLEVEL > 0
 		/* First run - try allocate a superpage. */
-		if (cur & ((1 << VM_LEVEL_0_SHIFT) - 1) == 0 &&
-		    (end - cur) >= (1 << VM_LEVEL_0_SHIFT)) {
+		if ((cur & (reserv_size - 1)) == 0 &&
+		    (end - cur) >= reserv_size) {
 			m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED,
 			    (1 << VM_LEVEL_0_ORDER), 0, ~0, 0, 0,
 			    VM_MEMATTR_DEFAULT);
@@ -3563,7 +3564,8 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
 			break;
 
 		VM_OBJECT_RLOCK(obj);
-		m = vm_page_lookup(obj, OFF_TO_IDX((cur - entry->start) + entry->offset));
+		m = vm_page_lookup(obj,
+		    OFF_TO_IDX((cur - entry->start) + entry->offset));
 		VM_OBJECT_RUNLOCK(obj);
 
 		cur += pagesizes[m->psind];
@@ -3685,18 +3687,19 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 				rv = vm_map_wire_prefault_entry(map, entry);
 				if (rv != KERN_RESTART)
 					goto fault_done;
-				/* Fall back to regular wiring loop. */					
+				/* Fall back to the regular wiring loop. */
 			}
-				for (faddr = saved_start; faddr < saved_end;
-				     faddr += incr) {
-					/*
-					 * Simulate a fault to get the page and
-					 * enter it into the physical map.
-					 */
-					rv = vm_fault(map, faddr, VM_PROT_NONE,
-					    VM_FAULT_WIRE, NULL);
-					if (rv != KERN_SUCCESS)
-						break;
+			for (faddr = saved_start; faddr < saved_end;
+			    faddr += incr) {
+				/*
+				 * Simulate a fault to get the page and enter
+				 * it into the physical map.
+				 */
+				rv = vm_fault(map, faddr, VM_PROT_NONE,
+				    VM_FAULT_WIRE, NULL);
+				if (rv != KERN_SUCCESS)
+					break;
+			}
 fault_done:
 			vm_map_lock(map);
 			vm_map_unbusy(map);
