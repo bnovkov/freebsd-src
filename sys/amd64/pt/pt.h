@@ -1,10 +1,6 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
- *
- * Copyright (c) 2023 Ruslan Bukin <br@bsdpad.com>
- *
- * This work was supported by Innovate UK project 105694, "Digital Security
- * by Design (DSbD) Technology Platform Prototype".
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,21 +24,55 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/param.h>
-#include <sys/eventhandler.h>
-#include <sys/ioccom.h>
-#include <sys/conf.h>
-#include <sys/proc.h>
-#include <sys/kernel.h>
+#ifndef _AMD64_PT_PT_H_
+#define _AMD64_PT_PT_H_
+
+#include <sys/types.h>
+
+#include <x86/include/specialreg.h>
+
+#define IP_FILTER_MAX_RANGES (4) /* Intel SDM Vol. 3C, 33-29 */
+
+#define HWT_PT_BUF_RDY_EV 138
+
+struct pt_cpu_config {
+	uint64_t rtit_ctl;
+	register_t cr3_filter;
+	int nranges;
+	struct ipf_range {
+		vm_offset_t start;
+		vm_offset_t end;
+	} ip_ranges[IP_FILTER_MAX_RANGES];
+	uint32_t mtc_freq;
+	uint32_t cyc_thresh;
+	uint32_t psb_freq;
+};
+
+#ifdef _KERNEL
 #include <sys/malloc.h>
-#include <sys/mman.h>
-#include <sys/module.h>
-#include <sys/mutex.h>
-#include <sys/rwlock.h>
-#include <sys/hwt.h>
 
-#include <dev/hwt/hwt_hook.h>
-#include <dev/hwt/hwt_intr.h>
+#define PT_CPUID 0x14
+#define PT_SUPPORTED_FLAGS \
+	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT)
 
-void __read_mostly (*hwt_hook)(struct thread *td, int func, void *arg) = NULL;
-int __read_mostly (*hwt_intr)(struct trapframe *tf) = NULL;
+struct xsave_header {
+	uint64_t xsave_bv;
+	uint64_t xcomp_bv;
+	uint8_t reserved[48];
+};
+
+struct pt_ext_area {
+	uint64_t rtit_ctl;
+	uint64_t rtit_output_base;
+	uint64_t rtit_output_mask_ptrs;
+	uint64_t rtit_status;
+	uint64_t rtit_cr3_match;
+	uint64_t rtit_addr0_a;
+	uint64_t rtit_addr0_b;
+	uint64_t rtit_addr1_a;
+	uint64_t rtit_addr1_b;
+};
+
+MALLOC_DECLARE(M_PT);
+#endif /* _KERNEL */
+#endif /* !_AMD64_PT_PT_H */

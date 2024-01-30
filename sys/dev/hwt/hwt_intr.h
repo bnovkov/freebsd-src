@@ -1,10 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
- *
- * Copyright (c) 2023 Ruslan Bukin <br@bsdpad.com>
- *
- * This work was supported by Innovate UK project 105694, "Digital Security
- * by Design (DSbD) Technology Platform Prototype".
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,23 +21,15 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-#include <sys/param.h>
-#include <sys/eventhandler.h>
-#include <sys/ioccom.h>
-#include <sys/conf.h>
-#include <sys/proc.h>
-#include <sys/kernel.h>
-#include <sys/malloc.h>
-#include <sys/mman.h>
-#include <sys/module.h>
-#include <sys/mutex.h>
-#include <sys/rwlock.h>
-#include <sys/hwt.h>
+#ifndef _DEV_HWT_HWT_INTR_H_
+#define _DEV_HWT_HWT_INTR_H_
 
-#include <dev/hwt/hwt_hook.h>
-#include <dev/hwt/hwt_intr.h>
+#include <machine/frame.h>
 
-void __read_mostly (*hwt_hook)(struct thread *td, int func, void *arg) = NULL;
-int __read_mostly (*hwt_intr)(struct trapframe *tf) = NULL;
+extern int (*hwt_intr)(struct trapframe *tf);
+
+#endif /* !_DEV_HWT_HWT_INTR_H_ */

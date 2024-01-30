@@ -143,6 +143,17 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 				return (-1);
 			if (image->pi_type == PMCSTAT_IMAGE_UNKNOWN)
 				pmcstat_image_determine_type(image, &args);
+			/*
+			 * Some images have no executable sections - skip them.
+			 */
+			if (image->pi_end == 0) {
+				printf(
+				    "  image '%s' has no executable sections, skipping\n",
+				    imagepath);
+				free(image);
+				image = NULL;
+				break;
+			}
 			addr = (unsigned long)entry->addr & ~1;
 			pmcstat_image_link(tc->pp, image, addr);
 			break;

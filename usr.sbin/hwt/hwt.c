@@ -61,6 +61,11 @@
 #include "hwt_coresight.h"
 #endif
 
+#if defined(__amd64__)
+#include "hwt_pt.h"
+#endif
+
+
 #define	HWT_DEBUG
 #undef	HWT_DEBUG
 
@@ -79,6 +84,9 @@ static struct trace_context tcs;
 static struct trace_dev trace_devs[] = {
 #if defined(__aarch64__)
 	{ "coresight",	"ARM Coresight", &cs_methods },
+#endif
+#if defined(__amd64__)
+	{ "pt", "Intel PT", &pt_methods},
 #endif
 	{ NULL, NULL, NULL }
 };

@@ -112,7 +112,9 @@ hwt_vm_alloc_pages(struct hwt_vm *vm, int kva_req)
 {
 	vm_paddr_t low, high, boundary;
 	vm_memattr_t memattr;
+#ifdef  __arm__
 	uintptr_t va;
+#endif
 	int alignment;
 	vm_page_t m;
 	int pflags;
@@ -159,8 +161,10 @@ retry:
 			pmap_zero_page(m);
 #endif
 
+#ifdef  __arm__
 		va = PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m));
 		cpu_dcache_wb_range(va, PAGE_SIZE);
+#endif
 
 		m->valid = VM_PAGE_BITS_ALL;
 		m->oflags &= ~VPO_UNMANAGED;
@@ -216,7 +220,13 @@ hwt_vm_start_cpu_mode(struct hwt_context *ctx)
 			return;
 
 		hwt_backend_configure(ctx, cpu_id, cpu_id);
-		hwt_backend_enable(ctx, cpu_id);
+		if(ctx->hwt_backend->ops->hwt_backend_enable_smp == NULL)
+			hwt_backend_enable(ctx, cpu_id);
+	}
+
+	/* Some backends required enabling all CPUs at once */
+	if(ctx->hwt_backend->ops->hwt_backend_enable_smp != NULL){
+		hwt_backend_enable_smp(ctx);
 	}
 }
 

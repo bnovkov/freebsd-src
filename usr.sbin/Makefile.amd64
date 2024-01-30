@@ -21,3 +21,4 @@ SUBDIR+=	lptcontrol
 SUBDIR+=	mptable
 SUBDIR+=	spkrtest
 SUBDIR+=	zzz
+SUBDIR+=	hwt

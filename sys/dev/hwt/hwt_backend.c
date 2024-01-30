@@ -121,6 +121,24 @@ hwt_backend_disable(struct hwt_context *ctx, int cpu_id)
 	ctx->hwt_backend->ops->hwt_backend_disable(ctx, cpu_id);
 }
 
+void
+hwt_backend_enable_smp(struct hwt_context *ctx)
+{
+
+	dprintf("%s\n", __func__);
+
+	ctx->hwt_backend->ops->hwt_backend_enable_smp(ctx);
+}
+
+void
+hwt_backend_disable_smp(struct hwt_context *ctx)
+{
+
+	dprintf("%s\n", __func__);
+
+	ctx->hwt_backend->ops->hwt_backend_disable_smp(ctx);
+}
+
 void __unused
 hwt_backend_dump(struct hwt_context *ctx, int cpu_id)
 {

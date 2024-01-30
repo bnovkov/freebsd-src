@@ -1,10 +1,6 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
- *
- * Copyright (c) 2023 Ruslan Bukin <br@bsdpad.com>
- *
- * This work was supported by Innovate UK project 105694, "Digital Security
- * by Design (DSbD) Technology Platform Prototype".
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,21 +24,10 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/param.h>
-#include <sys/eventhandler.h>
-#include <sys/ioccom.h>
-#include <sys/conf.h>
-#include <sys/proc.h>
-#include <sys/kernel.h>
-#include <sys/malloc.h>
-#include <sys/mman.h>
-#include <sys/module.h>
-#include <sys/mutex.h>
-#include <sys/rwlock.h>
-#include <sys/hwt.h>
+#ifndef _HWT_PT_H_
+#define _HWT_PT_H_
 
-#include <dev/hwt/hwt_hook.h>
-#include <dev/hwt/hwt_intr.h>
+#include <amd64/pt/pt.h>
 
-void __read_mostly (*hwt_hook)(struct thread *td, int func, void *arg) = NULL;
-int __read_mostly (*hwt_intr)(struct trapframe *tf) = NULL;
+extern struct trace_dev_methods pt_methods;
+#endif /* !_HWT_PT_H_ */
