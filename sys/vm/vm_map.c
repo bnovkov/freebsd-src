@@ -3504,7 +3504,6 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
 	int rv = KERN_SUCCESS;
 	vm_page_t m;
 #if VM_NRESERVLEVEL > 0
-	vm_page_t mt;
 	const size_t reserv_size = 1 << (VM_LEVEL_0_ORDER + PAGE_SHIFT);
 #endif
 
@@ -3523,33 +3522,28 @@ vm_map_wire_prefault_entry(vm_map_t map, vm_map_entry_t entry)
 		pindex = OFF_TO_IDX((cur - entry->start) + entry->offset);
 
 #if VM_NRESERVLEVEL > 0
-		/* First run - try allocate a superpage. */
+		/* First run - try to allocate a superpage. */
 		if ((cur & (reserv_size - 1)) == 0 &&
 		    (end - cur) >= reserv_size) {
-			m = vm_page_alloc_contig(obj, pindex, VM_ALLOC_WIRED,
+			m = vm_page_alloc_contig(obj, pindex,
+			    VM_ALLOC_WIRED | VM_ALLOC_NOBUSY,
 			    (1 << VM_LEVEL_0_ORDER), 0, ~0, 0, 0,
 			    VM_MEMATTR_DEFAULT);
 			if (m != NULL) {
-				for (mt = m; mt < (m + (1 << VM_LEVEL_0_ORDER));
-				     mt++) {
-					vm_page_valid(mt);
-					vm_page_xunbusy(mt);
-				}
 				cur += reserv_size;
 				continue;
 			}
 		}
 #endif
 		/* Fall back to 0-order pages. */
-		m = vm_page_alloc(obj, pindex, VM_ALLOC_WIRED);
+		m = vm_page_alloc(obj, pindex,
+		    VM_ALLOC_WIRED | VM_ALLOC_NOBUSY);
 		if (m == NULL) {
 			VM_OBJECT_WUNLOCK(obj);
 			return (KERN_NO_SPACE);
 		}
 		/* We got a 0-order page. */
 		cur += PAGE_SIZE;
-		vm_page_valid(m);
-		vm_page_xunbusy(m);
 	}
 	VM_OBJECT_WUNLOCK(obj);
 
