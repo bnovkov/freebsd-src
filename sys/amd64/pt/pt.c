@@ -90,8 +90,6 @@ struct pt_save_area {
 
 struct pt_buffer {
 	uint64_t *topa_hw;  /* ToPA table entries. */
-	struct mtx pmi_mtx; /* spinlock for pt_backend_read */
-	bool ready;
 	vm_offset_t offset;
 	int curpage;
 };
@@ -99,8 +97,9 @@ struct pt_buffer {
 struct pt_ctx {
 	struct pt_buffer buf;  /* ToPA buffer metadata */
 	struct task task;      /* ToPA buffer kevent task */
-	struct thread *hwt_td; /* hwt(8) tracing thread */
+	struct thread *trace_td; /* hwt(8) tracing thread */
 	int kqueue_fd;
+	int cpu_id; /*  */
 	struct pt_save_area save_area; /* PT XSAVE area */
 };
 
@@ -110,7 +109,6 @@ struct pt_thread {
 };
 
 static struct pt_cpu {
-	struct hwt_thread *hwt_td; /* hwt thread active on cpu */
 	struct pt_ctx ctx;	   /* save area for CPU mode */
 	volatile int terminating;  /* used as part of trace stop protocol */
 } *pt_pcpu;
@@ -222,7 +220,7 @@ pt_cpu_dump(int cpu_id)
  * CPU mode helper routines.
  */
 static void
-pt_cpu_init(void *dummy)
+pt_cpu_start(void *dummy)
 {
 	struct pt_cpu *cpu = &pt_pcpu[curcpu];
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
@@ -422,8 +420,9 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 
 		dprintf("%s: preparing MSRs\n", __func__);
 		/* Save hwt_td for kevent */
-		pt_ctx->hwt_td = ctx->hwt_td;
+		pt_ctx->trace_td = ctx->hwt_td;
 		pt_ctx->kqueue_fd = ctx->kqueue_fd;
+		pt_ctx->cpu_id = cpu_id;
 		/* Prepare ToPA MSR values. */
 		pt_ext->rtit_ctl |= RTIT_CTL_TOPA;
 		pt_ext->rtit_output_base = (uint64_t)vtophys(
@@ -435,6 +434,8 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 		    (1ULL << 63) /* compaction */;
 		/* Enable tracing. */
 		pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
+
+		break;
 	}
 	return (0);
 }
@@ -447,7 +448,7 @@ pt_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to start PT on another cpu", __func__));
-	pt_cpu_init(NULL);
+	pt_cpu_start(NULL);
 }
 
 /*
@@ -558,39 +559,17 @@ pt_backend_deinit(struct hwt_context *ctx)
 }
 
 /*
- * Fetches new offset into the tracing buffer, if any.
- * Blocks until notified by the PMI interrupt handler.
+ * Fetches current offset into the tracing buffer.
  */
 static int
 pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset)
 {
-	int error = 0;
 	struct pt_buffer *buf = &pt_pcpu[cpu_id].ctx.buf;
 
-	dprintf("%s\n", __func__);
-	if (buf->topa_hw == NULL)
-		return (-1);
-
-	mtx_lock_spin(&buf->pmi_mtx);
-	if (!buf->ready) {
-		if (msleep_spin(buf, &buf->pmi_mtx, "ptread", 0) ==
-		    EWOULDBLOCK) {
-			error = ENOENT;
-			goto out;
-		}
-		if (!buf->ready) {
-			error = ENOENT;
-			goto out;
-		}
-	}
 	*curpage = buf->curpage;
 	*curpage_offset = buf->offset;
-	buf->ready = false;
-	wmb();
-out:
-	mtx_unlock_spin(&buf->pmi_mtx);
 
-	return (error);
+	return (0);
 }
 
 static void
@@ -631,12 +610,13 @@ pt_buffer_ready(void *arg, int pending __unused)
 	struct kevent kev;
 	int ret __diagused;
 	int64_t data = (ctx->buf.curpage * PAGE_SIZE) + ctx->buf.offset;
+	u_int flags = ctx->cpu_id & KQ_CPUID;
 
 	dprintf("%s: cpu %d, kqueue_fd %d, data 0x%zx, td %p\n", __func__,
-	    curcpu, ctx->kqueue_fd, data, ctx->hwt_td);
-	EV_SET(&kev, HWT_PT_BUF_RDY_EV, EVFILT_USER, 0, NOTE_TRIGGER, data,
+	    curcpu, ctx->kqueue_fd, data, ctx->trace_td);
+	EV_SET(&kev, HWT_PT_BUF_RDY_EV, EVFILT_USER, 0, NOTE_TRIGGER | NOTE_FFCOPY | flags, data,
 	    NULL);
-	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->hwt_td, M_WAITOK);
+	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->trace_td, M_WAITOK);
 	dprintf("%s: kqfd ret %d\n", __func__, ret);
 	KASSERT(ret == 0,
 	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
@@ -674,20 +654,11 @@ pt_topa_intr(struct trapframe *tf)
 	/* Update buffer offset. */
 	reg = rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS);
 
-	mtx_lock_spin(&buf->pmi_mtx);
 	buf->curpage = (reg & 0xffffff80) >> 7;
 	buf->offset = reg >> 32;
-	buf->ready = true;
-	wmb();
-	mtx_unlock_spin(&buf->pmi_mtx);
 
-	/* Notify pt_backend_read. */
-	wakeup(buf);
-	dprintf("%s: woke up pt_backend_read\n", __func__);
-
-	/* XXX: kevents registered this way never make it to userspace. */
-	/* TASK_INIT(&ctx->task, 0, (task_fn_t *)pt_buffer_ready, ctx); */
-	/* taskqueue_enqueue(taskqueue_hwt, &ctx->task); */
+	TASK_INIT(&ctx->task, 0, (task_fn_t *)pt_buffer_ready, ctx);
+	taskqueue_enqueue(taskqueue_hwt, &ctx->task);
 
 	/* Clear ToPA PMI status. */
 	reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
@@ -801,9 +772,6 @@ pt_modevent(module_t mod, int type, void *data)
 		}
 		pt_pcpu = malloc(sizeof(struct pt_cpu) * mp_ncpus, M_PT,
 		    M_ZERO | M_WAITOK);
-		for (int i = 0; i < mp_ncpus; i++)
-			mtx_init(&pt_pcpu[i].ctx.buf.pmi_mtx, "ToPA PMI", NULL,
-			    MTX_SPIN);
 		loaded = true;
 		break;
 	case MOD_UNLOAD:

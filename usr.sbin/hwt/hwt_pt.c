@@ -42,6 +42,7 @@
 #include <string.h>
 #include <assert.h>
 
+#include "amd64/pt/pt.h"
 #include "hwt.h"
 #include "hwt_pt.h"
 #include "sys/_stdint.h"
@@ -59,9 +60,13 @@ static struct hwt_pt_cpu {
 	struct pt_packet_decoder *dec;
 } *hwt_pt_pcpu;
 
+static int kq_fd = -1;
+
 static int
 hwt_pt_init(struct trace_context *tc)
 {
+	struct kevent event;
+	int error;
 
 	hwt_pt_pcpu = calloc(hwt_ncpu(), sizeof(struct hwt_pt_cpu));
 	if (!hwt_pt_pcpu) {
@@ -78,8 +83,51 @@ hwt_pt_init(struct trace_context *tc)
 		}
 	}
 
+		tc->kqueue_fd = kqueue();
+	if (tc->kqueue_fd == -1)
+		err(EXIT_FAILURE, "kqueue() failed");
+
+	kq_fd = tc->kqueue_fd; /* sig handler needs access to kq via global */
+
+	EV_SET(&event, HWT_PT_BUF_RDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
+	    NOTE_FFCOPY, 0, NULL);
+
+	error = kevent(tc->kqueue_fd, &event, 1, NULL, 0, NULL);
+	if (error == -1)
+		err(EXIT_FAILURE, "kevent register");
+	if (event.flags & EV_ERROR)
+		errx(EXIT_FAILURE, "Event error: %s", strerror(event.data));
+
+	printf("%s kqueue_fd:%d\n", __func__, tc->kqueue_fd);
+
+
 	return (0);
 }
+
+static int
+map_tracebuf(struct trace_context *tc, int id, int *fd, void **addr)
+{
+	char filename[32];
+
+	sprintf(filename, "/dev/hwt_%d_%d", tc->ident, id);
+
+	*fd = open(filename, O_RDONLY);
+	if (*fd < 0) {
+		printf("Can't open %s\n", filename);
+		return (-1);
+	}
+
+	*addr = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, *fd, 0);
+	if (*addr == MAP_FAILED) {
+		printf("mmap failed: err %d\n", errno);
+		return (-1);
+	}
+
+	printf("%s: addr: %p\n", __func__, *addr);
+
+	return (0);
+}
+
 
 static int
 hwt_pt_mmap(struct trace_context *tc)
@@ -93,7 +141,7 @@ hwt_pt_mmap(struct trace_context *tc)
 		CPU_FOREACH_ISSET (cpu_id, &tc->cpu_map) {
 			cpu = &hwt_pt_pcpu[cpu_id];
 
-			error = hwt_map_tracebuf(tc, cpu_id,
+			error = map_tracebuf(tc, cpu_id,
 			    tc_fd == -1 ? &tc_fd : &_fd, &cpu->tracebuf);
 			if (error != 0) {
 				printf(
@@ -351,7 +399,7 @@ hwt_pt_process(struct trace_context *tc)
 	uint64_t curoff, newoff;
 	size_t totals;
 	int error;
-	int len, cpu_id = 0; // assume cpu_id == 0 for now
+	int len, cpu_id; // assume cpu_id == 0 for now
 	uint64_t processed;
 	struct hwt_pt_cpu *cpu;
 
@@ -367,9 +415,11 @@ hwt_pt_process(struct trace_context *tc)
 
 	while (1) {
 		printf("%s: fetching new offset\n", __func__);
-		error = hwt_get_offs(tc, &newoff);
-		if (error < 0)
-			err(EXIT_FAILURE, "hwt_get_offs");
+		ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
+		if (ret == -1 && errno != EINTR) {
+			err(EXIT_FAILURE, "kevent wait");
+		}
+		newoff = tevent.data;
 		printf("%s: new offset %zu\n", __func__, newoff);
 
 		cpu = &hwt_pt_pcpu[cpu_id];

@@ -33,7 +33,7 @@
 
 #define IP_FILTER_MAX_RANGES (4) /* Intel SDM Vol. 3C, 33-29 */
 
-#define HWT_PT_BUF_RDY_EV 138
+#define HWT_PT_BUF_RDY_EV 139
 
 struct pt_cpu_config {
 	uint64_t rtit_ctl;
@@ -54,6 +54,8 @@ struct pt_cpu_config {
 #define PT_CPUID 0x14
 #define PT_SUPPORTED_FLAGS \
 	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT)
+
+#define KQ_CPUID		0xFFFF
 
 struct xsave_header {
 	uint64_t xsave_bv;
