@@ -50,6 +50,7 @@ struct hwt_backend_ops {
 
 struct hwt_backend {
 	const char			*name;
+  size_t          thr_cookie_size;
 	struct hwt_backend_ops		*ops;
 };
 

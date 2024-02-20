@@ -62,6 +62,7 @@
 #include <dev/hwt/hwt_backend.h>
 #include <dev/hwt/hwt_hook.h>
 #include <dev/hwt/hwt_intr.h>
+#include <dev/hwt/hwt_event.h>
 
 #include "pt.h"
 
@@ -77,8 +78,6 @@ MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
 SDT_PROVIDER_DECLARE(pt);
 SDT_PROBE_DEFINE(pt, , , topa__intr);
-
-extern struct taskqueue *taskqueue_hwt;
 
 static bool loaded = false;
 
@@ -103,13 +102,11 @@ struct pt_ctx {
 	struct pt_save_area save_area; /* PT XSAVE area */
 };
 
-/* XXX: WIP */
-struct pt_thread {
-	struct pt_ctx ctx;
-};
+/* PT tracing contexts used for CPU mode. */
+static struct pt_ctx *pt_pcpu_ctx;
 
 static struct pt_cpu {
-	struct pt_ctx ctx;	   /* save area for CPU mode */
+	struct pt_ctx *ctx;	   /* active PT tracing context */
 	volatile int terminating;  /* used as part of trace stop protocol */
 } *pt_pcpu;
 
@@ -223,6 +220,8 @@ static void
 pt_cpu_start(void *dummy)
 {
 	struct pt_cpu *cpu = &pt_pcpu[curcpu];
+
+  MPASS(cpu->ctx == NULL);
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
 	/* Enable XSAVE. */
 	load_cr4(rcr4() | CR4_XSAVE);
@@ -237,8 +236,10 @@ static void
 pt_cpu_stop(void *dummy)
 {
 	struct pt_cpu *cpu = &pt_pcpu[curcpu];
-	dprintf("%s: curcpu %d\n", __func__, curcpu);
-	/* Check if the CPU was initialized */
+
+  MPASS(cpu->ctx != NULL);
+  dprintf("%s: curcpu %d\n", __func__, curcpu);
+  /* Check if the CPU was initialized. */
 	if (cpu->ctx.buf.topa_hw == NULL)
 		return;
 	/* Stop tracing. */
@@ -289,18 +290,7 @@ pt_topa_prepare(struct pt_ctx *ctx, struct hwt_vm *vm)
 static int
 pt_backend_init_thread(struct hwt_context *ctx)
 {
-	struct hwt_thread *thr;
-
-	HWT_CTX_LOCK(ctx);
-	TAILQ_FOREACH (thr, &ctx->threads, next) {
-		KASSERT(thr->cookie == NULL,
-		    ("%s: thr->cookie not NULL - %p", __func__, thr->cookie));
-		thr->cookie = malloc(sizeof(struct pt_thread), M_PT,
-		    M_ZERO | M_WAITOK);
-	}
-	HWT_CTX_UNLOCK(ctx);
-
-	return (ENXIO);
+	return (0);
 }
 
 static int
@@ -350,94 +340,110 @@ pt_configure_ranges(struct pt_ctx *ctx, struct pt_cpu_config *cfg)
 	return error;
 }
 
-// TODO: decouple configuration logic from CPU mode
+static int
+pt_init_ctx(struct pt_ctx *pt_ctx, struct hwt_context *ctx, struct hwt_vm *vm)
+{
+        struct pt_ext_area *pt_ext;
+        struct xsave_header *hdr;
+
+        pt_ext = &pt_ctx->save_area.pt_ext_area;
+        hdr = &pt_ctx->save_area.header;
+
+        KASSERT(pt_ctx->buf.topa_hw == NULL,
+                ("%s: active ToPA buffer in context %p\n", __func__,
+                 pt_ctx));
+        memset(pt_ctx, 0, sizeof(struct pt_ctx));
+
+        dprintf("%s: preparing IPF ranges\n", __func__);
+        pt_ext->rtit_ctl |= cfg->rtit_ctl;
+        if ((error = pt_configure_ranges(pt_ctx, cfg)) != 0) {
+                return error;
+        }
+
+        dprintf("%s: preparing ToPA buffer\n", __func__);
+        if (pt_topa_prepare(pt_ctx, vm) != 0) {
+                dprintf("%s: failed to prepare ToPA buffer\n",
+                        __func__);
+                return (-1);
+        }
+
+        dprintf("%s: preparing MSRs\n", __func__);
+        /* Save hwt_td for kevent */
+        pt_ctx->trace_td = ctx->hwt_td;
+        pt_ctx->kqueue_fd = ctx->kqueue_fd;
+        pt_ctx->cpu_id = cpu_id;
+        /* Prepare ToPA MSR values. */
+        pt_ext->rtit_ctl |= RTIT_CTL_TOPA;
+        pt_ext->rtit_output_base = (uint64_t)vtophys(
+                                                     pt_ctx->buf.topa_hw);
+        pt_ext->rtit_output_mask_ptrs = 0x7f;
+        /* Init header */
+        hdr->xsave_bv = XFEATURE_ENABLED_PT;
+        hdr->xcomp_bv = XFEATURE_ENABLED_PT |
+                (1ULL << 63) /* compaction */;
+        /* Enable tracing. */
+        pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
+
+        return (0);
+}
+
 static int
 pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 {
-	struct pt_ctx *pt_ctx;
-	struct hwt_cpu *hwt_cpu;
-	struct pt_ext_area *pt_ext;
-	struct xsave_header *hdr;
-	struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
-	int error = 0;
+        struct pt_ctx *pt_ctx;
+        struct hwt_cpu *hwt_cpu;
+        struct hwt_thread *thr;
+        struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
+        int error = 0;
 
-	dprintf("%s\n", __func__);
+        dprintf("%s\n", __func__);
 
-	/* Sanitize input. */
-	// cfg->rtit_ctl &= PT_SUPPORTED_FLAGS;
-	/* Validate user configuration */
-	if (cfg->rtit_ctl & RTIT_CTL_MTCEN) {
-		if ((pt_info.l0_ebx & CPUPT_MTC) == 0) {
-			printf(
-			    "%s: CPU does not support generating MTC packets\n",
-			    __func__);
-			return (ENXIO);
-		}
-	}
+        /* Sanitize input. */
+        // cfg->rtit_ctl &= PT_SUPPORTED_FLAGS;
+        /* Validate user configuration */
+        if (cfg->rtit_ctl & RTIT_CTL_MTCEN) {
+                if ((pt_info.l0_ebx & CPUPT_MTC) == 0) {
+                        printf(
+                               "%s: CPU does not support generating MTC packets\n",
+                               __func__);
+                        return (ENXIO);
+                }
+        }
 
-	if (cfg->rtit_ctl & RTIT_CTL_CR3FILTER) {
-		if ((pt_info.l0_ebx & CPUPT_CR3) == 0) {
-			printf("%s: CPU does not support CR3 filtering\n",
-			    __func__);
-			return (ENXIO);
-		}
-	}
+        if (cfg->rtit_ctl & RTIT_CTL_CR3FILTER) {
+                if ((pt_info.l0_ebx & CPUPT_CR3) == 0) {
+                        printf("%s: CPU does not support CR3 filtering\n",
+                               __func__);
+                        return (ENXIO);
+                }
+        }
 
-	if (cfg->rtit_ctl & RTIT_CTL_DIS_TNT) {
-		if ((pt_info.l0_ebx & CPUPT_DIS_TNT) == 0) {
-			printf("%s: CPU does not support TNT\n", __func__);
-			return (ENXIO);
-		}
-	}
-	/* TODO: support for more config bits */
+        if (cfg->rtit_ctl & RTIT_CTL_DIS_TNT) {
+                if ((pt_info.l0_ebx & CPUPT_DIS_TNT) == 0) {
+                        printf("%s: CPU does not support TNT\n", __func__);
+                        return (ENXIO);
+                }
+        }
+        /* TODO: support for more config bits. */
 
-	TAILQ_FOREACH (hwt_cpu, &ctx->cpus, next) {
-		if (hwt_cpu->cpu_id != cpu_id)
-			continue;
-
-		dprintf("%s: cpuid %d\n", __func__, cpu_id);
-		pt_ctx = &pt_pcpu[cpu_id].ctx;
-		pt_ext = &pt_ctx->save_area.pt_ext_area;
-		hdr = &pt_ctx->save_area.header;
-
-		KASSERT(pt_ctx->buf.topa_hw == NULL,
-		    ("%s: active ToPA buffer in cpu %d\n", __func__,
-			hwt_cpu->cpu_id));
-		memset(&pt_pcpu[hwt_cpu->cpu_id], 0, sizeof(struct pt_cpu));
-
-		dprintf("%s: preparing IPF ranges\n", __func__);
-		pt_ext->rtit_ctl |= cfg->rtit_ctl;
-		if ((error = pt_configure_ranges(pt_ctx, cfg)) != 0) {
-			return error;
-		}
-
-		dprintf("%s: preparing ToPA buffer\n", __func__);
-		if (pt_topa_prepare(pt_ctx, hwt_cpu->vm) != 0) {
-			dprintf("%s: failed to prepare ToPA buffer\n",
-			    __func__);
-			return (-1);
-		}
-
-		dprintf("%s: preparing MSRs\n", __func__);
-		/* Save hwt_td for kevent */
-		pt_ctx->trace_td = ctx->hwt_td;
-		pt_ctx->kqueue_fd = ctx->kqueue_fd;
-		pt_ctx->cpu_id = cpu_id;
-		/* Prepare ToPA MSR values. */
-		pt_ext->rtit_ctl |= RTIT_CTL_TOPA;
-		pt_ext->rtit_output_base = (uint64_t)vtophys(
-		    pt_ctx->buf.topa_hw);
-		pt_ext->rtit_output_mask_ptrs = 0x7f;
-		/* Init header */
-		hdr->xsave_bv = XFEATURE_ENABLED_PT;
-		hdr->xcomp_bv = XFEATURE_ENABLED_PT |
-		    (1ULL << 63) /* compaction */;
-		/* Enable tracing. */
-		pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
-
-		break;
-	}
-	return (0);
+        if(ctx->mode == HWT_MODE_CPU) {
+                TAILQ_FOREACH (hwt_cpu, &ctx->cpus, next) {
+                        if (hwt_cpu->cpu_id != cpu_id)
+                                continue;
+                        // TODO: error check
+                        pt_init_ctx(&pt_pcpu_ctx[cpu_id], ctx, hwt_cpu->vm);
+                        break;
+                }
+        } else {
+                /* XXX: is HWT_CTX_LOCK needed here? */
+                TAILQ_FOREACH (thr, &ctx->threads, next) {
+                        KASSERT(thr->cookie != NULL,
+                                ("%s: hwt thread cookie not set, thr %p", __func__, thr));
+                        // TODO: error check
+                        pt_init_ctx((struct pt_ctx *)thr->cookie, ctx, thr->vm);
+                }
+        }
+        return (0);
 }
 
 /*
@@ -450,7 +456,7 @@ pt_backend_enable(struct hwt_context *ctx, int cpu_id)
 	    ("%s: attempting to start PT on another cpu", __func__));
 	pt_cpu_start(NULL);
 }
-
+// TODO: separate enable/disable for CPU and thread mode
 /*
  * hwt backend trace stop operation. CPU affine.
  */
@@ -503,12 +509,7 @@ pt_backend_init(struct hwt_context *ctx)
 	int error = 0;
 
 	dprintf("%s\n", __func__);
-	if (ctx->mode == HWT_MODE_THREAD)
-		error = pt_backend_init_thread(ctx);
-	if (error != 0)
-		return (error);
-
-	/* Configure PMI on all CPUs. */
+	/* Configure PMIs on all CPUs. */
 	if (lapic_enable_pmc() == 0) {
 		printf("%s: unable to enable pcint interrupts\n", __func__);
 		return (-1);
@@ -525,8 +526,7 @@ pt_backend_init(struct hwt_context *ctx)
 static void
 pt_backend_deinit(struct hwt_context *ctx)
 {
-	/* struct hwt_thread *thr; */
-	struct pt_cpu *cpu;
+	struct pt_ctx *ctx;
 
 	dprintf("%s\n", __func__);
 
@@ -538,22 +538,25 @@ pt_backend_deinit(struct hwt_context *ctx)
 	pt_backend_disable_smp(ctx);
 	lapic_disable_pmc();
 	if (ctx->mode == HWT_MODE_THREAD) {
-		/* HWT_CTX_LOCK(ctx); */
-		/* TAILQ_FOREACH (thr, &ctx->threads, next) { */
-		/* 	KASSERT(thr->cookie != NULL, */
-		/* 	    ("%s: thr->cookie not set", __func__)); */
-		/* 	free(thr->cookie, M_PT); */
-		/* 	thr->cookie = NULL; */
-		/* } */
-		/* HWT_CTX_UNLOCK(ctx); */
+		TAILQ_FOREACH (thr, &ctx->threads, next) {
+			KASSERT(thr->cookie != NULL,
+			    ("%s: thr->cookie not set", __func__));
+      ctx = (struct pt_ctx *)thr->cookie;
+      /* Free ToPA table. */
+			free(ctx->buf.topa_hw, M_PT);
+			ctx->buf.topa_hw = NULL;
+		}
 	} else {
 		CPU_FOREACH (cpu_id) {
 			if (!CPU_ISSET(cpu_id, &ctx->cpu_map))
 				continue;
-			cpu = &pt_pcpu[cpu_id];
+      // TODO: separate pcpu contexts
+      KASSERT(pt_pcpu[cpu_id].ctx == &pt_pcpu_ctx[cpu_id],
+              ("%s: CPU mode tracing with non-cpu mode PT context active", __func__));
+			ctx = &pt_pcpu_ctx[cpu_id];
 			/* Free ToPA table. */
-			free(cpu->ctx.buf.topa_hw, M_PT);
-			cpu->ctx.buf.topa_hw = NULL;
+			free(ctx->buf.topa_hw, M_PT);
+			ctx->buf.topa_hw = NULL;
 		}
 	}
 }
@@ -596,6 +599,7 @@ static struct hwt_backend_ops pt_ops = {
 	.hwt_backend_dump = pt_backend_dump,
 };
 static struct hwt_backend backend = {
+  .thr_cookie_size = sizeof(struct pt_ctx),
 	.ops = &pt_ops,
 	.name = "pt",
 };
@@ -610,11 +614,11 @@ pt_buffer_ready(void *arg, int pending __unused)
 	struct kevent kev;
 	int ret __diagused;
 	int64_t data = (ctx->buf.curpage * PAGE_SIZE) + ctx->buf.offset;
-	u_int flags = ctx->cpu_id & KQ_CPUID;
+	u_int flags = ctx->cpu_id & HWT_KQ_BUFRDY_ID_MASK;
 
 	dprintf("%s: cpu %d, kqueue_fd %d, data 0x%zx, td %p\n", __func__,
 	    curcpu, ctx->kqueue_fd, data, ctx->trace_td);
-	EV_SET(&kev, HWT_PT_BUF_RDY_EV, EVFILT_USER, 0, NOTE_TRIGGER | NOTE_FFCOPY | flags, data,
+	EV_SET(&kev, HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ENABLE, NOTE_TRIGGER | NOTE_FFCOPY | flags, data,
 	    NULL);
 	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->trace_td, M_WAITOK);
 	dprintf("%s: kqfd ret %d\n", __func__, ret);
@@ -657,8 +661,8 @@ pt_topa_intr(struct trapframe *tf)
 	buf->curpage = (reg & 0xffffff80) >> 7;
 	buf->offset = reg >> 32;
 
-	TASK_INIT(&ctx->task, 0, (task_fn_t *)pt_buffer_ready, ctx);
-	taskqueue_enqueue(taskqueue_hwt, &ctx->task);
+  /* Notify userspace. */
+  hwt_event_send(HWT_KQ_BUFRDY_EV, &ctx->task, pt_buffer_ready, ctx);
 
 	/* Clear ToPA PMI status. */
 	reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
@@ -772,6 +776,8 @@ pt_modevent(module_t mod, int type, void *data)
 		}
 		pt_pcpu = malloc(sizeof(struct pt_cpu) * mp_ncpus, M_PT,
 		    M_ZERO | M_WAITOK);
+    pt_pcpu_ctx = malloc(sizeof(struct pt_ctx) * mp_ncpus, M_PT,
+                     M_ZERO | M_WAITOK);
 		loaded = true;
 		break;
 	case MOD_UNLOAD:
@@ -779,6 +785,7 @@ pt_modevent(module_t mod, int type, void *data)
 			hwt_backend_unregister(&backend);
 			hwt_intr = NULL;
 			free(pt_pcpu, M_PT);
+      free(pt_pcpu_ctx, M_PT);
 			pt_pcpu = NULL;
 		}
 		break;

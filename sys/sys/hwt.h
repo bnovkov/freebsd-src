@@ -34,6 +34,7 @@
 #include <sys/cpuset.h>
 #include <sys/types.h>
 #include <sys/hwt_record.h>
+#include <dev/hwt/hwt_event.h>
 
 #ifndef _SYS_HWT_H_
 #define _SYS_HWT_H_

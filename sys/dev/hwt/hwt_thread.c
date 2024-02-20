@@ -115,7 +115,7 @@ hwt_thread_lookup(struct hwt_context *ctx, struct thread *td)
 }
 
 int
-hwt_thread_alloc(struct hwt_thread **thr0, char *path, size_t bufsize,
+hwt_thread_alloc(struct hwt_context *ctx, struct hwt_thread **thr0, char *path, size_t bufsize,
     int kva_req)
 {
 	struct hwt_thread *thr;
@@ -129,7 +129,10 @@ hwt_thread_alloc(struct hwt_thread **thr0, char *path, size_t bufsize,
 	thr = malloc(sizeof(struct hwt_thread), M_HWT_THREAD,
 	    M_WAITOK | M_ZERO);
 	thr->vm = vm;
-
+  /* Check if we need to store backend-specific data. */
+  if(ctx->hwt_backend->thr_cookie_size)
+          thr->cookie = malloc(ctx->hwt_backend->thr_cookie_size, M_HWT_THREAD,
+                               M_WAITOK | M_ZERO);
 	mtx_init(&thr->mtx, "thr", NULL, MTX_DEF);
 
 	refcount_init(&thr->refcnt, 1);
@@ -146,7 +149,8 @@ hwt_thread_free(struct hwt_thread *thr)
 {
 
 	hwt_vm_free(thr->vm);
-
+  if(thr->cookie)
+          free(thr->cookie, M_HWT_THREAD);
 	free(thr, M_HWT_THREAD);
 }
 

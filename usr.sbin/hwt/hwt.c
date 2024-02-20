@@ -318,7 +318,7 @@ hwt_mode_cpu(struct trace_context *tc)
 		return (error);
 	}
 
-	error = tc->trace_dev->methods->mmap(tc);
+	error = tc->trace_dev->methods->mmap(tc, NULL);
 	if (error) {
 		printf("cant map memory, error %d\n", error);
 		return (error);
@@ -470,7 +470,7 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 		return (error);
 	}
 
-	error = tc->trace_dev->methods->mmap(tc);
+	error = tc->trace_dev->methods->mmap(tc, NULL);
 	if (error) {
 		printf("cant map memory, error %d\n", error);
 		return (error);

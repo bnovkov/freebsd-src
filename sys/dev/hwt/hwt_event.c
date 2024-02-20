@@ -1,6 +1,10 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
- * All rights reserved.
+ *
+ * This work was supported by Innovate UK project 105694, "Digital Security
+ * by Design (DSbD) Technology Platform Prototype".
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,54 +28,47 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _AMD64_PT_PT_H_
-#define _AMD64_PT_PT_H_
+#include "hwt_event.h"
 
-#include <sys/types.h>
+struct taskqueue *taskqueue_hwt = NULL;
 
-#include <x86/include/specialreg.h>
+static void
+hwt_event_record_handler(void *arg, int pending __unused)
+{
+        int ret __diagused;
+        struct kevent kev;
+        struct hwt_context *ctx = (struct hwt_context *)arg;
 
-#define IP_FILTER_MAX_RANGES (4) /* Intel SDM Vol. 3C, 33-29 */
-
-struct pt_cpu_config {
-	uint64_t rtit_ctl;
-	register_t cr3_filter;
-	int nranges;
-	struct ipf_range {
-		vm_offset_t start;
-		vm_offset_t end;
-	} ip_ranges[IP_FILTER_MAX_RANGES];
-	uint32_t mtc_freq;
-	uint32_t cyc_thresh;
-	uint32_t psb_freq;
-};
+        EV_SET(&kev, HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ENABLE, NOTE_TRIGGER, NULL);
+        ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->trace_td, M_WAITOK);
+        KASSERT(ret == 0,
+                ("%s: kqueue fd register failed: %d\n", __func__, ret));
+}
 
 
-#ifdef _KERNEL
-#include <sys/malloc.h>
+int
+hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx)
+{
+        int error;
+        /* TODO: validate event type - EINVAL */
+        if(ev_type == HWT_KQ_NEW_RECORD_EV){
+                handler = hwt_event_record_handler;
+        }
+        TASK_INIT(task, 0, handler, ctx);
+        error = taskqueue_enqueue(taskqueue_hwt, task);
 
-#define PT_CPUID 0x14
-#define PT_SUPPORTED_FLAGS \
-	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT)
+        return (error)
+}
 
-struct xsave_header {
-	uint64_t xsave_bv;
-	uint64_t xcomp_bv;
-	uint8_t reserved[48];
-};
+void
+hwt_event_load(void)
+{
+        taskqueue_hwt = taskqueue_create("hwt", M_WAITOK, taskqueue_thread_enqueue, &taskqueue_hwt);
+}
 
-struct pt_ext_area {
-	uint64_t rtit_ctl;
-	uint64_t rtit_output_base;
-	uint64_t rtit_output_mask_ptrs;
-	uint64_t rtit_status;
-	uint64_t rtit_cr3_match;
-	uint64_t rtit_addr0_a;
-	uint64_t rtit_addr0_b;
-	uint64_t rtit_addr1_a;
-	uint64_t rtit_addr1_b;
-};
-
-MALLOC_DECLARE(M_PT);
-#endif /* _KERNEL */
-#endif /* !_AMD64_PT_PT_H */
+void
+hwt_event_unload(void)
+{
+        KASSERT(taskqueue_hwt != NULL, ("%s: hwt taskqueue is NULL", __func__));
+        taskqueue_free("hwt");
+}

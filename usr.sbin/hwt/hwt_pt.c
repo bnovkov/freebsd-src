@@ -34,6 +34,7 @@
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
+#include <sys/tree.h>
 
 #include <err.h>
 #include <libipt/intel-pt.h>
@@ -41,6 +42,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <fcntl.h>
 
 #include "amd64/pt/pt.h"
 #include "hwt.h"
@@ -51,52 +53,87 @@
 
 #define pt_strerror(errcode) pt_errstr(pt_errcode((errcode)))
 
+
+static int pt_ctx_compare(const void *n1, const void *n2);
+
 /*
- * Decoder per-cpu state.
+ * Decoder state.
  */
-static struct hwt_pt_cpu {
-	size_t curoff;
-	void *tracebuf;
-	struct pt_packet_decoder *dec;
-} *hwt_pt_pcpu;
+ struct pt_dec_ctx {
+         size_t curoff;
+         void *tracebuf;
+         struct pt_packet_decoder *dec;
+         int id;
+         RB_ENTRY(pt_dec_ctx) entry;
+ };
+
+static struct pt_dec_ctx *cpus;
+static RB_HEAD(threads, pt_dec_ctx) threads;
+RB_GENERATE_STATIC(threads, pt_dec_ctx, entry, pt_ctx_compare);
 
 static int kq_fd = -1;
 
 static int
+pt_ctx_compare(const void *n1, const void *n2)
+{
+        const struct pt_dec_ctx *c1 = n1;
+        const struct pt_dec_ctx *c2 = n2;
+
+        return (c1->id < c2->id ? -1 : c1->id > c2->id ? 1 : 0);
+}
+
+static int
 hwt_pt_init(struct trace_context *tc)
 {
-	struct kevent event;
+	struct kevent ev[2];
 	int error;
 
-	hwt_pt_pcpu = calloc(hwt_ncpu(), sizeof(struct hwt_pt_cpu));
-	if (!hwt_pt_pcpu) {
-		printf("%s: failed to allocate decoder\n", __func__);
-		return (-1);
-	}
 	if (tc->raw) {
-		/* No decoder needed, just a file for raw data. */
-		tc->raw_f = fopen(tc->filename, "w");
-		if (tc->raw_f == NULL) {
-			printf("%s: could not open file %s\n", __func__,
-			    tc->filename);
-			return (ENXIO);
-		}
+          /* No decoder needed, just a file for raw data. */
+          tc->raw_f = fopen(tc->filename, "w");
+          if (tc->raw_f == NULL) {
+                  printf("%s: could not open file %s\n", __func__,
+                         tc->filename);
+                  return (ENXIO);
+          }
 	}
 
-		tc->kqueue_fd = kqueue();
+  switch(tc->mode){
+  case HWT_MODE_CPU:
+          cpus = calloc(hwt_ncpu(), sizeof(struct pt_dec_ctx));
+          if (!cpus) {
+                  printf("%s: failed to allocate decoders\n", __func__);
+                  return (-1);
+          }
+          break;
+  case HWT_MODE_THREAD:
+          RB_INIT(&threads);
+          break;
+  default:
+          printf("%s: invalid tracing mode %d\n", __func__, tc->mode);
+          return (EINVAL);
+  }
+
+
+
+	tc->kqueue_fd = kqueue();
 	if (tc->kqueue_fd == -1)
 		err(EXIT_FAILURE, "kqueue() failed");
-
 	kq_fd = tc->kqueue_fd; /* sig handler needs access to kq via global */
 
-	EV_SET(&event, HWT_PT_BUF_RDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
+  /* Let hwt notify us when the buffer is ready. */
+	EV_SET(&ev[0], HWT_KQ_BUFRDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
 	    NOTE_FFCOPY, 0, NULL);
+  /* Let hwt notify us when something gets mapped into the process. */
+	EV_SET(&ev[1], HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
+         NOTE_FFCOPY, 0, NULL);
 
-	error = kevent(tc->kqueue_fd, &event, 1, NULL, 0, NULL);
+	error = kevent(tc->kqueue_fd, ev, 2, NULL, 0, NULL);
 	if (error == -1)
 		err(EXIT_FAILURE, "kevent register");
-	if (event.flags & EV_ERROR)
-		errx(EXIT_FAILURE, "Event error: %s", strerror(event.data));
+	if ((ev[0].flags | ev[1].flags) & EV_ERROR)
+          // TODO: properly check per-event errors
+		errx(EXIT_FAILURE, "Event error: %s", strerror(ev[0].data));
 
 	printf("%s kqueue_fd:%d\n", __func__, tc->kqueue_fd);
 
@@ -128,21 +165,20 @@ map_tracebuf(struct trace_context *tc, int id, int *fd, void **addr)
 	return (0);
 }
 
-
 static int
-hwt_pt_mmap(struct trace_context *tc)
+hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *entry)
 {
 	int error;
 	int cpu_id, tc_fd = -1, _fd;
-	struct hwt_pt_cpu *cpu;
+	struct pt_dec_ctx *dctx;
 	struct pt_config config;
 
-	if (tc->mode == HWT_MODE_CPU) {
+	switch (tc->mode) {
+  case HWT_MODE_CPU:
 		CPU_FOREACH_ISSET (cpu_id, &tc->cpu_map) {
-			cpu = &hwt_pt_pcpu[cpu_id];
-
+			dctx = &cpus[cpu_id];
 			error = map_tracebuf(tc, cpu_id,
-			    tc_fd == -1 ? &tc_fd : &_fd, &cpu->tracebuf);
+			    tc_fd == -1 ? &tc_fd : &_fd, &dctx->tracebuf);
 			if (error != 0) {
 				printf(
 				    "%s: failed to map tracing buffer for cpu %d: %s\n",
@@ -153,21 +189,28 @@ hwt_pt_mmap(struct trace_context *tc)
 			if (!tc->raw) {
 				memset(&config, 0, sizeof(config));
 				config.size = sizeof(config);
-				config.begin = cpu->tracebuf;
-				config.end = (uint8_t *)cpu->tracebuf +
+				config.begin = dctx->tracebuf;
+				config.end = (uint8_t *)dctx->tracebuf +
 				    tc->bufsize;
 
-				cpu->dec = pt_pkt_alloc_decoder(&config);
-				if (cpu->dec == NULL) {
+				dctx->dec = pt_pkt_alloc_decoder(&config);
+				if (dctx->dec == NULL) {
 					printf(
 					    "%s: failed to allocate PT decoder for cpu %d\n",
 					    __func__, cpu_id);
 					return (-1);
 				}
 			}
+      dctx->id = cpu_id;
 		}
-	} else {
-		return (-1);
+    break;
+  case HWT_MODE_THREAD:
+          if (entry == NULL)
+                  return (EINVAL);
+          // TODO: map thread trace buffer
+          break;
+  default:
+          return (EINVAL);
 	}
 
 	/* thr_fd is used to issue ioctls which control all cores
@@ -368,12 +411,12 @@ hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
  * Dumps raw packet bytes into tc->raw_f.
  */
 static int
-hwt_pt_dump_chunk(struct hwt_pt_cpu *cpu, FILE *raw_f, uint64_t offs,
+hwt_pt_dump_chunk(struct pt_dec_ctx *dctx, FILE *raw_f, uint64_t offs,
     size_t len, uint64_t *processed)
 {
 	void *base;
 
-	base = (void *)((uintptr_t)cpu->tracebuf + (uintptr_t)offs);
+	base = (void *)((uintptr_t)dctx->tracebuf + (uintptr_t)offs);
 	fwrite(base, len, 1, raw_f);
 	fflush(raw_f);
 
@@ -383,14 +426,32 @@ hwt_pt_dump_chunk(struct hwt_pt_cpu *cpu, FILE *raw_f, uint64_t offs,
 }
 
 static int
-pt_process_chunk(struct trace_context *tc, struct hwt_pt_cpu *cpu,
+pt_process_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
     uint64_t offs, size_t len, uint64_t *processed)
 {
 	if (tc->raw) {
-		return hwt_pt_dump_chunk(cpu, tc->raw_f, offs, len, processed);
+		return hwt_pt_dump_chunk(dctx, tc->raw_f, offs, len, processed);
 	} else {
-		return hwt_pt_decode_chunk(cpu->dec, offs, len, processed);
+		return hwt_pt_decode_chunk(dctx->dec, offs, len, processed);
 	}
+}
+
+static
+struct pt_dec_ctx *pt_get_decoder_ctx(struct trace_context *tc, int ctxid)
+{
+        switch(tc->mode){
+        case HWT_MODE_CPU:
+                return &cpus[ctxid];
+        case HWT_MODE_THREAD:{
+                struct pt_dec_ctx srch;
+                srch.id = ctxid;
+                return RB_FIND(threads, &threads, &srch);
+        }
+        default:
+                break;
+        }
+
+        return (NULL);
 }
 
 static int
@@ -398,10 +459,11 @@ hwt_pt_process(struct trace_context *tc)
 {
 	uint64_t curoff, newoff;
 	size_t totals;
-	int error;
-	int len, cpu_id; // assume cpu_id == 0 for now
+	int error, nrec, ret;
+	int len, id;
 	uint64_t processed;
-	struct hwt_pt_cpu *cpu;
+	struct pt_dec_ctx *dctx;
+  struct kevent tevent;
 
 	xo_open_container("trace");
 	xo_open_list("entries");
@@ -414,50 +476,70 @@ hwt_pt_process(struct trace_context *tc)
 	len = 0;
 
 	while (1) {
-		printf("%s: fetching new offset\n", __func__);
-		ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
-		if (ret == -1 && errno != EINTR) {
-			err(EXIT_FAILURE, "kevent wait");
-		}
-		newoff = tevent.data;
-		printf("%s: new offset %zu\n", __func__, newoff);
+          printf("%s: waiting for new offset\n", __func__);
+          ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
+          if (ret == -1 && errno != EINTR) {
+                  err(EXIT_FAILURE, "kevent wait");
+          }
 
-		cpu = &hwt_pt_pcpu[cpu_id];
-		curoff = cpu->curoff;
-		if (newoff == curoff) {
-			if (tc->terminate)
-				break;
-		} else if (newoff > curoff) {
-			/* New entries in the trace buffer. */
-			len = newoff - curoff;
-			if (pt_process_chunk(tc, cpu, curoff, len,
-				&processed)) {
-				break;
-			}
-			curoff += processed;
-			totals += processed;
+          if(tevent.ident == HWT_KQ_BUFRDY_EV){
+                  id = tevent.flags & HWT_KQ_BUFRDY_ID_MASK;
+                  dctx = pt_get_decoder_ctx(tc, id);
+                  if(dctx == NULL){
+                          printf("%s: unable to find decorder context for ID %d\n", __func__, id);
+                          err(EXIT_FAILURE, "pt_get_decoder_ctx");
+                  }
 
-		} else if (newoff < curoff) {
-			/* New entries in the trace buffer. Buffer wrapped. */
-			len = tc->bufsize - curoff;
-			if (pt_process_chunk(tc, cpu, curoff, len,
-				&processed)) {
-				break;
-			}
-			curoff += processed;
-			totals += processed;
+                  newoff = tevent.data;
+                  curoff = dctx->curoff;
+                  printf("%s: new offset %zu for ctx id %d\n", __func__, newoff, id);
 
-			curoff = 0;
-			len = newoff;
-			if (pt_process_chunk(tc, cpu, curoff, len,
-				&processed)) {
-				break;
-			}
-			curoff += processed;
-			totals += processed;
-		}
-		/* Save current offset for cpu */
-		cpu->curoff = curoff;
+                  if (newoff == curoff) {
+                          if (tc->terminate)
+                                  break;
+                  } else if (newoff > curoff) {
+                          /* New entries in the trace buffer. */
+                          len = newoff - curoff;
+                          if (pt_process_chunk(tc, dctx, curoff, len,
+                                               &processed)) {
+                                  break;
+                          }
+                          curoff += processed;
+                          totals += processed;
+
+                  } else if (newoff < curoff) {
+                          /* New entries in the trace buffer. Buffer wrapped. */
+                          len = tc->bufsize - curoff;
+                          if (pt_process_chunk(tc, dctx, curoff, len,
+                                               &processed)) {
+                                  break;
+                          }
+                          curoff += processed;
+                          totals += processed;
+
+                          curoff = 0;
+                          len = newoff;
+                          if (pt_process_chunk(tc, dctx, curoff, len,
+                                               &processed)) {
+                                  break;
+                          }
+                          curoff += processed;
+                          totals += processed;
+                  }
+                  /* Save current offset for cpu */
+                  dctx->curoff = curoff;
+          } else if (tevent.ident == HWT_KQ_NEW_RECORD_EV){
+                  printf("%s: fetching new records\n", __func__);
+                  error = hwt_record_fetch(tc, &nrec);
+                  if (error != 0){
+                          printf("%s: hwt_get_records error %d\n", __func__, error);
+                          err(EXIT_FAILURE, "hwt_get_records");
+                  }
+
+          } else {
+                  printf("%s: unknown event identifier %lu\n", __func__, tevent.ident);
+                  err(EXIT_FAILURE, "kevent ident");
+          }
 	}
 
 	printf("\nBytes processed: %ld\n", totals);

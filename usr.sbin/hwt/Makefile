@@ -3,7 +3,7 @@
 PROG_CXX=	hwt
 MAN=
 
-CFLAGS+= -I${SRCTOP}/lib/libpmcstat
+CFLAGS+= -I${SRCTOP}/lib/libpmcstat -I${SRCTOP}/sys
 
 LIBADD= elf pmcstat xo util
 
