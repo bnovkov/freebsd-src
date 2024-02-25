@@ -497,22 +497,26 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 			return (error);
 	}
 
-	printf("Expect %d records.\n", nlibs);
-
-	tot_rec = 0;
+	printf("Expect at least %d records.\n", nlibs);
 
 	/*
 	 * Ensure we got expected amount of mmap/interp records so that
 	 * mapping tables constructed before we do symbol lookup.
+   *
+   * Also receive any records about threads that were created in the meantime.
 	 */
-
+	tot_rec = 0;
 	do {
 		error = hwt_get_records(tc, &nrec);
 		if (error != 0)
-			return (error);
+            break;
 		tot_rec += nrec;
 		hwt_sleep(10);
-	} while (tot_rec < nlibs);
+	} while (1);
+
+  if (tot_rec < nlibs){
+          errx(EX_DATAERR, "Failed to receive expected amount of HWT records.");
+  }
 
 	error = tc->trace_dev->methods->process(tc);
 	if (error) {

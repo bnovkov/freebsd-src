@@ -166,7 +166,7 @@ map_tracebuf(struct trace_context *tc, int id, int *fd, void **addr)
 }
 
 static int
-hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *entry)
+hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 {
 	int error;
 	int cpu_id, tc_fd = -1, _fd;
@@ -183,7 +183,7 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *entry)
 				printf(
 				    "%s: failed to map tracing buffer for cpu %d: %s\n",
 				    __func__, cpu_id, strerror(errno));
-				return (-1);
+				return error;
 			}
 
 			if (!tc->raw) {
@@ -198,25 +198,57 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *entry)
 					printf(
 					    "%s: failed to allocate PT decoder for cpu %d\n",
 					    __func__, cpu_id);
-					return (-1);
+					return (ENOMEM);
 				}
 			}
       dctx->id = cpu_id;
 		}
+    /* thr_fd is used to issue ioctls which control all cores
+     * use fd to the first cpu for this (thread is always 0) */
+    assert(tc_fd != -1);
+    tc->thr_fd = tc_fd;
     break;
   case HWT_MODE_THREAD:
-          if (entry == NULL)
+          if (rec == NULL)
                   return (EINVAL);
+          dctx = calloc(1, sizeof(*dctx));
+          if (dctx == NULL)
+                  return (ENOMEM);
           // TODO: map thread trace buffer
+          error = map_tracebuf(tc, rec->thread_id,
+                               tc->thr_fd == 0 ? &tc_fd : &_fd, &dctx->tracebuf);
+          if (error != 0) {
+                  printf("%s: failed to map tracing buffer for thread %d: %s\n",
+                         __func__, rec->thread_id, strerror(errno));
+                  free(dctx);
+                  return error;
+          }
+          if (!tc->raw) {
+                  memset(&config, 0, sizeof(config));
+                  config.size = sizeof(config);
+                  config.begin = dctx->tracebuf;
+                  config.end = (uint8_t *)dctx->tracebuf +
+                          tc->bufsize;
+
+                  dctx->dec = pt_pkt_alloc_decoder(&config);
+                  if (dctx->dec == NULL) {
+                          printf(
+                                 "%s: failed to allocate PT decoder for thread %d\n",
+                                 __func__, rec->thread_id);
+                          free(dctx);
+                          return (ENOMEM);
+                  }
+          }
+          dctx->id = rec->thread_id;
+          RB_INSERT(threads, &threads, dctx);
+          if(tc->thr_fd == 0){
+                  tc->thr_fd = tc_fd;
+          }
           break;
   default:
           return (EINVAL);
 	}
 
-	/* thr_fd is used to issue ioctls which control all cores
-	 * use fd to the first cpu for this (thread is always 0) */
-	assert(tc_fd != -1);
-	tc->thr_fd = tc_fd;
 
 	return (0);
 }
