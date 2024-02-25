@@ -228,7 +228,7 @@ pt_cpu_start(void *dummy)
 	/* Clear PMI status. */
 	wrmsr(MSR_IA32_RTIT_STATUS, 0);
 	/* Start tracing. */
-	pt_cpu_toggle_local(&cpu->ctx.save_area, true);
+	pt_cpu_toggle_local(&cpu->ctx->save_area, true);
 	pt_cpu_dump(curcpu);
 }
 
@@ -240,10 +240,10 @@ pt_cpu_stop(void *dummy)
   MPASS(cpu->ctx != NULL);
   dprintf("%s: curcpu %d\n", __func__, curcpu);
   /* Check if the CPU was initialized. */
-	if (cpu->ctx.buf.topa_hw == NULL)
+	if (cpu->ctx->buf.topa_hw == NULL)
 		return;
 	/* Stop tracing. */
-	pt_cpu_toggle_local(&cpu->ctx.save_area, false);
+	pt_cpu_toggle_local(&cpu->ctx->save_area, false);
 }
 
 /*
@@ -284,12 +284,6 @@ pt_topa_prepare(struct pt_ctx *ctx, struct hwt_vm *vm)
 	/* Circular buffer - point last entry to first */
 	buf->topa_hw[vm->npages] = (uint64_t)vtophys(buf->topa_hw) | TOPA_END;
 
-	return (0);
-}
-
-static int
-pt_backend_init_thread(struct hwt_context *ctx)
-{
 	return (0);
 }
 
@@ -343,8 +337,10 @@ pt_configure_ranges(struct pt_ctx *ctx, struct pt_cpu_config *cfg)
 static int
 pt_init_ctx(struct pt_ctx *pt_ctx, struct hwt_context *ctx, struct hwt_vm *vm)
 {
+        int error;
         struct pt_ext_area *pt_ext;
         struct xsave_header *hdr;
+        struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
 
         pt_ext = &pt_ctx->save_area.pt_ext_area;
         hdr = &pt_ctx->save_area.header;
@@ -390,11 +386,9 @@ pt_init_ctx(struct pt_ctx *pt_ctx, struct hwt_context *ctx, struct hwt_vm *vm)
 static int
 pt_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 {
-        struct pt_ctx *pt_ctx;
         struct hwt_cpu *hwt_cpu;
         struct hwt_thread *thr;
         struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
-        int error = 0;
 
         dprintf("%s\n", __func__);
 
@@ -475,7 +469,7 @@ static void
 pt_backend_enable_smp(struct hwt_context *ctx)
 {
 	dprintf("%s\n", __func__);
-	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_init, NULL, NULL);
+	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_start, NULL, NULL);
 }
 
 /*
@@ -526,7 +520,8 @@ pt_backend_init(struct hwt_context *ctx)
 static void
 pt_backend_deinit(struct hwt_context *ctx)
 {
-	struct pt_ctx *ctx;
+	struct pt_ctx *pt_ctx;
+  struct hwt_thread *thr;
 
 	dprintf("%s\n", __func__);
 
@@ -541,10 +536,10 @@ pt_backend_deinit(struct hwt_context *ctx)
 		TAILQ_FOREACH (thr, &ctx->threads, next) {
 			KASSERT(thr->cookie != NULL,
 			    ("%s: thr->cookie not set", __func__));
-      ctx = (struct pt_ctx *)thr->cookie;
+      pt_ctx = (struct pt_ctx *)thr->cookie;
       /* Free ToPA table. */
-			free(ctx->buf.topa_hw, M_PT);
-			ctx->buf.topa_hw = NULL;
+			free(pt_ctx->buf.topa_hw, M_PT);
+			pt_ctx->buf.topa_hw = NULL;
 		}
 	} else {
 		CPU_FOREACH (cpu_id) {
@@ -553,10 +548,10 @@ pt_backend_deinit(struct hwt_context *ctx)
       // TODO: separate pcpu contexts
       KASSERT(pt_pcpu[cpu_id].ctx == &pt_pcpu_ctx[cpu_id],
               ("%s: CPU mode tracing with non-cpu mode PT context active", __func__));
-			ctx = &pt_pcpu_ctx[cpu_id];
+			pt_ctx = &pt_pcpu_ctx[cpu_id];
 			/* Free ToPA table. */
-			free(ctx->buf.topa_hw, M_PT);
-			ctx->buf.topa_hw = NULL;
+			free(pt_ctx->buf.topa_hw, M_PT);
+			pt_ctx->buf.topa_hw = NULL;
 		}
 	}
 }
@@ -567,7 +562,7 @@ pt_backend_deinit(struct hwt_context *ctx)
 static int
 pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset)
 {
-	struct pt_buffer *buf = &pt_pcpu[cpu_id].ctx.buf;
+	struct pt_buffer *buf = &pt_pcpu[cpu_id].ctx->buf;
 
 	*curpage = buf->curpage;
 	*curpage_offset = buf->offset;
@@ -647,8 +642,8 @@ pt_topa_intr(struct trapframe *tf)
 	/* Disable preemption. */
 	critical_enter();
 	retval = 1;
-	/* Only CPU mode supported for now */
-	ctx = &pt_pcpu[curcpu].ctx;
+	/* Fetch active trace context. */
+	ctx = pt_pcpu[curcpu].ctx;
 	buf = &ctx->buf;
 	KASSERT(buf->topa_hw != NULL,
 	    ("%s: ToPA PMI interrupt with invalid buffer", __func__));
