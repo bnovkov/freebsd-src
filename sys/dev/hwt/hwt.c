@@ -172,8 +172,6 @@
 #define	dprintf(fmt, ...)
 #endif
 
-TASKQUEUE_FAST_DEFINE_THREAD(hwt);
-
 static eventhandler_tag hwt_exit_tag;
 static struct cdev *hwt_cdev;
 static struct cdevsw hwt_cdevsw = {
@@ -212,7 +210,6 @@ hwt_load(void)
 	hwt_ctx_load();
 	hwt_contexthash_load();
 	hwt_ownerhash_load();
-  hwt_event_load();
 
 	error = make_dev_s(&args, &hwt_cdev, "hwt");
 	if (error != 0)
@@ -237,7 +234,6 @@ hwt_unload(void)
 	hwt_contexthash_unload();
 	hwt_ctx_unload();
 	hwt_backend_unload();
-  hwt_event_unload();
 
 	return (0);
 }

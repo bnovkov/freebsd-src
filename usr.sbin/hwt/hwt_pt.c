@@ -473,6 +473,7 @@ struct pt_dec_ctx *pt_get_decoder_ctx(struct trace_context *tc, int ctxid)
 {
         switch(tc->mode){
         case HWT_MODE_CPU:
+		assert(ctxid < hwt_ncpu());
                 return &cpus[ctxid];
         case HWT_MODE_THREAD:{
                 struct pt_dec_ctx srch;
@@ -492,7 +493,8 @@ hwt_pt_process(struct trace_context *tc)
 	uint64_t curoff, newoff;
 	size_t totals;
 	int error, nrec, ret;
-	int len, id;
+	int len;
+	u_int id;
 	uint64_t processed;
 	struct pt_dec_ctx *dctx;
   struct kevent tevent;
@@ -513,19 +515,18 @@ hwt_pt_process(struct trace_context *tc)
           if (ret == -1 && errno != EINTR) {
                   err(EXIT_FAILURE, "kevent wait");
           }
-
+	  printf("EVENT ID: %lu\n", tevent.ident);
           if(tevent.ident == HWT_KQ_BUFRDY_EV){
-                  id = tevent.flags & HWT_KQ_BUFRDY_ID_MASK;
+                  id = tevent.fflags & HWT_KQ_BUFRDY_ID_MASK;
+                  newoff = tevent.data;
+                  printf("%s: new offset %zu for ctx id %d\n", __func__, newoff, id);
                   dctx = pt_get_decoder_ctx(tc, id);
                   if(dctx == NULL){
                           printf("%s: unable to find decorder context for ID %d\n", __func__, id);
                           err(EXIT_FAILURE, "pt_get_decoder_ctx");
                   }
 
-                  newoff = tevent.data;
                   curoff = dctx->curoff;
-                  printf("%s: new offset %zu for ctx id %d\n", __func__, newoff, id);
-
                   if (newoff == curoff) {
                           if (tc->terminate)
                                   break;

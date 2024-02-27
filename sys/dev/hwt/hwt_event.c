@@ -3,9 +3,6 @@
  *
  * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
  *
- * This work was supported by Innovate UK project 105694, "Digital Security
- * by Design (DSbD) Technology Platform Prototype".
- *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -28,9 +25,18 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/param.h>
+#include <sys/kernel.h>
+#include <sys/event.h>
+#include <sys/queue.h>
+#include <sys/malloc.h>
+#include <sys/taskqueue.h>
+
+#include <dev/hwt/hwt_context.h>
+
 #include "hwt_event.h"
 
-struct taskqueue *taskqueue_hwt = NULL;
+TASKQUEUE_FAST_DEFINE_THREAD(hwt);
 
 static void
 hwt_event_record_handler(void *arg, int pending __unused)
@@ -39,8 +45,8 @@ hwt_event_record_handler(void *arg, int pending __unused)
         struct kevent kev;
         struct hwt_context *ctx = (struct hwt_context *)arg;
 
-        EV_SET(&kev, HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ENABLE, NOTE_TRIGGER, NULL);
-        ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->trace_td, M_WAITOK);
+        EV_SET(&kev, HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ENABLE, NOTE_TRIGGER, 0, NULL);
+        ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->hwt_td, M_WAITOK);
         KASSERT(ret == 0,
                 ("%s: kqueue fd register failed: %d\n", __func__, ret));
 }
@@ -57,18 +63,5 @@ hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx)
         TASK_INIT(task, 0, handler, ctx);
         error = taskqueue_enqueue(taskqueue_hwt, task);
 
-        return (error)
-}
-
-void
-hwt_event_load(void)
-{
-        taskqueue_hwt = taskqueue_create("hwt", M_WAITOK, taskqueue_thread_enqueue, &taskqueue_hwt);
-}
-
-void
-hwt_event_unload(void)
-{
-        KASSERT(taskqueue_hwt != NULL, ("%s: hwt taskqueue is NULL", __func__));
-        taskqueue_free("hwt");
+        return (error);
 }

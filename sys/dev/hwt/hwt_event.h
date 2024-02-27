@@ -34,11 +34,9 @@
 #define HWT_KQ_BUFRDY_ID_MASK		0xFFFF
 
 #ifdef _KERNEL
+struct task;
 
 int  hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx);
-
-void hwt_event_load(void);
-void hwt_event_unload(void);
 
 #endif
 #endif /* !_DEV_HWT_HWT_EVENT_H_ */
