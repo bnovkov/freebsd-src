@@ -67,7 +67,6 @@
 #include <dev/hwt/hwt_record.h>
 
 #define	HWT_THREAD_DEBUG
-#undef	HWT_THREAD_DEBUG
 
 #ifdef	HWT_THREAD_DEBUG
 #define	dprintf(fmt, ...)	printf(fmt, ##__VA_ARGS__)
@@ -200,7 +199,7 @@ hwt_vm_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 
 	if (nprot != PROT_READ || *offset != 0)
 		return (ENXIO);
-
+	vm_object_reference(vm->obj);
 	*objp = vm->obj;
 
 	return (0);
@@ -423,6 +422,7 @@ hwt_vm_destroy_buffers(struct hwt_vm *vm)
 void
 hwt_vm_free(struct hwt_vm *vm)
 {
+	dprintf("%s\n", __func__);
 
 	if (vm->cdev)
 		destroy_dev_sched(vm->cdev);
