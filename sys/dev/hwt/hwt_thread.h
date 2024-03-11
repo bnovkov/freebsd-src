@@ -31,6 +31,8 @@
 #ifndef _DEV_HWT_HWT_THREAD_H_
 #define _DEV_HWT_HWT_THREAD_H_
 
+struct hwt_record_entry;
+
 struct hwt_thread {
 	struct hwt_vm			*vm;
 	struct hwt_context		*ctx;
@@ -51,7 +53,7 @@ int hwt_thread_alloc(struct hwt_context *ctx, struct hwt_thread **thr0, char *pa
 void hwt_thread_free(struct hwt_thread *thr);
 
 /* Thread list mgt. */
-void hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr);
+void hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr, struct hwt_record_entry *entry);
 struct hwt_thread * hwt_thread_first(struct hwt_context *ctx);
 struct hwt_thread * hwt_thread_lookup(struct hwt_context *ctx,
     struct thread *td);

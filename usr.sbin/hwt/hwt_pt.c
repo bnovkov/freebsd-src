@@ -142,88 +142,78 @@ hwt_pt_init(struct trace_context *tc)
 }
 
 static int
-map_tracebuf(struct trace_context *tc, int id, int *fd, void **addr)
-{
-	char filename[32];
-
-	sprintf(filename, "/dev/hwt_%d_%d", tc->ident, id);
-
-	*fd = open(filename, O_RDONLY);
-	if (*fd < 0) {
-		printf("Can't open %s\n", filename);
-		return (-1);
-	}
-
-	*addr = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, *fd, 0);
-	if (*addr == MAP_FAILED) {
-		printf("mmap failed: err %d\n", errno);
-		return (-1);
-	}
-
-	printf("%s: addr: %p\n", __func__, *addr);
-
-	return (0);
-}
-
-static int
 hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 {
-	int error;
-	int cpu_id, tc_fd = -1, _fd;
+	int cpu_id, tid, fd;
 	struct pt_dec_ctx *dctx;
 	struct pt_config config;
+	char filename[32];
 
 	switch (tc->mode) {
   case HWT_MODE_CPU:
 		CPU_FOREACH_ISSET (cpu_id, &tc->cpu_map) {
 			dctx = &cpus[cpu_id];
-			error = map_tracebuf(tc, cpu_id,
-			    tc_fd == -1 ? &tc_fd : &_fd, &dctx->tracebuf);
-			if (error != 0) {
+
+			sprintf(filename, "/dev/hwt_%d_%d", tc->ident, cpu_id);
+			fd = open(filename, O_RDONLY);
+			if (fd < 0) {
+				printf("Can't open %s\n", filename);
+				return (-1);
+			}
+			/* thr_fd is used to issue ioctls which control all cores
+			 * use fd to the first cpu for this (thread is always 0) */
+			if (tc->thr_fd == 0){
+				tc->thr_fd = fd;
+			}
+			dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, fd, 0);
+			if (dctx->tracebuf == MAP_FAILED) {
 				printf(
 				    "%s: failed to map tracing buffer for cpu %d: %s\n",
 				    __func__, cpu_id, strerror(errno));
-				return error;
+				free(dctx);
+				return (-1);
 			}
-
-			if (!tc->raw) {
-				memset(&config, 0, sizeof(config));
-				config.size = sizeof(config);
-				config.begin = dctx->tracebuf;
-				config.end = (uint8_t *)dctx->tracebuf +
-				    tc->bufsize;
-
-				dctx->dec = pt_pkt_alloc_decoder(&config);
-				if (dctx->dec == NULL) {
-					printf(
-					    "%s: failed to allocate PT decoder for cpu %d\n",
-					    __func__, cpu_id);
-					return (ENOMEM);
-				}
-			}
-      dctx->id = cpu_id;
+		  	dctx->id = cpu_id;
 		}
-    /* thr_fd is used to issue ioctls which control all cores
-     * use fd to the first cpu for this (thread is always 0) */
-    assert(tc_fd != -1);
-    tc->thr_fd = tc_fd;
-    break;
+	    break;
   case HWT_MODE_THREAD:
-          if (rec == NULL)
-                  return (EINVAL);
+          if (rec == NULL) {
+		  /* Have we already mapped the first thread? */
+		  if (tc->thr_fd != 0)
+	                  return (EINVAL);
+		  tid = 0;
+	  } else {
+		tid = rec->thread_id;
+	  }
           dctx = calloc(1, sizeof(*dctx));
           if (dctx == NULL)
                   return (ENOMEM);
           // TODO: map thread trace buffer
-          error = map_tracebuf(tc, rec->thread_id,
-                               tc->thr_fd == 0 ? &tc_fd : &_fd, &dctx->tracebuf);
-          if (error != 0) {
-                  printf("%s: failed to map tracing buffer for thread %d: %s\n",
-                         __func__, rec->thread_id, strerror(errno));
-                  free(dctx);
-                  return error;
-          }
-          if (!tc->raw) {
+	sprintf(filename, "/dev/hwt_%d_%d", tc->ident, tid);
+	fd = open(filename, O_RDONLY);
+	if (fd < 0) {
+		printf("Can't open %s\n", filename);
+		free(dctx);
+		return (-1);
+	}
+	if (tc->thr_fd == 0){
+		tc->thr_fd = fd;
+	}
+	dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, fd, 0);
+	if (dctx->tracebuf == MAP_FAILED) {
+                printf("%s: failed to map tracing buffer for thread %d: %s\n",
+                         __func__, tid, strerror(errno));
+		free(dctx);
+		return (-1);
+	}
+          dctx->id = tid;
+          RB_INSERT(threads, &threads, dctx);
+          break;
+  default:
+          return (EINVAL);
+	}
+
+        if (!tc->raw) {
                   memset(&config, 0, sizeof(config));
                   config.size = sizeof(config);
                   config.begin = dctx->tracebuf;
@@ -233,22 +223,12 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
                   dctx->dec = pt_pkt_alloc_decoder(&config);
                   if (dctx->dec == NULL) {
                           printf(
-                                 "%s: failed to allocate PT decoder for thread %d\n",
-                                 __func__, rec->thread_id);
+                                 "%s: failed to allocate PT decoder for thread\n",
+                                 __func__);
                           free(dctx);
                           return (ENOMEM);
                   }
-          }
-          dctx->id = rec->thread_id;
-          RB_INSERT(threads, &threads, dctx);
-          if(tc->thr_fd == 0){
-                  tc->thr_fd = tc_fd;
-          }
-          break;
-  default:
-          return (EINVAL);
-	}
-
+         }
 
 	return (0);
 }

@@ -298,6 +298,7 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case HWT_IOC_SET_CONFIG:
 		sconf = (struct hwt_set_config *)addr;
 		error = hwt_config_set(td, ctx, sconf);
+		dprintf("%s: hwt_config_set retval %d\n", __func__, error);
 		if (error)
 			return (error);
 		ctx->pause_on_mmap = sconf->pause_on_mmap ? 1 : 0;

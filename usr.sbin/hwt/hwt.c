@@ -167,7 +167,7 @@ hwt_ctx_alloc(struct trace_context *tc)
 	struct hwt_alloc al;
 	cpuset_t cpu_map;
 	int error = 0;
-	
+
 	if (tc->trace_dev->methods->init != NULL)
 		error = tc->trace_dev->methods->init(tc);
 	if (error)
@@ -320,7 +320,7 @@ hwt_mode_cpu(struct trace_context *tc)
 
 	error = tc->trace_dev->methods->mmap(tc, NULL);
 	if (error) {
-		printf("cant map memory, error %d\n", error);
+		printf("%s: cant map memory, error %d\n", __func__, error);
 		return (error);
 	}
 
@@ -469,16 +469,15 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 		printf("\n");
 		return (error);
 	}
-
 	error = tc->trace_dev->methods->mmap(tc, NULL);
 	if (error) {
-		printf("cant map memory, error %d\n", error);
+		printf("%s: failed to map trace buffer for first thread, %d\n", __func__, error);
 		return (error);
 	}
 
 	error = tc->trace_dev->methods->set_config(tc);
 	if (error != 0)
-		errx(EX_DATAERR, "can't set config");
+		errx(EX_DATAERR, "can't set config, errno %d", errno);
 
 	if (tc->attach)
 		hwt_get_vmmap(tc);
@@ -502,21 +501,21 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 	/*
 	 * Ensure we got expected amount of mmap/interp records so that
 	 * mapping tables constructed before we do symbol lookup.
-   *
-   * Also receive any records about threads that were created in the meantime.
+	 *
+	 * Also receive any records about threads that were created in the meantime.
 	 */
 	tot_rec = 0;
 	do {
 		error = hwt_get_records(tc, &nrec);
-		if (error != 0)
-            break;
+		if (error != 0 || nrec == 0)
+			break;
 		tot_rec += nrec;
 		hwt_sleep(10);
 	} while (1);
 
-  if (tot_rec < nlibs){
-          errx(EX_DATAERR, "Failed to receive expected amount of HWT records.");
-  }
+  	if (tot_rec < nlibs){
+        	errx(EX_DATAERR, "Failed to receive expected amount of HWT records.");
+  	}
 
 	error = tc->trace_dev->methods->process(tc);
 	if (error) {

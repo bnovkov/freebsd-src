@@ -261,11 +261,11 @@ hwt_hook_thread_create(struct thread *td)
 	thr->td = td;
 
 	HWT_CTX_LOCK(ctx);
-	TAILQ_INSERT_TAIL(&ctx->threads, thr, next);
-	LIST_INSERT_HEAD(&ctx->records, entry, next);
+	hwt_thread_insert(ctx, thr, entry);
 	HWT_CTX_UNLOCK(ctx);
 
-  hwt_event_send(HWT_KQ_NEW_RECORD_EV, &entry->task, NULL, (void *)ctx);
+	/* Notify userspace. */
+	hwt_event_send(HWT_KQ_NEW_RECORD_EV, &entry->task, NULL, (void *)ctx);
 
 	hwt_ctx_put(ctx);
 
