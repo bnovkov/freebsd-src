@@ -36,7 +36,8 @@
 #ifdef _KERNEL
 struct task;
 
-int  hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx);
+int hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx);
+void hwt_event_drain_all(void);
 
 #endif
 #endif /* !_DEV_HWT_HWT_EVENT_H_ */

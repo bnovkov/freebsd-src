@@ -113,13 +113,9 @@ enum pt_cpu_state {
 };
 
 static struct pt_cpu {
-	struct mtx lock;
 	struct pt_ctx *ctx;	   /* active PT tracing context */
 	enum pt_cpu_state state;  /* used as part of trace stop protocol */
 } *pt_pcpu;
-
-#define PT_CPU_LOCK(cpu_id)   mtx_lock_spin(&pt_pcpu[(cpu_id)].lock)
-#define PT_CPU_UNLOCK(cpu_id) mtx_unlock_spin(&pt_pcpu[(cpu_id)].lock)
 
 /*
  * PT-related CPUID bits.
@@ -235,6 +231,28 @@ pt_cpu_dump(int cpu_id)
 }
 
 /*
+ * ToPA PMI kevent task.
+ */
+static void
+pt_buffer_ready(void *arg, int pending __unused)
+{
+	struct pt_ctx *ctx = arg;
+	struct kevent kev;
+	int ret __diagused;
+	int64_t data = (ctx->buf.curpage * PAGE_SIZE) + ctx->buf.offset;
+	u_int flags = ctx->id & HWT_KQ_BUFRDY_ID_MASK;
+
+//	dprintf("%s: cpu %d, kqueue_fd %d, data 0x%zx, td %p, flags %u\n", __func__,
+//	    curcpu, ctx->kqueue_fd, data, ctx->trace_td, flags);
+	EV_SET(&kev, HWT_KQ_BUFRDY_EV, EVFILT_USER, 0, NOTE_TRIGGER | NOTE_FFCOPY | flags, data,
+	    NULL);
+	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->trace_td, M_WAITOK);
+//	dprintf("%s: kqfd ret %d\n", __func__, ret);
+	KASSERT(ret == 0,
+	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
+}
+
+/*
  * CPU mode helper routines.
  */
 static void
@@ -245,17 +263,15 @@ pt_cpu_start(void *dummy)
 	MPASS(cpu->ctx != NULL);
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
 
-	PT_CPU_LOCK(curcpu);
 	/* Enable XSAVE. */
 	load_cr4(rcr4() | CR4_XSAVE);
 	/* Clear PMI status. */
 	wrmsr(MSR_IA32_RTIT_STATUS, 0);
-	/* Enable ToPA interrupts */
-	lapic_enable_pt_pmi();
 	/* Start tracing. */
 	pt_cpu_toggle_local(&cpu->ctx->save_area, true);
   	pt_cpu_set_state(curcpu, PT_ACTIVE);
-	PT_CPU_UNLOCK(curcpu);
+	/* Enable ToPA interrupts */
+	lapic_enable_pt_pmi();
 
 	pt_cpu_dump(curcpu);
 }
@@ -263,16 +279,18 @@ pt_cpu_start(void *dummy)
 static void
 pt_cpu_stop(void *dummy)
 {
-	struct pt_cpu *cpu = &pt_pcpu[curcpu];
+  struct pt_cpu *cpu = &pt_pcpu[curcpu];
+  struct pt_ctx *ctx = cpu->ctx;
 
-  MPASS(cpu->ctx != NULL);
+  MPASS(ctx != NULL);
   dprintf("%s: curcpu %d\n", __func__, curcpu);
-  PT_CPU_LOCK(curcpu);
+  /* Mask ToPA interrupts. */
   lapic_disable_pt_pmi();
   /* Stop tracing. */
   pt_cpu_toggle_local(&cpu->ctx->save_area, false);
   pt_cpu_set_state(curcpu, PT_STOPPED);
-  PT_CPU_UNLOCK(curcpu);
+  //hwt_event_send(HWT_KQ_BUFRDY_EV, &ctx->task, pt_buffer_ready, ctx);
+
   pt_cpu_dump(curcpu);
 }
 
@@ -575,8 +593,7 @@ pt_backend_deinit(struct hwt_context *ctx)
 
 	/* Stop tracing on all active CPUs */
 	pt_backend_disable_smp(ctx);
-//	taskqueue_block(taskqueue_hwt);
-//	taskqueue_drain_all(taskqueue_hwt);
+	hwt_event_drain_all();
 	// TODO: does MODE_THREAD need this? thread_free should handle deinit
 	if (ctx->mode == HWT_MODE_THREAD) {
 		TAILQ_FOREACH (thr, &ctx->threads, next) {
@@ -672,28 +689,6 @@ static struct hwt_backend backend = {
 };
 
 /*
- * ToPA PMI kevent task.
- */
-static void
-pt_buffer_ready(void *arg, int pending __unused)
-{
-	struct pt_ctx *ctx = arg;
-	struct kevent kev;
-	int ret __diagused;
-	int64_t data = (ctx->buf.curpage * PAGE_SIZE) + ctx->buf.offset;
-	u_int flags = ctx->id & HWT_KQ_BUFRDY_ID_MASK;
-
-//	dprintf("%s: cpu %d, kqueue_fd %d, data 0x%zx, td %p, flags %u\n", __func__,
-//	    curcpu, ctx->kqueue_fd, data, ctx->trace_td, flags);
-	EV_SET(&kev, HWT_KQ_BUFRDY_EV, EVFILT_USER, 0, NOTE_TRIGGER | NOTE_FFCOPY | flags, data,
-	    NULL);
-	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->trace_td, M_WAITOK);
-//	dprintf("%s: kqfd ret %d\n", __func__, ret);
-	KASSERT(ret == 0,
-	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
-}
-
-/*
  * ToPA PMI handler.
  */
 static int
@@ -710,10 +705,8 @@ pt_topa_intr(struct trapframe *tf)
 	if ((reg & GLOBAL_STATUS_FLAG_TRACETOPAPMI) == 0)
 		return (0);
 
-	PT_CPU_LOCK(curcpu);
 	/* Ignore spurious PMI interrupts. */
 	if (pt_cpu_get_state(curcpu) != PT_ACTIVE) {
-		PT_CPU_UNLOCK(curcpu);
 		return (1);
 	}
 	/* Disable preemption. */
@@ -743,7 +736,7 @@ pt_topa_intr(struct trapframe *tf)
 		/* Re-enable tracing. */
 		pt_cpu_toggle_local(&ctx->save_area, true);
 	}
-	PT_CPU_UNLOCK(curcpu);
+
 	/* Notify userspace. */
   	hwt_event_send(HWT_KQ_BUFRDY_EV, &ctx->task, pt_buffer_ready, ctx);
 
@@ -850,8 +843,6 @@ pt_modevent(module_t mod, int type, void *data)
 		    M_ZERO | M_WAITOK);
     		pt_pcpu_ctx = malloc(sizeof(struct pt_ctx) * mp_ncpus, M_PT,
                      M_ZERO | M_WAITOK);
-		for (int i=0; i < mp_ncpus; i++)
-			mtx_init(&pt_pcpu[i].lock, "pt_lock", NULL, MTX_SPIN);
 		loaded = true;
 		break;
 	case MOD_UNLOAD:

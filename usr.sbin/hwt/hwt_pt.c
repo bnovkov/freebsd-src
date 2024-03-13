@@ -42,9 +42,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <signal.h>
 #include <fcntl.h>
 
 #include "amd64/pt/pt.h"
+#include "dev/hwt/hwt_event.h"
 #include "hwt.h"
 #include "hwt_pt.h"
 #include "sys/_stdint.h"
@@ -59,13 +61,15 @@ static int pt_ctx_compare(const void *n1, const void *n2);
 /*
  * Decoder state.
  */
- struct pt_dec_ctx {
-         size_t curoff;
-         void *tracebuf;
-         struct pt_packet_decoder *dec;
-         int id;
-         RB_ENTRY(pt_dec_ctx) entry;
- };
+struct pt_dec_ctx {
+  size_t curoff;
+  size_t total;
+  void *tracebuf;
+  struct pt_packet_decoder *dec;
+
+  int id;
+  RB_ENTRY(pt_dec_ctx) entry;
+};
 
 static struct pt_dec_ctx *cpus;
 static RB_HEAD(threads, pt_dec_ctx) threads;
@@ -76,10 +80,10 @@ static int kq_fd = -1;
 static int
 pt_ctx_compare(const void *n1, const void *n2)
 {
-        const struct pt_dec_ctx *c1 = n1;
-        const struct pt_dec_ctx *c2 = n2;
+  const struct pt_dec_ctx *c1 = n1;
+  const struct pt_dec_ctx *c2 = n2;
 
-        return (c1->id < c2->id ? -1 : c1->id > c2->id ? 1 : 0);
+  return (c1->id < c2->id ? -1 : c1->id > c2->id ? 1 : 0);
 }
 
 static int
@@ -89,32 +93,30 @@ hwt_pt_init(struct trace_context *tc)
 	int error;
 
 	if (tc->raw) {
-          /* No decoder needed, just a file for raw data. */
-          tc->raw_f = fopen(tc->filename, "w");
-          if (tc->raw_f == NULL) {
-                  printf("%s: could not open file %s\n", __func__,
-                         tc->filename);
-                  return (ENXIO);
-          }
+    /* No decoder needed, just a file for raw data. */
+    tc->raw_f = fopen(tc->filename, "w");
+    if (tc->raw_f == NULL) {
+      printf("%s: could not open file %s\n", __func__,
+             tc->filename);
+      return (ENXIO);
+    }
 	}
 
   switch(tc->mode){
-  case HWT_MODE_CPU:
-          cpus = calloc(hwt_ncpu(), sizeof(struct pt_dec_ctx));
-          if (!cpus) {
-                  printf("%s: failed to allocate decoders\n", __func__);
-                  return (-1);
-          }
-          break;
-  case HWT_MODE_THREAD:
-          RB_INIT(&threads);
-          break;
-  default:
-          printf("%s: invalid tracing mode %d\n", __func__, tc->mode);
-          return (EINVAL);
+    case HWT_MODE_CPU:
+      cpus = calloc(hwt_ncpu(), sizeof(struct pt_dec_ctx));
+      if (!cpus) {
+        printf("%s: failed to allocate decoders\n", __func__);
+        return (-1);
+      }
+      break;
+    case HWT_MODE_THREAD:
+      RB_INIT(&threads);
+      break;
+    default:
+      printf("%s: invalid tracing mode %d\n", __func__, tc->mode);
+      return (EINVAL);
   }
-
-
 
 	tc->kqueue_fd = kqueue();
 	if (tc->kqueue_fd == -1)
@@ -123,7 +125,7 @@ hwt_pt_init(struct trace_context *tc)
 
   /* Let hwt notify us when the buffer is ready. */
 	EV_SET(&ev[0], HWT_KQ_BUFRDY_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
-	    NOTE_FFCOPY, 0, NULL);
+         NOTE_FFCOPY, 0, NULL);
   /* Let hwt notify us when something gets mapped into the process. */
 	EV_SET(&ev[1], HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ADD | EV_CLEAR,
          NOTE_FFCOPY, 0, NULL);
@@ -132,7 +134,7 @@ hwt_pt_init(struct trace_context *tc)
 	if (error == -1)
 		err(EXIT_FAILURE, "kevent register");
 	if ((ev[0].flags | ev[1].flags) & EV_ERROR)
-          // TODO: properly check per-event errors
+    // TODO: properly check per-event errors
 		errx(EXIT_FAILURE, "Event error: %s", strerror(ev[0].data));
 
 	printf("%s kqueue_fd:%d\n", __func__, tc->kqueue_fd);
@@ -150,85 +152,85 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 	char filename[32];
 
 	switch (tc->mode) {
-  case HWT_MODE_CPU:
-		CPU_FOREACH_ISSET (cpu_id, &tc->cpu_map) {
-			dctx = &cpus[cpu_id];
+    case HWT_MODE_CPU:
+      CPU_FOREACH_ISSET (cpu_id, &tc->cpu_map) {
+        dctx = &cpus[cpu_id];
 
-			sprintf(filename, "/dev/hwt_%d_%d", tc->ident, cpu_id);
-			fd = open(filename, O_RDONLY);
-			if (fd < 0) {
-				printf("Can't open %s\n", filename);
-				return (-1);
-			}
-			/* thr_fd is used to issue ioctls which control all cores
-			 * use fd to the first cpu for this (thread is always 0) */
-			if (tc->thr_fd == 0){
-				tc->thr_fd = fd;
-			}
-			dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, fd, 0);
-			if (dctx->tracebuf == MAP_FAILED) {
-				printf(
+        sprintf(filename, "/dev/hwt_%d_%d", tc->ident, cpu_id);
+        fd = open(filename, O_RDONLY);
+        if (fd < 0) {
+          printf("Can't open %s\n", filename);
+          return (-1);
+        }
+        /* thr_fd is used to issue ioctls which control all cores
+         * use fd to the first cpu for this (thread is always 0) */
+        if (tc->thr_fd == 0){
+          tc->thr_fd = fd;
+        }
+        dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, fd, 0);
+        if (dctx->tracebuf == MAP_FAILED) {
+          printf(
 				    "%s: failed to map tracing buffer for cpu %d: %s\n",
 				    __func__, cpu_id, strerror(errno));
-				free(dctx);
-				return (-1);
-			}
+          free(dctx);
+          return (-1);
+        }
 		  	dctx->id = cpu_id;
-		}
+      }
 	    break;
-  case HWT_MODE_THREAD:
-          if (rec == NULL) {
-		  /* Have we already mapped the first thread? */
-		  if (tc->thr_fd != 0)
-	                  return (EINVAL);
-		  tid = 0;
-	  } else {
-		tid = rec->thread_id;
-	  }
-          dctx = calloc(1, sizeof(*dctx));
-          if (dctx == NULL)
-                  return (ENOMEM);
-          // TODO: map thread trace buffer
-	sprintf(filename, "/dev/hwt_%d_%d", tc->ident, tid);
-	fd = open(filename, O_RDONLY);
-	if (fd < 0) {
-		printf("Can't open %s\n", filename);
-		free(dctx);
-		return (-1);
-	}
-	if (tc->thr_fd == 0){
-		tc->thr_fd = fd;
-	}
-	dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, fd, 0);
-	if (dctx->tracebuf == MAP_FAILED) {
-                printf("%s: failed to map tracing buffer for thread %d: %s\n",
-                         __func__, tid, strerror(errno));
-		free(dctx);
-		return (-1);
-	}
-          dctx->id = tid;
-          RB_INSERT(threads, &threads, dctx);
-          break;
-  default:
+    case HWT_MODE_THREAD:
+      if (rec == NULL) {
+        /* Have we already mapped the first thread? */
+        if (tc->thr_fd != 0)
           return (EINVAL);
+        tid = 0;
+      } else {
+        tid = rec->thread_id;
+      }
+      dctx = calloc(1, sizeof(*dctx));
+      if (dctx == NULL)
+        return (ENOMEM);
+      // TODO: map thread trace buffer
+      sprintf(filename, "/dev/hwt_%d_%d", tc->ident, tid);
+      fd = open(filename, O_RDONLY);
+      if (fd < 0) {
+        printf("Can't open %s\n", filename);
+        free(dctx);
+        return (-1);
+      }
+      if (tc->thr_fd == 0){
+        tc->thr_fd = fd;
+      }
+      dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED, fd, 0);
+      if (dctx->tracebuf == MAP_FAILED) {
+        printf("%s: failed to map tracing buffer for thread %d: %s\n",
+               __func__, tid, strerror(errno));
+        free(dctx);
+        return (-1);
+      }
+      dctx->id = tid;
+      RB_INSERT(threads, &threads, dctx);
+      break;
+    default:
+      return (EINVAL);
 	}
 
-        if (!tc->raw) {
-                  memset(&config, 0, sizeof(config));
-                  config.size = sizeof(config);
-                  config.begin = dctx->tracebuf;
-                  config.end = (uint8_t *)dctx->tracebuf +
-                          tc->bufsize;
+  if (!tc->raw) {
+    memset(&config, 0, sizeof(config));
+    config.size = sizeof(config);
+    config.begin = dctx->tracebuf;
+    config.end = (uint8_t *)dctx->tracebuf +
+      tc->bufsize;
 
-                  dctx->dec = pt_pkt_alloc_decoder(&config);
-                  if (dctx->dec == NULL) {
-                          printf(
-                                 "%s: failed to allocate PT decoder for thread\n",
-                                 __func__);
-                          free(dctx);
-                          return (ENOMEM);
-                  }
-         }
+    dctx->dec = pt_pkt_alloc_decoder(&config);
+    if (dctx->dec == NULL) {
+      printf(
+        "%s: failed to allocate PT decoder for thread\n",
+        __func__);
+      free(dctx);
+      return (ENOMEM);
+    }
+  }
 
 	return (0);
 }
@@ -291,28 +293,28 @@ hwt_pt_print_mode(const struct pt_packet_mode *pkt)
 	enum pt_exec_mode mode;
 
 	switch (pkt->leaf) {
-	case pt_mol_exec: {
-		printf(".exec: ");
-		mode = pt_get_exec_mode(&pkt->bits.exec);
-		switch (mode) {
-		case ptem_64bit:
-			printf("64-bit");
-			break;
-		case ptem_32bit:
-			printf("32-bit");
-			break;
-		case ptem_16bit:
-			printf("16-bit");
-			break;
-		default:
-			printf("unknown");
-			break;
-		}
-		break;
-	}
-	case pt_mol_tsx:
-		printf(".tsx");
-		break;
+    case pt_mol_exec: {
+      printf(".exec: ");
+      mode = pt_get_exec_mode(&pkt->bits.exec);
+      switch (mode) {
+        case ptem_64bit:
+          printf("64-bit");
+          break;
+        case ptem_32bit:
+          printf("32-bit");
+          break;
+        case ptem_16bit:
+          printf("16-bit");
+          break;
+        default:
+          printf("unknown");
+          break;
+      }
+      break;
+    }
+    case pt_mol_tsx:
+      printf(".tsx");
+      break;
 	}
 }
 
@@ -321,51 +323,51 @@ hwt_pt_print_packet(const struct pt_packet *pkt)
 {
 
 	switch (pkt->type) {
-	case ppt_unknown:
-		printf("<unknown>");
-		break;
-	case ppt_invalid:
-		printf("<invalid>");
-		break;
-	case ppt_tnt_8:
-		printf("tnt.8\n");
-		hwt_pt_print_tnt(&pkt->payload.tnt);
-		break;
-	case ppt_tnt_64:
-		printf("tnt.64\n");
-		hwt_pt_print_tnt(&pkt->payload.tnt);
-		break;
-	case ppt_mode:
-		printf("mode");
-		hwt_pt_print_mode(&pkt->payload.mode);
-		break;
-	case ppt_pip:
-		printf("pip: cr3 %p", (void *)pkt->payload.pip.cr3);
-		break;
-	case ppt_vmcs:
-		printf("vmcs: %p", (void *)pkt->payload.vmcs.base);
-		break;
-	case ppt_cbr:
-		printf("cbr: ratio %u", pkt->payload.cbr.ratio);
-		break;
-	case ppt_tip_pge:
-		printf("pge: TRACE START @%p", (void *)pkt->payload.ip.ip);
-		break;
-	case ppt_tip_pgd:
-		printf("pgd: TRACE STOP @%p", (void *)pkt->payload.ip.ip);
-		break;
-	case ppt_fup:
-		printf("fup: @%p", (void *)pkt->payload.ip.ip);
-		break;
-	case ppt_pad:
-	case ppt_psb:
-	case ppt_psbend:
-		/* Ignore */
-		return (0);
-	default:
-		printf("%s: unknown packet type encountered: %d\n", __func__,
-		    pkt->type);
-		return (-1);
+    case ppt_unknown:
+      printf("<unknown>");
+      break;
+    case ppt_invalid:
+      printf("<invalid>");
+      break;
+    case ppt_tnt_8:
+      printf("tnt.8\n");
+      hwt_pt_print_tnt(&pkt->payload.tnt);
+      break;
+    case ppt_tnt_64:
+      printf("tnt.64\n");
+      hwt_pt_print_tnt(&pkt->payload.tnt);
+      break;
+    case ppt_mode:
+      printf("mode");
+      hwt_pt_print_mode(&pkt->payload.mode);
+      break;
+    case ppt_pip:
+      printf("pip: cr3 %p", (void *)pkt->payload.pip.cr3);
+      break;
+    case ppt_vmcs:
+      printf("vmcs: %p", (void *)pkt->payload.vmcs.base);
+      break;
+    case ppt_cbr:
+      printf("cbr: ratio %u", pkt->payload.cbr.ratio);
+      break;
+    case ppt_tip_pge:
+      printf("pge: TRACE START @%p", (void *)pkt->payload.ip.ip);
+      break;
+    case ppt_tip_pgd:
+      printf("pgd: TRACE STOP @%p", (void *)pkt->payload.ip.ip);
+      break;
+    case ppt_fup:
+      printf("fup: @%p", (void *)pkt->payload.ip.ip);
+      break;
+    case ppt_pad:
+    case ppt_psb:
+    case ppt_psbend:
+      /* Ignore */
+      return (0);
+    default:
+      printf("%s: unknown packet type encountered: %d\n", __func__,
+             pkt->type);
+      return (-1);
 	}
 	printf("\n");
 
@@ -374,7 +376,7 @@ hwt_pt_print_packet(const struct pt_packet *pkt)
 
 static int
 hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
-    uint64_t *processed)
+                    uint64_t *processed)
 {
 	int error = 0;
 	uint64_t prevoffs, offs;
@@ -397,14 +399,14 @@ hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
 			} else {
 				error = ret;
 				printf("%s: error decoding next packet: %s\n",
-				    __func__, pt_strerror(error));
+               __func__, pt_strerror(error));
 			}
 			break;
 		}
 		error = hwt_pt_print_packet(&packet);
 		if (error < 0) {
 			printf("%s: error while processing packet: %s\n",
-			    __func__, pt_strerror(error));
+             __func__, pt_strerror(error));
 			break;
 		}
 
@@ -424,7 +426,7 @@ hwt_pt_decode_chunk(struct pt_packet_decoder *dec, uint64_t start, size_t len,
  */
 static int
 hwt_pt_dump_chunk(struct pt_dec_ctx *dctx, FILE *raw_f, uint64_t offs,
-    size_t len, uint64_t *processed)
+                  size_t len, uint64_t *processed)
 {
 	void *base;
 
@@ -439,7 +441,7 @@ hwt_pt_dump_chunk(struct pt_dec_ctx *dctx, FILE *raw_f, uint64_t offs,
 
 static int
 pt_process_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
-    uint64_t offs, size_t len, uint64_t *processed)
+                 uint64_t offs, size_t len, uint64_t *processed)
 {
 	if (tc->raw) {
 		return hwt_pt_dump_chunk(dctx, tc->raw_f, offs, len, processed);
@@ -451,111 +453,136 @@ pt_process_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
 static
 struct pt_dec_ctx *pt_get_decoder_ctx(struct trace_context *tc, int ctxid)
 {
-        switch(tc->mode){
-        case HWT_MODE_CPU:
-		assert(ctxid < hwt_ncpu());
-                return &cpus[ctxid];
-        case HWT_MODE_THREAD:{
-                struct pt_dec_ctx srch;
-                srch.id = ctxid;
-                return RB_FIND(threads, &threads, &srch);
+  switch(tc->mode){
+    case HWT_MODE_CPU:
+      assert(ctxid < hwt_ncpu());
+      return &cpus[ctxid];
+    case HWT_MODE_THREAD:{
+      struct pt_dec_ctx srch;
+      srch.id = ctxid;
+      return RB_FIND(threads, &threads, &srch);
+    }
+    default:
+      break;
+  }
+
+  return (NULL);
+}
+
+static int
+pt_process_data(struct trace_context *tc, struct kevent *tevent){
+      int error;
+      size_t newoff, curoff, len;
+      uint64_t processed;
+      int id;
+      struct pt_dec_ctx *dctx;
+
+      id = tevent->fflags & HWT_KQ_BUFRDY_ID_MASK;
+      newoff = tevent->data;
+      printf("%s: new offset %zu for ctx id %d\n", __func__, newoff, id);
+
+      dctx = pt_get_decoder_ctx(tc, id);
+      if(dctx == NULL){
+        printf("%s: unable to find decorder context for ID %d\n", __func__, id);
+        err(EXIT_FAILURE, "pt_get_decoder_ctx");
+      }
+
+      curoff = dctx->curoff;
+      if (newoff == curoff) {
+        if (tc->terminate)
+          return (-1);
+      } else if (newoff > curoff) {
+        /* New entries in the trace buffer. */
+        len = newoff - curoff;
+        error = pt_process_chunk(tc, dctx, curoff, len,
+                             &processed);
+        if (error != 0) {
+          return error;
         }
-        default:
-                break;
+        dctx->total += processed;
+        dctx->curoff += processed;
+
+      } else if (newoff < curoff) {
+        /* New entries in the trace buffer. Buffer wrapped. */
+        len = tc->bufsize - curoff;
+        error = pt_process_chunk(tc, dctx, curoff, len,
+                             &processed);
+        if (error != 0) {
+          return error;
         }
 
-        return (NULL);
+        dctx->curoff += processed;
+        dctx->total += processed;
+
+        curoff = 0;
+        len = newoff;
+        error = pt_process_chunk(tc, dctx, curoff, len,
+                             &processed);
+        if (error != 0) {
+          return error;
+        }
+
+        dctx->curoff += processed;
+        dctx->total += processed;
+      }
+
+      return (0);
 }
 
 static int
 hwt_pt_process(struct trace_context *tc)
 {
-	uint64_t curoff, newoff;
-	size_t totals;
 	int error, nrec, ret;
-	int len;
-	u_int id;
-	uint64_t processed;
-	struct pt_dec_ctx *dctx;
   struct kevent tevent;
+  struct timespec null_timeout = { 0, 5 };
 
 	xo_open_container("trace");
 	xo_open_list("entries");
 
 	printf("Decoder started. Press ctrl+c to stop.\n");
 
-	curoff = 0;
-	processed = 0;
-	totals = 0;
-	len = 0;
-
 	while (1) {
-          printf("%s: waiting for new offset\n", __func__);
-          ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
-          if (ret == -1 && errno != EINTR) {
-                  err(EXIT_FAILURE, "kevent wait");
+    printf("%s: waiting for new offset\n", __func__);
+    ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
+    if (ret == -1 && errno != EINTR) {
+      err(EXIT_FAILURE, "kevent wait");
+    }
+      // TODO: iterate over all active CTXs and fetch any remaining data
+    if (tc->terminate != 0){
+        printf("%s: tracing terminated - fetching remaining data\n", __func__);
+        /* Check if we have any events left over. */
+        if (ret > 0){
+          pt_process_data(tc, &tevent);
+        }
+        while(1){
+          ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, &null_timeout);
+          if (ret <= 0){
+            break;
           }
+          /* Ignore non-buffer events. */
+          if (tevent.ident != HWT_KQ_BUFRDY_EV)
+            continue;
+          pt_process_data(tc, &tevent);
+        }
+
+        return (0);
+    }
+
 	  printf("EVENT ID: %lu\n", tevent.ident);
-          if(tevent.ident == HWT_KQ_BUFRDY_EV){
-                  id = tevent.fflags & HWT_KQ_BUFRDY_ID_MASK;
-                  newoff = tevent.data;
-                  printf("%s: new offset %zu for ctx id %d\n", __func__, newoff, id);
-                  dctx = pt_get_decoder_ctx(tc, id);
-                  if(dctx == NULL){
-                          printf("%s: unable to find decorder context for ID %d\n", __func__, id);
-                          err(EXIT_FAILURE, "pt_get_decoder_ctx");
-                  }
-
-                  curoff = dctx->curoff;
-                  if (newoff == curoff) {
-                          if (tc->terminate)
-                                  break;
-                  } else if (newoff > curoff) {
-                          /* New entries in the trace buffer. */
-                          len = newoff - curoff;
-                          if (pt_process_chunk(tc, dctx, curoff, len,
-                                               &processed)) {
-                                  break;
-                          }
-                          curoff += processed;
-                          totals += processed;
-
-                  } else if (newoff < curoff) {
-                          /* New entries in the trace buffer. Buffer wrapped. */
-                          len = tc->bufsize - curoff;
-                          if (pt_process_chunk(tc, dctx, curoff, len,
-                                               &processed)) {
-                                  break;
-                          }
-                          curoff += processed;
-                          totals += processed;
-
-                          curoff = 0;
-                          len = newoff;
-                          if (pt_process_chunk(tc, dctx, curoff, len,
-                                               &processed)) {
-                                  break;
-                          }
-                          curoff += processed;
-                          totals += processed;
-                  }
-                  /* Save current offset for cpu */
-                  dctx->curoff = curoff;
-          } else if (tevent.ident == HWT_KQ_NEW_RECORD_EV){
-                  printf("%s: fetching new records\n", __func__);
-                  error = hwt_record_fetch(tc, &nrec);
-                  if (error != 0){
-                          printf("%s: hwt_get_records error %d\n", __func__, error);
-                          err(EXIT_FAILURE, "hwt_get_records");
-                  }
-
-          } else {
-                  printf("%s: unknown event identifier %lu\n", __func__, tevent.ident);
-                  err(EXIT_FAILURE, "kevent ident");
-          }
+    if(tevent.ident == HWT_KQ_BUFRDY_EV){
+      pt_process_data(tc, &tevent);
+    } else if (tevent.ident == HWT_KQ_NEW_RECORD_EV){
+      printf("%s: fetching new records\n", __func__);
+      error = hwt_record_fetch(tc, &nrec);
+      if (error != 0){
+        printf("%s: hwt_get_records error %d\n", __func__, error);
+        err(EXIT_FAILURE, "hwt_get_records");
+      }
+    } else {
+      printf("%s: unknown event identifier %lu\n", __func__, tevent.ident);
+      err(EXIT_FAILURE, "kevent ident");
+    }
 	}
-
-	printf("\nBytes processed: %ld\n", totals);
 
 	xo_close_list("file");
 	xo_close_container("wc");
@@ -566,8 +593,8 @@ hwt_pt_process(struct trace_context *tc)
 }
 
 struct trace_dev_methods pt_methods = {
-	.init = hwt_pt_init,
-	.mmap = hwt_pt_mmap,
-	.process = hwt_pt_process,
-	.set_config = hwt_pt_set_config,
+.init = hwt_pt_init,
+.mmap = hwt_pt_mmap,
+.process = hwt_pt_process,
+.set_config = hwt_pt_set_config,
 };
