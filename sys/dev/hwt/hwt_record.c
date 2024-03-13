@@ -67,7 +67,8 @@ hwt_record(struct thread *td, struct hwt_record_entry *ent)
 	p = td->td_proc;
 
 	KASSERT(ent != NULL, ("ent is NULL"));
-	KASSERT(ent->fullpath != NULL, ("fullpath is NULL"));
+	if (ent->fullpath == NULL)
+		return;
 
 	entry = malloc(sizeof(struct hwt_record_entry), M_HWT_RECORD, M_WAITOK);
 	entry->record_type = ent->record_type;
