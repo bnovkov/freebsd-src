@@ -1,8 +1,6 @@
 /*-
- * Copyright (c) 2023 Ruslan Bukin <br@bsdpad.com>
- *
- * This work was supported by Innovate UK project 105694, "Digital Security
- * by Design (DSbD) Technology Platform Prototype".
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,42 +22,22 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#ifndef _DEV_HWT_HWT_THREAD_H_
-#define _DEV_HWT_HWT_THREAD_H_
+#ifndef _DEV_HWT_HWT_EVENT_H_
+#define _DEV_HWT_HWT_EVENT_H_
 
-struct hwt_record_entry;
+/* HWT event delivery flags and values. */
+#define HWT_KQ_BUFRDY_EV 138
+#define HWT_KQ_NEW_RECORD_EV 139
 
-struct hwt_thread {
-	struct hwt_vm			*vm;
-	struct hwt_context		*ctx;
-	struct thread			*td;
-	TAILQ_ENTRY(hwt_thread)		next;
-	int				thread_id;
-	int				state;
-#define	HWT_THREAD_STATE_EXITED		(1 << 0)
-	struct mtx			mtx;
-	u_int				refcnt;
-	int				cpu_id; /* last cpu_id */
-	void				*cookie; /* backend-specific private data */
-};
+#define HWT_KQ_BUFRDY_ID_MASK		0xFFFF
 
-/* Thread allocation. */
-int hwt_thread_alloc(struct hwt_context *ctx, struct hwt_thread **thr0, char *path, size_t bufsize,
-    int kva_req);
-void hwt_thread_free(struct hwt_thread *thr);
+#ifdef _KERNEL
+struct task;
 
-/* Thread list mgt. */
-void hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr, struct hwt_record_entry *entry);
-struct hwt_thread * hwt_thread_first(struct hwt_context *ctx);
-struct hwt_thread * hwt_thread_lookup(struct hwt_context *ctx,
-    struct thread *td);
+int hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx);
+void hwt_event_drain_all(void);
 
-#define	HWT_THR_LOCK(thr)		mtx_lock(&(thr)->mtx)
-#define	HWT_THR_UNLOCK(thr)		mtx_unlock(&(thr)->mtx)
-#define	HWT_THR_ASSERT_LOCKED(thr)	mtx_assert(&(thr)->mtx, MA_OWNED)
-
-#endif /* !_DEV_HWT_HWT_THREAD_H_ */
+#endif
+#endif /* !_DEV_HWT_HWT_EVENT_H_ */

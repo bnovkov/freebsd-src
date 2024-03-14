@@ -31,6 +31,7 @@
 #ifndef _DEV_HWT_HWT_BACKEND_H_
 #define _DEV_HWT_HWT_BACKEND_H_
 
+struct hwt_thread;
 struct hwt_backend_ops {
 	int (*hwt_backend_init)(struct hwt_context *);
 	void (*hwt_backend_deinit)(struct hwt_context *);
@@ -45,7 +46,9 @@ struct hwt_backend_ops {
 	/* For backends that are tied to local CPU registers */
 	void (*hwt_backend_enable_smp)(struct hwt_context *);
 	void (*hwt_backend_disable_smp)(struct hwt_context *);
-
+	/* Allocation and initialization of backend-specific thread data. */
+	int (*hwt_backend_alloc_thread_priv)(struct hwt_thread *);
+	void (*hwt_backend_free_thread_priv)(struct hwt_thread *);
 	/* Debugging only. */
 	void (*hwt_backend_dump)(int cpu_id);
 };

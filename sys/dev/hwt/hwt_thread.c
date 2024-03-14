@@ -115,7 +115,7 @@ hwt_thread_lookup(struct hwt_context *ctx, struct thread *td)
 }
 
 int
-hwt_thread_alloc(struct hwt_thread **thr0, char *path, size_t bufsize,
+hwt_thread_alloc(struct hwt_context *ctx, struct hwt_thread **thr0, char *path, size_t bufsize,
     int kva_req)
 {
 	struct hwt_thread *thr;
@@ -129,6 +129,14 @@ hwt_thread_alloc(struct hwt_thread **thr0, char *path, size_t bufsize,
 	thr = malloc(sizeof(struct hwt_thread), M_HWT_THREAD,
 	    M_WAITOK | M_ZERO);
 	thr->vm = vm;
+  	/* Check if we need to store backend-specific data. */
+  	if(ctx->hwt_backend->ops->hwt_backend_alloc_thread_priv != NULL) {
+		ctx->hwt_backend->ops->hwt_backend_alloc_thread_priv(thr);
+		if (thr->cookie == NULL){
+			dprintf("%s: failed to allocate thread cookie\n", __func__);
+			return (ENOMEM);
+		}
+	}
 
 	mtx_init(&thr->mtx, "thr", NULL, MTX_DEF);
 
@@ -146,15 +154,23 @@ hwt_thread_free(struct hwt_thread *thr)
 {
 
 	hwt_vm_free(thr->vm);
-
+	/* Free private backend data, if any. */
+	if(thr->ctx->hwt_backend->ops->hwt_backend_free_thread_priv != NULL) {
+		KASSERT(thr->cookie != NULL, ("%s: thread cookie is NULL\n", __func__));
+		thr->ctx->hwt_backend->ops->hwt_backend_free_thread_priv(thr);
+	}
 	free(thr, M_HWT_THREAD);
 }
 
+/*
+ * Inserts a new thread and a thread creation record into the
+ * context notifies userspace about the newly created thread.
+ */
 void
-hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr)
+hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr, struct hwt_record_entry *entry)
 {
 
 	HWT_CTX_ASSERT_LOCKED(ctx);
-
 	TAILQ_INSERT_TAIL(&ctx->threads, thr, next);
+	LIST_INSERT_HEAD(&ctx->records, entry, next);
 }

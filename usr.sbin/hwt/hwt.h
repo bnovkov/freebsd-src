@@ -36,7 +36,8 @@ struct trace_context;
 
 struct trace_dev_methods {
 	int (*init)(struct trace_context *tc);
-	int (*mmap)(struct trace_context *tc);
+	int (*mmap)(struct trace_context *tc,
+	    struct hwt_record_user_entry *entry);
 	int (*process)(struct trace_context *tc);
 	int (*set_config)(struct trace_context *tc);
 };

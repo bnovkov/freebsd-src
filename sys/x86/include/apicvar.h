@@ -232,6 +232,7 @@ int	lapic_enable_mca_elvt(void);
 void	lapic_ipi_raw(register_t icrlo, u_int dest);
 void 	lapic_enable_pt_pmi(void);
 void 	lapic_disable_pt_pmi(void);
+void	lapic_reenable_pt_pmi(void);
 
 static inline void
 lapic_ipi_vectored(u_int vector, int dest)

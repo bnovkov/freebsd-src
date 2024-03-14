@@ -158,6 +158,11 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 			pmcstat_image_link(tc->pp, image, addr);
 			break;
 		case HWT_RECORD_THREAD_CREATE:
+			/* Let the backend register the newly created thread. */
+			if ((error = tc->trace_dev->methods->mmap(tc, entry)) !=
+			    0)
+				return error;
+			break;
 		case HWT_RECORD_THREAD_SET_NAME:
 			break;
 		default:
