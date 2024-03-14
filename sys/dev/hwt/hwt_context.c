@@ -69,7 +69,7 @@ static struct mtx ident_set_mutex;
 static int
 hwt_ctx_ident_alloc(int *new_ident)
 {
- 
+
 	mtx_lock(&ident_set_mutex);
 	bit_ffc(ident_set, ident_set_size, new_ident);
 	if (*new_ident == -1) {

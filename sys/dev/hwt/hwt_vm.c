@@ -105,7 +105,7 @@ static struct cdev_pager_ops hwt_vm_pager_ops = {
 	.cdev_pg_fault = hwt_vm_fault,
 	.cdev_pg_ctor = hwt_vm_ctor,
 	.cdev_pg_dtor = hwt_vm_dtor
-}; 
+};
 
 static int
 hwt_vm_alloc_pages(struct hwt_vm *vm, int kva_req)

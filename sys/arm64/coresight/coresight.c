@@ -430,16 +430,16 @@ coresight_modevent(module_t mod, int type, void *data)
 	default:
 		break;
 	}
- 
+
         return (0);
 }
- 
+
 static moduledata_t coresight_mod = {
 	"coresight",
         coresight_modevent,
         NULL
 };
-   
+
 DECLARE_MODULE(coresight, coresight_mod, SI_SUB_DRIVERS, SI_ORDER_FIRST);
 MODULE_DEPEND(coresight, hwt, 1, 1, 1);
 MODULE_VERSION(coresight, 1);

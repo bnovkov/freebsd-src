@@ -92,7 +92,7 @@ tmc_fdt_detach(device_t dev)
 	int error;
 
 	sc = device_get_softc(dev);
- 
+
 	coresight_fdt_release_platform_data(sc->pdata);
 
 	sc->pdata = NULL;

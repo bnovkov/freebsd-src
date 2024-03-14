@@ -143,7 +143,7 @@ etm_configure_etmv4(device_t dev, struct etmv4_config *config)
         uint64_t                vmid_val[ETM_MAX_VMID_CMP];
         uint32_t                vmid_mask0;
         uint32_t                vmid_mask1;
-        uint32_t                ext_inp; 
+        uint32_t                ext_inp;
         uint8_t                 s_ex_level;
 #endif
 
@@ -395,7 +395,7 @@ etm_detach(device_t dev)
 	int error;
 
 	sc = device_get_softc(dev);
- 
+
 	error = coresight_unregister(dev);
 	if (error)
 		return (error);

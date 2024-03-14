@@ -136,7 +136,7 @@ funnel_detach(device_t dev)
 	int error;
 
 	sc = device_get_softc(dev);
- 
+
 	error = coresight_unregister(dev);
 	if (error)
 		return (error);
