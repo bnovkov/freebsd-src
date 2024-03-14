@@ -112,7 +112,7 @@ hwt_vm_alloc_pages(struct hwt_vm *vm, int kva_req)
 {
 	vm_paddr_t low, high, boundary;
 	vm_memattr_t memattr;
-#ifdef  __arm__
+#ifdef  __aarch64__
 	uintptr_t va;
 #endif
 	int alignment;
@@ -161,7 +161,7 @@ retry:
 			pmap_zero_page(m);
 #endif
 
-#ifdef  __arm__
+#ifdef __aarch64__
 		va = PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m));
 		cpu_dcache_wb_range(va, PAGE_SIZE);
 #endif
@@ -220,14 +220,13 @@ hwt_vm_start_cpu_mode(struct hwt_context *ctx)
 			return;
 
 		hwt_backend_configure(ctx, cpu_id, cpu_id);
-		if(ctx->hwt_backend->ops->hwt_backend_enable_smp == NULL)
+		if (ctx->hwt_backend->ops->hwt_backend_enable_smp == NULL)
 			hwt_backend_enable(ctx, cpu_id);
 	}
 
-	/* Some backends required enabling all CPUs at once */
-	if(ctx->hwt_backend->ops->hwt_backend_enable_smp != NULL){
+	/* Some backends required enabling all CPUs at once. */
+	if (ctx->hwt_backend->ops->hwt_backend_enable_smp != NULL)
 		hwt_backend_enable_smp(ctx);
-	}
 }
 
 static int
