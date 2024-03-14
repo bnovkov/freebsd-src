@@ -134,6 +134,7 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
     struct hwt_backend *backend, struct hwt_alloc *halloc)
 {
 	struct thread **threads, *td1;
+	struct hwt_record_entry *entry;
 	struct hwt_context *ctx;
 	struct hwt_thread *thr;
 	char path[MAXPATHLEN];
@@ -212,13 +213,20 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
 		thread_id = atomic_fetchadd_int(&ctx->thread_counter, 1);
 		sprintf(path, "hwt_%d_%d", ctx->ident, thread_id);
 
-		error = hwt_thread_alloc(&thr, path, ctx->bufsize,
+		error = hwt_thread_alloc(ctx, &thr, path, ctx->bufsize,
 		    ctx->kva_req);
 		if (error) {
 			free(threads, M_HWT_IOCTL);
 			hwt_ctx_free(ctx);
 			return (error);
 		}
+		/*
+		 * Insert a THREAD_CREATE record so userspace picks up
+		 * the thread's tracing buffers.
+		 */
+		entry = hwt_record_entry_alloc();
+		entry->record_type = HWT_RECORD_THREAD_CREATE;
+		entry->thread_id = thread_id;
 
 		thr->vm->ctx = ctx;
 		thr->td = threads[i];
@@ -226,7 +234,7 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
 		thr->thread_id = thread_id;
 
 		HWT_CTX_LOCK(ctx);
-		hwt_thread_insert(ctx, thr);
+		hwt_thread_insert(ctx, thr, entry);
 		HWT_CTX_UNLOCK(ctx);
 	}
 

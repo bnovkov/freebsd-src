@@ -164,6 +164,7 @@
 #include <dev/hwt/hwt_backend.h>
 #include <dev/hwt/hwt_ioctl.h>
 #include <dev/hwt/hwt_hook.h>
+#include <dev/hwt/hwt_event.h>
 
 #define	HWT_DEBUG
 #undef	HWT_DEBUG
@@ -173,8 +174,6 @@
 #else
 #define	dprintf(fmt, ...)
 #endif
-
-TASKQUEUE_FAST_DEFINE_THREAD(hwt);
 
 static eventhandler_tag hwt_exit_tag;
 static struct cdev *hwt_cdev;

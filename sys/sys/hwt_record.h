@@ -44,12 +44,15 @@ enum hwt_record_type {
 };
 
 #ifdef _KERNEL
+#include <sys/taskqueue.h>
+
 struct hwt_record_entry {
 	enum hwt_record_type		record_type;
 	LIST_ENTRY(hwt_record_entry)	next;
 	char				*fullpath;
 	int				thread_id;
 	uintptr_t			addr;
+	struct task			task;
 };
 #endif
 

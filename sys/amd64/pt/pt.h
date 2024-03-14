@@ -33,8 +33,6 @@
 
 #define IP_FILTER_MAX_RANGES (4) /* Intel SDM Vol. 3C, 33-29 */
 
-#define HWT_PT_BUF_RDY_EV 138
-
 struct pt_cpu_config {
 	uint64_t rtit_ctl;
 	register_t cr3_filter;
