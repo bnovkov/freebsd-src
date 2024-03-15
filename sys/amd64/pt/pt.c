@@ -273,7 +273,7 @@ pt_cpu_start(void *dummy)
 	wrmsr(MSR_IA32_RTIT_STATUS, 0);
 	/* Start tracing. */
 	pt_cpu_toggle_local(&cpu->ctx->save_area, true);
-  	pt_cpu_set_state(curcpu, PT_ACTIVE);
+	pt_cpu_set_state(curcpu, PT_ACTIVE);
 	/* Enable ToPA interrupts */
 	lapic_enable_pt_pmi();
 
@@ -622,7 +622,7 @@ pt_backend_deinit(struct hwt_context *ctx)
 		TAILQ_FOREACH (thr, &ctx->threads, next) {
 			KASSERT(thr->cookie != NULL,
 			    ("%s: thr->cookie not set", __func__));
-      			pt_ctx = (struct pt_ctx *)thr->cookie;
+			pt_ctx = (struct pt_ctx *)thr->cookie;
 			/* Free ToPA table. */
 			pt_deinit_ctx(pt_ctx);
 		}
@@ -630,7 +630,7 @@ pt_backend_deinit(struct hwt_context *ctx)
 		CPU_FOREACH (cpu_id) {
 			if (!CPU_ISSET(cpu_id, &ctx->cpu_map))
 				continue;
-		      	KASSERT(pt_pcpu[cpu_id].ctx == &pt_pcpu_ctx[cpu_id],
+			KASSERT(pt_pcpu[cpu_id].ctx == &pt_pcpu_ctx[cpu_id],
 			    ("%s: CPU mode tracing with non-cpu mode PT "
 			    "context active", __func__));
 			pt_ctx = &pt_pcpu_ctx[cpu_id];
@@ -712,7 +712,7 @@ static struct hwt_backend_ops pt_ops = {
 };
 
 static struct hwt_backend backend = {
-  	.ops = &pt_ops,
+	.ops = &pt_ops,
 	.name = "pt",
 };
 
@@ -766,7 +766,7 @@ pt_topa_intr(struct trapframe *tf)
 	}
 
 	/* Notify userspace. */
-  	hwt_event_send(HWT_KQ_BUFRDY_EV, &ctx->task, pt_buffer_ready, ctx);
+	hwt_event_send(HWT_KQ_BUFRDY_EV, &ctx->task, pt_buffer_ready, ctx);
 
 	/* Enable preemption. */
 	critical_exit();
@@ -869,7 +869,7 @@ pt_modevent(module_t mod, int type, void *data)
 		}
 		pt_pcpu = malloc(sizeof(struct pt_cpu) * mp_ncpus, M_PT,
 		    M_ZERO | M_WAITOK);
-    		pt_pcpu_ctx = malloc(sizeof(struct pt_ctx) * mp_ncpus, M_PT,
+		pt_pcpu_ctx = malloc(sizeof(struct pt_ctx) * mp_ncpus, M_PT,
                      M_ZERO | M_WAITOK);
 		loaded = true;
 		break;
