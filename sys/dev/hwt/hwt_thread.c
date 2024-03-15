@@ -129,11 +129,13 @@ hwt_thread_alloc(struct hwt_context *ctx, struct hwt_thread **thr0, char *path, 
 	thr = malloc(sizeof(struct hwt_thread), M_HWT_THREAD,
 	    M_WAITOK | M_ZERO);
 	thr->vm = vm;
-  	/* Check if we need to store backend-specific data. */
-  	if(ctx->hwt_backend->ops->hwt_backend_alloc_thread_priv != NULL) {
+
+	/* Check if we need to store backend-specific data. */
+	if (ctx->hwt_backend->ops->hwt_backend_alloc_thread_priv != NULL) {
 		ctx->hwt_backend->ops->hwt_backend_alloc_thread_priv(thr);
 		if (thr->cookie == NULL){
-			dprintf("%s: failed to allocate thread cookie\n", __func__);
+			dprintf("%s: failed to allocate thread cookie\n",
+			    __func__);
 			return (ENOMEM);
 		}
 	}
@@ -155,8 +157,9 @@ hwt_thread_free(struct hwt_thread *thr)
 
 	hwt_vm_free(thr->vm);
 	/* Free private backend data, if any. */
-	if(thr->ctx->hwt_backend->ops->hwt_backend_free_thread_priv != NULL) {
-		KASSERT(thr->cookie != NULL, ("%s: thread cookie is NULL\n", __func__));
+	if (thr->ctx->hwt_backend->ops->hwt_backend_free_thread_priv != NULL) {
+		KASSERT(thr->cookie != NULL,
+		    ("%s: thread cookie is NULL\n", __func__));
 		thr->ctx->hwt_backend->ops->hwt_backend_free_thread_priv(thr);
 	}
 	free(thr, M_HWT_THREAD);
@@ -167,7 +170,8 @@ hwt_thread_free(struct hwt_thread *thr)
  * context notifies userspace about the newly created thread.
  */
 void
-hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr, struct hwt_record_entry *entry)
+hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr,
+    struct hwt_record_entry *entry)
 {
 
 	HWT_CTX_ASSERT_LOCKED(ctx);

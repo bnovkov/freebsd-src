@@ -269,7 +269,7 @@ hwt_hook_thread_create(struct thread *td)
 
 	hwt_ctx_put(ctx);
 
-	return (error);
+	return (0);
 }
 
 static void

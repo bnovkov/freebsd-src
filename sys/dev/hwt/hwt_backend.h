@@ -31,7 +31,6 @@
 #ifndef _DEV_HWT_HWT_BACKEND_H_
 #define _DEV_HWT_HWT_BACKEND_H_
 
-struct hwt_thread;
 struct hwt_backend_ops {
 	int (*hwt_backend_init)(struct hwt_context *);
 	void (*hwt_backend_deinit)(struct hwt_context *);
