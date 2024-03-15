@@ -239,11 +239,14 @@ pt_buffer_ready(void *arg, int pending __unused)
 	struct pt_ctx *ctx = arg;
 	struct kevent kev;
 	int ret __diagused;
-	int64_t data = (ctx->buf.curpage * PAGE_SIZE) + ctx->buf.offset;
-	u_int flags = ctx->id & HWT_KQ_BUFRDY_ID_MASK;
+	int64_t data;
+	u_int flags;
 
-	EV_SET(&kev, HWT_KQ_BUFRDY_EV, EVFILT_USER, 0, NOTE_TRIGGER | NOTE_FFCOPY | flags, data,
-	    NULL);
+	data = (ctx->buf.curpage * PAGE_SIZE) + ctx->buf.offset;
+	flags = ctx->id & HWT_KQ_BUFRDY_ID_MASK;
+
+	EV_SET(&kev, HWT_KQ_BUFRDY_EV, EVFILT_USER, 0,
+	    NOTE_TRIGGER | NOTE_FFCOPY | flags, data, NULL);
 	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->trace_td, M_WAITOK);
 	KASSERT(ret == 0,
 	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
@@ -458,7 +461,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	}
 	/* TODO: support for more config bits. */
 
-	if(ctx->mode == HWT_MODE_CPU) {
+	if (ctx->mode == HWT_MODE_CPU) {
 		TAILQ_FOREACH (hwt_cpu, &ctx->cpus, next) {
 			if (hwt_cpu->cpu_id != cpu_id)
 				continue;
@@ -513,6 +516,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 static void
 pt_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
+
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to start PT on another cpu", __func__));
 	pt_cpu_start(NULL);
