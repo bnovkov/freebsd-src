@@ -59,6 +59,7 @@ int
 hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx)
 {
 	int error;
+
 	/* TODO: validate event type - EINVAL */
 	if (ev_type == HWT_KQ_NEW_RECORD_EV)
 		handler = hwt_event_record_handler;

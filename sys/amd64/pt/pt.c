@@ -385,20 +385,21 @@ pt_configure_ranges(struct pt_ctx *ctx, struct pt_cpu_config *cfg)
 static int
 pt_init_ctx(struct pt_ctx *pt_ctx, struct hwt_vm *vm, int ctx_id)
 {
-		dprintf("%s: ctx id %d\n", __func__, ctx_id);
-        KASSERT(pt_ctx->buf.topa_hw == NULL,
-                ("%s: active ToPA buffer in context %p\n", __func__,
-                 pt_ctx));
-		memset(pt_ctx, 0, sizeof(struct pt_ctx));
 
-        dprintf("%s: preparing ToPA buffer\n", __func__);
-        if (pt_topa_prepare(pt_ctx, vm) != 0) {
-                dprintf("%s: failed to prepare ToPA buffer\n",
-                        __func__);
-                return (ENOMEM);
-        }
+	dprintf("%s: ctx id %d\n", __func__, ctx_id);
 
-		pt_ctx->id = ctx_id;
+	KASSERT(pt_ctx->buf.topa_hw == NULL,
+	    ("%s: active ToPA buffer in context %p\n", __func__, pt_ctx));
+
+	memset(pt_ctx, 0, sizeof(struct pt_ctx));
+
+	dprintf("%s: preparing ToPA buffer\n", __func__);
+	if (pt_topa_prepare(pt_ctx, vm) != 0) {
+		dprintf("%s: failed to prepare ToPA buffer\n", __func__);
+		return (ENOMEM);
+	}
+
+	pt_ctx->id = ctx_id;
 
         return (0);
 }
@@ -406,6 +407,7 @@ pt_init_ctx(struct pt_ctx *pt_ctx, struct hwt_vm *vm, int ctx_id)
 static void
 pt_deinit_ctx(struct pt_ctx *pt_ctx)
 {
+
 	if (pt_ctx->buf.topa_hw != NULL)
 		free(pt_ctx->buf.topa_hw, M_PT);
 
@@ -419,15 +421,18 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	struct hwt_cpu *hwt_cpu;
 	struct hwt_thread *thr;
 	struct pt_ctx *pt_ctx = NULL;
-	struct pt_cpu_config *cfg = (struct pt_cpu_config *)ctx->config;
+	struct pt_cpu_config *cfg;
 	struct pt_ext_area *pt_ext;
 	struct xsave_header *hdr;
-	int error = 0;
+	int error;
 
 	dprintf("%s\n", __func__);
 
+	cfg = (struct pt_cpu_config *)ctx->config;
+
 	/* Sanitize input. */
 	// cfg->rtit_ctl &= PT_SUPPORTED_FLAGS;
+
 	/* Validate user configuration */
 	if (cfg->rtit_ctl & RTIT_CTL_MTCEN) {
 		if ((pt_info.l0_ebx & CPUPT_MTC) == 0) {
@@ -480,9 +485,8 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	pt_ext->rtit_ctl |= cfg->rtit_ctl;
 	if (cfg->nranges != 0) {
 		dprintf("%s: preparing IPF ranges\n", __func__);
-		if ((error = pt_configure_ranges(pt_ctx, cfg)) != 0) {
-			return error;
-		}
+		if ((error = pt_configure_ranges(pt_ctx, cfg)) != 0)
+			return (error);
 	}
 	/* Save hwt_td for kevent */
 	pt_ctx->trace_td = ctx->hwt_td;
@@ -500,7 +504,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 
 	pt_pcpu[cpu_id].ctx = pt_ctx;
 
-	return (error);
+	return (0);
 }
 
 /*
@@ -522,6 +526,7 @@ static void
 pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 {
 	struct pt_cpu *cpu;
+
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to disable PT on another cpu", __func__));
 	pt_cpu_stop(NULL);
@@ -537,6 +542,7 @@ pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 static void
 pt_backend_enable_smp(struct hwt_context *ctx)
 {
+
 	dprintf("%s\n", __func__);
 	KASSERT(ctx->mode == HWT_MODE_CPU,
 	    ("%s: this should only be used for CPU mode", __func__));
@@ -549,6 +555,7 @@ pt_backend_enable_smp(struct hwt_context *ctx)
 static void
 pt_backend_disable_smp(struct hwt_context *ctx)
 {
+
 	dprintf("%s\n", __func__);
 	if (CPU_EMPTY(&ctx->cpu_map)){
 		dprintf("%s: empty cpu map\n", __func__);
@@ -560,8 +567,8 @@ pt_backend_disable_smp(struct hwt_context *ctx)
 static int
 pt_backend_init(struct hwt_context *ctx)
 {
-	int error = 0;
 	struct hwt_cpu *hwt_cpu;
+	int error;
 
 	dprintf("%s\n", __func__);
 	/* Install ToPA PMI handler. */
@@ -578,13 +585,12 @@ pt_backend_init(struct hwt_context *ctx)
 		TAILQ_FOREACH (hwt_cpu, &ctx->cpus, next) {
 			error = pt_init_ctx(&pt_pcpu_ctx[hwt_cpu->cpu_id],
 			    hwt_cpu->vm, hwt_cpu->cpu_id);
-			if (error){
-				break;
-			}
+			if (error)
+				return (error);
 		}
 	}
 
-	return (error);
+	return (0);
 }
 
 static void
@@ -630,7 +636,9 @@ pt_backend_deinit(struct hwt_context *ctx)
 static int
 pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset)
 {
-	struct pt_buffer *buf = &pt_pcpu[cpu_id].ctx->buf;
+	struct pt_buffer *buf;
+
+	buf = &pt_pcpu[cpu_id].ctx->buf;
 
 	*curpage = buf->curpage;
 	*curpage_offset = buf->offset;
@@ -671,7 +679,6 @@ pt_backend_free_thread_priv(struct hwt_thread *thr)
 static void
 pt_backend_dump(int cpu_id)
 {
-	return;
 }
 
 static struct hwt_backend_ops pt_ops = {
@@ -706,9 +713,9 @@ static struct hwt_backend backend = {
 static int
 pt_topa_intr(struct trapframe *tf)
 {
-	uint64_t reg;
-	struct pt_ctx *ctx;
 	struct pt_buffer *buf;
+	struct pt_ctx *ctx;
+	uint64_t reg;
 
 	SDT_PROBE0(pt, , , topa__intr);
 	/* TODO: handle possible double entry */
@@ -718,9 +725,9 @@ pt_topa_intr(struct trapframe *tf)
 		return (0);
 
 	/* Ignore spurious PMI interrupts. */
-	if (pt_cpu_get_state(curcpu) != PT_ACTIVE) {
+	if (pt_cpu_get_state(curcpu) != PT_ACTIVE)
 		return (1);
-	}
+
 	/* Disable preemption. */
 	critical_enter();
 	/* Fetch active trace context. */
