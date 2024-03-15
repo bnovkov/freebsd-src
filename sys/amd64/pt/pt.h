@@ -73,4 +73,4 @@ struct pt_ext_area {
 
 MALLOC_DECLARE(M_PT);
 #endif /* _KERNEL */
-#endif /* !_AMD64_PT_PT_H */
+#endif /* !_AMD64_PT_PT_H_ */
