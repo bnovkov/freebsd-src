@@ -95,10 +95,10 @@ struct pt_buffer {
 };
 
 struct pt_ctx {
-	struct pt_buffer buf;  /* ToPA buffer metadata */
-	struct task task;      /* ToPA buffer kevent task */
-	struct thread *trace_td; /* hwt(8) tracing thread */
-	struct pt_save_area save_area; /* PT XSAVE area */
+	struct pt_buffer buf;		/* ToPA buffer metadata */
+	struct task task;		/* ToPA buffer kevent task */
+	struct thread *trace_td;	/* hwt(8) tracing thread */
+	struct pt_save_area save_area;	/* PT XSAVE area */
 	int kqueue_fd;
 	int id;
 };
@@ -113,8 +113,8 @@ enum pt_cpu_state {
 };
 
 static struct pt_cpu {
-	struct pt_ctx *ctx;	   /* active PT tracing context */
-	enum pt_cpu_state state;  /* used as part of trace stop protocol */
+	struct pt_ctx *ctx;	/* active PT tracing context */
+	enum pt_cpu_state state; /* used as part of trace stop protocol */
 } *pt_pcpu;
 
 /*
@@ -154,12 +154,16 @@ xsaves(char *addr, uint64_t mask)
 }
 
 static __inline enum pt_cpu_state
-pt_cpu_get_state(int cpu_id) {
-	return pt_pcpu[cpu_id].state;
+pt_cpu_get_state(int cpu_id)
+{
+
+	return (pt_pcpu[cpu_id].state);
 }
 
 static __inline void
-pt_cpu_set_state(int cpu_id, enum pt_cpu_state state) {
+pt_cpu_set_state(int cpu_id, enum pt_cpu_state state)
+{
+
 	pt_pcpu[cpu_id].state = state;
 }
 
@@ -423,7 +427,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 {
 	struct hwt_cpu *hwt_cpu;
 	struct hwt_thread *thr;
-	struct pt_ctx *pt_ctx = NULL;
+	struct pt_ctx *pt_ctx;
 	struct pt_cpu_config *cfg;
 	struct pt_ext_area *pt_ext;
 	struct xsave_header *hdr;
@@ -432,6 +436,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	dprintf("%s\n", __func__);
 
 	cfg = (struct pt_cpu_config *)ctx->config;
+	pt_ctx = NULL;
 
 	/* Sanitize input. */
 	// cfg->rtit_ctl &= PT_SUPPORTED_FLAGS;
