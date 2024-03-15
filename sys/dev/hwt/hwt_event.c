@@ -41,16 +41,16 @@ TASKQUEUE_FAST_DEFINE_THREAD(hwt);
 static void
 hwt_event_record_handler(void *arg, int pending __unused)
 {
-        struct hwt_context *ctx;
-        struct kevent kev;
-        int ret __diagused;
+	struct hwt_context *ctx;
+	struct kevent kev;
+	int ret __diagused;
 
 	ctx = (struct hwt_context *)arg;
 
-        EV_SET(&kev, HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ENABLE,
+	EV_SET(&kev, HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ENABLE,
 	    NOTE_TRIGGER, 0, NULL);
-        ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->hwt_td, M_WAITOK);
-        KASSERT(ret == 0,
+	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->hwt_td, M_WAITOK);
+	KASSERT(ret == 0,
 	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
 }
 
