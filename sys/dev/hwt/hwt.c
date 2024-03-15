@@ -140,7 +140,6 @@
  *	EV_SET(struct *kevent, EVENT_NUM, EVFILT_USER, 0,
  *	    NOTE_TRIGGER | NOTE_FFCOPY | uflags, data, NULL);
  *	ret = kqfd_register(ctx->kqueue_fd, *kevent, ctx->hwt_td, M_WAITOK);
- *
  */
 
 #include <sys/param.h>

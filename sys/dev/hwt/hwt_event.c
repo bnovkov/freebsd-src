@@ -54,7 +54,6 @@ hwt_event_record_handler(void *arg, int pending __unused)
 	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
 }
 
-
 int
 hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx)
 {
@@ -72,5 +71,6 @@ hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *ctx)
 void
 hwt_event_drain_all(void)
 {
+
 	taskqueue_drain_all(taskqueue_hwt);
 }

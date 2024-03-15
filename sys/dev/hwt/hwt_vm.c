@@ -226,9 +226,8 @@ hwt_vm_start_cpu_mode(struct hwt_context *ctx)
 	}
 
 	/* Some backends require enabling all CPUs at once. */
-	if(ctx->hwt_backend->ops->hwt_backend_enable_smp != NULL){
+	if (ctx->hwt_backend->ops->hwt_backend_enable_smp != NULL)
 		hwt_backend_enable_smp(ctx);
-	}
 }
 
 static int
@@ -440,6 +439,7 @@ hwt_vm_destroy_buffers(struct hwt_vm *vm)
 void
 hwt_vm_free(struct hwt_vm *vm)
 {
+
 	dprintf("%s\n", __func__);
 
 	if (vm->cdev)
