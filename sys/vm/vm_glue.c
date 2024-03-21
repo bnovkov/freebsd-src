@@ -299,10 +299,8 @@ static vm_offset_t
 vm_thread_alloc_kstack_kva(vm_size_t size, int domain)
 {
 #ifndef __ILP32__
-	vm_offset_t addr = 0;
 	vmem_t *arena;
-	struct vm_domainset_iter di;
-	int flags = 0;
+	vm_offset_t addr = 0;
 
 	size = round_page(size);
 	/* Allocate from the kernel arena for non-standard kstack sizes. */
@@ -375,9 +373,8 @@ static int
 vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
     vmem_addr_t *addrp)
 {
-	int error, rem;
+	int error;
 	size_t kpages = kstack_pages + KSTACK_GUARD_PAGES;
-	vm_pindex_t lin_pidx;
 
 	KASSERT(atop(size) % kpages == 0,
 	    ("%s: Size %jd is not a multiple of kstack pages (%d)", __func__,
@@ -389,14 +386,8 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 	if (error) {
 		return (error);
 	}
-
-	lin_pidx = atop(*addrp - VM_MIN_KERNEL_ADDRESS);
-	*addrp = roundup(*addrp, npages * PAGE_SIZE);
-	//rem = lin_pidx % kpages;
-	//if (rem != 0) {
-		/* Bump addr to next aligned address */
-		//*addrp = *addrp + (kpages - rem) * PAGE_SIZE;
-	//}
+	*addrp = roundup(*addrp - VM_MIN_KERNEL_ADDRESS, kpages * PAGE_SIZE) +
+	    VM_MIN_KERNEL_ADDRESS;
 
 	return (0);
 }
