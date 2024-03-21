@@ -296,30 +296,22 @@ SYSCTL_PROC(_vm, OID_AUTO, kstack_cache_size,
  *	the specified NUMA policy.
  */
 static vm_offset_t
-vm_thread_alloc_kstack_kva(vm_size_t size, struct domainset *ds)
+vm_thread_alloc_kstack_kva(vm_size_t size, int domain)
 {
 #ifndef __ILP32__
 	vm_offset_t addr = 0;
 	vmem_t *arena;
 	struct vm_domainset_iter di;
-	int domain, flags = 0;
+	int flags = 0;
 
 	size = round_page(size);
-
-	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
-	do {
-		/* Allocate from the kernel arena for non-standard kstack sizes. */
-		if (size != ptoa(kstack_pages + KSTACK_GUARD_PAGES)) {
-			arena = vm_dom[domain].vmd_kernel_arena;
-		} else {
-			arena = vmd_kstack_arena[domain];
-		}
-
-		if (vmem_alloc(arena, size, M_BESTFIT | M_NOWAIT, &addr) == 0)
-			break;
-		else
-			return (0);
-	} while (vm_domainset_iter_policy(&di, &domain) == 0);
+	/* Allocate from the kernel arena for non-standard kstack sizes. */
+	if (size != ptoa(kstack_pages + KSTACK_GUARD_PAGES)) {
+		arena = vm_dom[domain].vmd_kernel_arena;
+	} else {
+		arena = vmd_kstack_arena[domain];
+	}
+	vmem_alloc(arena, size, M_BESTFIT | M_WAITOK, &addr);
 
 	KASSERT(atop(addr - VM_MIN_KERNEL_ADDRESS) %
 	    (kstack_pages + KSTACK_GUARD_PAGES) == 0,
@@ -453,7 +445,8 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 	/*
 	 * Get a kernel virtual address for this thread's kstack.
 	 */
-	ks = vm_thread_alloc_kstack_kva(ptoa(pages + KSTACK_GUARD_PAGES), ds);
+	ks = vm_thread_alloc_kstack_kva(ptoa(pages + KSTACK_GUARD_PAGES),
+	    PCPU_GET(domain));
 	if (ks == 0) {
 		printf("%s: kstack allocation failed\n", __func__);
 		return (0);
