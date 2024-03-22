@@ -427,34 +427,58 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
  * Create the kernel stack for a new thread.
  */
 static vm_offset_t
-vm_thread_stack_create(struct domainset *ds, int pages)
+vm_thread_stack_create(struct domainset *ds, int pages, int *res_domain)
 {
+
 	vm_page_t ma[KSTACK_MAX_PAGES];
+	struct vm_domainset_iter di;
+	int req = VM_ALLOC_NORMAL;
+	vm_object_t obj;
 	vm_offset_t ks;
-	int i;
+	int domain, i;
+	/* XXX: chicken-and-egg - pindex is derived from ks. */
+	int _pindex = 0;
 
-	/*
-	 * Get a kernel virtual address for this thread's kstack.
-	 */
-	ks = vm_thread_alloc_kstack_kva(ptoa(pages + KSTACK_GUARD_PAGES),
-	    PCPU_GET(domain));
-	if (ks == 0) {
-		printf("%s: kstack allocation failed\n", __func__);
-		return (0);
-	}
+	obj = vm_thread_kstack_size_to_obj(pages);
+	if (vm_ndomains > 1)
+		obj->domain.dr_policy = ds;
+	vm_domainset_iter_page_init(&di, obj, _pindex, &domain, &req);
+	do {
 
-	if (KSTACK_GUARD_PAGES != 0) {
-		pmap_qremove(ks, KSTACK_GUARD_PAGES);
-		ks += KSTACK_GUARD_PAGES * PAGE_SIZE;
-	}
+		/*
+		 * Get a kernel virtual address for this thread's kstack.
+		 */
+		ks = vm_thread_alloc_kstack_kva(ptoa(pages + KSTACK_GUARD_PAGES),
+		    domain);
+		if (ks == 0) {
+			printf("%s: kstack allocation failed\n", __func__);
+			continue;
+		}
+		if (KSTACK_GUARD_PAGES != 0) {
+			ks += ptoa(KSTACK_GUARD_PAGES);
+		}
 
-	/*
-	 * Allocate physical pages to back the stack.
-	 */
-	vm_thread_stack_back(ds, ks, ma, pages, VM_ALLOC_NORMAL);
-	for (i = 0; i < pages; i++)
-		vm_page_valid(ma[i]);
-	pmap_qenter(ks, ma, pages);
+		/*
+		 * Allocate physical pages to back the stack.
+		 */
+		if (vm_thread_stack_back(ks, ma, pages, req, domain) != 0) {
+			vm_thread_free_kstack_kva(ks - ptoa(KSTACK_GUARD_PAGES),
+			    ptoa(pages + KSTACK_GUARD_PAGES), domain);
+			ks = 0;
+			continue;
+		}
+		if (KSTACK_GUARD_PAGES != 0) {
+			pmap_qremove(ks - ptoa(KSTACK_GUARD_PAGES),
+			    KSTACK_GUARD_PAGES);
+		}
+		for (i = 0; i < pages; i++)
+			vm_page_valid(ma[i]);
+		pmap_qenter(ks, ma, pages);
+
+		break;
+	} while (vm_domainset_iter_page(&di, obj, &domain) == 0);
+	/* Save the kstack domain. */
+	*res_domain = domain;
 
 	return (ks);
 }
@@ -497,6 +521,7 @@ int
 vm_thread_new(struct thread *td, int pages)
 {
 	vm_offset_t ks;
+	int ks_domain;
 
 	/* Bounds check */
 	if (pages <= 1)
@@ -515,11 +540,12 @@ vm_thread_new(struct thread *td, int pages)
 	 */
 	if (ks == 0)
 		ks = vm_thread_stack_create(DOMAINSET_PREF(PCPU_GET(domain)),
-		    pages);
+		    pages, &ks_domain);
 	if (ks == 0)
 		return (0);
 	td->td_kstack = ks;
 	td->td_kstack_pages = pages;
+	td->td_kstack_domain = ks_domain;
 	kasan_mark((void *)ks, ptoa(pages), ptoa(pages), 0);
 	kmsan_mark((void *)ks, ptoa(pages), KMSAN_STATE_UNINIT);
 	return (1);
@@ -578,30 +604,34 @@ vm_kstack_pindex(vm_offset_t ks, int kpages)
  * Allocate physical pages, following the specified NUMA policy, to back a
  * kernel stack.
  */
-void
-vm_thread_stack_back(struct domainset *ds, vm_offset_t ks, vm_page_t ma[],
-    int npages, int req_class)
+int
+vm_thread_stack_back(vm_offset_t ks, vm_page_t ma[], int npages, int req_class,
+    int domain)
 {
-	vm_pindex_t pindex;
-	int n;
 	vm_object_t obj = vm_thread_kstack_size_to_obj(npages);
+	vm_pindex_t pindex;
+	vm_page_t m;
+	int n;
 
 	pindex = vm_kstack_pindex(ks, npages);
 
 	VM_OBJECT_WLOCK(obj);
 	for (n = 0; n < npages;) {
-		if (vm_ndomains > 1)
-			obj->domain.dr_policy = ds;
-
-		/*
-		 * Use WAITFAIL to force a reset of the domain selection policy
-		 * if we had to sleep for pages.
-		 */
-		n += vm_page_grab_pages(obj, pindex + n,
-		    req_class | VM_ALLOC_WIRED | VM_ALLOC_WAITFAIL, &ma[n],
-		    npages - n);
+		m = vm_page_alloc_domain(obj, pindex + n, domain,
+		    req_class | VM_ALLOC_WIRED);
+		if (m == NULL)
+			break;
+		ma[n++] = m;
 	}
 	VM_OBJECT_WUNLOCK(obj);
+	if (n < npages)
+		goto cleanup;
+
+	return (0);
+cleanup:
+	vm_object_page_remove(obj, pindex, pindex + n, 0);
+
+	return (ENOMEM);
 }
 
 vm_object_t
