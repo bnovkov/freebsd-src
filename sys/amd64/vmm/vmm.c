@@ -147,6 +147,13 @@ struct mem_map {
 };
 #define	VM_MAX_MEMMAPS	8
 
+struct mem_domain {
+	vm_paddr_t start;
+	vm_paddr_t end;
+	cpuset_t cpus;
+};
+#define VM_MAX_MEMDOMS 8
+
 /*
  * Initialization:
  * (o) initialized the first time the VM is created
@@ -189,8 +196,10 @@ struct vm {
 	uint16_t	cores;			/* (o) num of cores/socket */
 	uint16_t	threads;		/* (o) num of threads/core */
 	uint16_t	maxcpus;		/* (o) max pluggable cpus */
+	struct mem_domain domains[VM_MAX_MEMDOMS]; /* (o) NUMA topology */
 	struct sx	mem_segs_lock;		/* (o) */
 	struct sx	vcpus_init_lock;	/* (o) */
+	struct sx	mem_doms_lock;		/* (o) */
 };
 
 #define	VMM_CTR0(vcpu, format)						\
@@ -643,6 +652,71 @@ vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
 	vm->threads = threads;
 	return(0);
 }
+
+int
+vm_set_affinity(struct vm *vm, int ident, cpuset_t *cpus,
+			   vm_paddr_t start, vm_paddr_t end)
+{
+	struct mem_domain *dom, *curdom;
+	int i;
+
+	if (ident < 0 || ident >= VM_MAX_MEMDOMS)
+		return (EINVAL);
+
+	dom = &vm->domains[ident];
+	if (dom->start != 0 || dom->end != 0)
+		return (EALREADY);
+	// TODO: memory range and cpuset sanity checks
+	for (i=0; i<VM_MAX_MEMDOMS; i++){
+		curdom = &vm->domains[i];
+		if (curdom->start == 0 && curdom->end == 0)
+			continue;
+		/* Check if we have overlapping cpus. */
+		if (CPU_OVERLAP(&curdom->cpus, cpus))
+			return (EEXIST);
+	}
+
+	dom->start = start;
+	dom->end = end;
+	dom->cpus = *cpus;
+
+	return (0);
+}
+
+int
+vm_get_domain(struct vm *vm, int ident, cpuset_t *cpus,
+			   vm_paddr_t *start, vm_paddr_t *end)
+{
+	struct mem_domain *dom;
+
+	if (ident < 0 || ident >= VM_MAX_MEMDOMS)
+		return (EINVAL);
+
+	dom = &vm->domains[ident];
+	*start = dom->start;
+	*end = dom->end;
+	*cpus = dom->cpus;
+
+	return (0);
+}
+
+int
+vm_cpu_get_affinity(struct vm *vm, int ident, cpuset_t *sockets,
+			   vm_paddr_t *start, vm_paddr_t *end)
+{
+	struct mem_domain *dom;
+
+	if (ident < 0 || ident >= VM_MAX_MEMDOMS)
+		return (EINVAL);
+
+	dom = &vm->domains[ident];
+	*start = dom->start;
+	*end = dom->end;
+	*sockets = dom->sockets;
+
+	return (0);
+}
+
 
 static void
 vm_cleanup(struct vm *vm, bool destroy)

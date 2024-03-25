@@ -27,6 +27,10 @@
  */
 
 #include <sys/types.h>
+#include "sys/_cpuset.h"
+#include "sys/errno.h"
+#include "sys/systm.h"
+#include "x86/include/_stdint.h"
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
 #endif
@@ -216,6 +220,59 @@ parse_int_value(const char *key, const char *value, int minval, int maxval)
 	    lval > maxval)
 		errx(4, "Invalid value for %s: '%s'", key, value);
 	return (lval);
+}
+
+static int
+numa_node_parse(const char *opt)
+{
+	int id = -1;
+	nvlist_t *nvl;
+	char *cp, *str, *tofree;
+	char pathbuf[64] = {0};
+	char *start = NULL, *end = NULL, *cpus = NULL;
+
+	if (*opt == '\0') {
+		return (-1);
+	}
+
+	tofree = str = strdup(opt);
+	if (str == NULL)
+		errx(4, "Failed to allocate memory");
+
+	while ((cp = strsep(&str, ",")) != NULL) {
+		if (strncmp(cp, "id=", strlen("id=")) == 0)
+			id = parse_int_value("id", cp + strlen("id="), 0, UINT8_MAX);
+		else if (strncmp(cp, "start=", strlen("start=")) == 0)
+			start = cp + strlen("start=");
+		else if (strncmp(cp, "end=", strlen("end=")) == 0)
+			end = cp + strlen("end=");
+		else if (strncmp(cp, "cpus=", strlen("cpus=")) == 0)
+			cpus = cp + strlen("cpus=");
+	}
+
+	/* Check if have everything we need. */
+	if (id == -1 || start == NULL || end == NULL || cpus == NULL) {
+		EPRINTLN("Incomplete NUMA domain information");
+		goto out;
+	}
+
+	snprintf(pathbuf, 64, "domains.%d", id);
+	if (find_config_node(pathbuf) != NULL) {
+				EPRINTLN("Attempting to redefine NUMA domain %d!", id);
+				goto out;
+	}
+
+	nvl = create_config_node(pathbuf);
+	set_config_value_node(nvl, "start", start);
+	set_config_value_node(nvl, "end", end);
+	set_config_value_node(nvl, "cpus", cpus);
+
+	free(tofree);
+	return (0);
+
+out:
+	free(tofree);
+	return (-1);
 }
 
 /*
@@ -554,6 +611,46 @@ num_vcpus_allowed(struct vmctx *ctx, struct vcpu *vcpu)
 		return (1);
 }
 
+static int
+set_mem_affinity(struct vmctx *ctx) {
+	char *reason;
+	int error, i;
+	nvlist_t *nvl;
+	cpuset_t cpus;
+	char *cpuset_str;
+	vm_paddr_t start, end;
+	char pathbuf[64] = {0};
+
+	for (i = 0; i < UINT8_MAX; i++){
+		snprintf(pathbuf, 64, "domains.%d", i);
+		nvl = find_config_node(pathbuf);
+		if (nvl == NULL)
+			break;
+
+		// TODO: parse start and end
+		parse_cpuset(i, cpuset_str, &cpus);
+		if (vm_set_affinity(ctx, i, cpus, start, end) == -1) {
+			switch(errno){
+				case EINVAL:
+					reason = "invalid domain id";
+					break;
+				case EEXIST:
+					reason = "configuring an already configured domain";
+					break;
+				case EALREADY:
+					reason = "overlapping domain cpu sets";
+					break;
+				default:
+					reason = "unknown";
+					break;
+			}
+			EPRINTLN("Error while setting up domain %d: %s",
+					 i, reason;
+			return (-1);
+		}
+	}
+}
+
 static struct vmctx *
 do_open(const char *vmname)
 {
@@ -709,9 +806,9 @@ main(int argc, char *argv[])
 	progname = basename(argv[0]);
 
 #ifdef BHYVE_SNAPSHOT
-	optstr = "aehuwxACDHIPSWYk:f:o:p:G:c:s:m:l:K:U:r:";
+	optstr = "aehuwxACDHIPSWYk:f:o:p:G:c:s:m:l:K:U:r:n:";
 #else
-	optstr = "aehuwxACDHIPSWYk:f:o:p:G:c:s:m:l:K:U:";
+	optstr = "aehuwxACDHIPSWYk:f:o:p:G:c:s:m:l:K:U:n:";
 #endif
 	while ((c = getopt(argc, argv, optstr)) != -1) {
 		switch (c) {
@@ -790,6 +887,11 @@ main(int argc, char *argv[])
 			break;
 		case 'm':
 			set_config_value("memory.size", optarg);
+			break;
+		case 'n':
+			if (numa_node_parse(optarg) != 0)
+			    errx(EX_USAGE, "invalid NUMA topology "
+				"'%s'", optarg);
 			break;
 		case 'o':
 			if (!parse_config_option(optarg))
