@@ -257,6 +257,13 @@ struct vm_readwrite_kernemu_device {
 };
 _Static_assert(sizeof(struct vm_readwrite_kernemu_device) == 24, "ABI");
 
+struct vm_numa_domain {
+	int id;
+	vm_paddr_t start;
+	vm_paddr_t end;
+	cpuset_t cpus;
+};
+
 enum {
 	/* general routines */
 	IOCNUM_ABIVERS = 0,
@@ -323,6 +330,10 @@ enum {
 	/* CPU Topology */
 	IOCNUM_SET_TOPOLOGY = 63,
 	IOCNUM_GET_TOPOLOGY = 64,
+
+	/* NUMA Topology */
+	IOCNUM_SET_DOMAIN = 65,
+	IOCNUM_GET_DOMAIN = 66,
 
 	/* legacy interrupt injection */
 	IOCNUM_ISA_ASSERT_IRQ = 80,
@@ -444,6 +455,10 @@ enum {
 	_IOW('v', IOCNUM_SET_TOPOLOGY, struct vm_cpu_topology)
 #define VM_GET_TOPOLOGY \
 	_IOR('v', IOCNUM_GET_TOPOLOGY, struct vm_cpu_topology)
+#define VM_SET_DOMAIN \
+	_IOW('v', IOCNUM_SET_DOMAIN, struct vm_numa_domain)
+#define VM_GET_DOMAIN \
+	_IOR('v', IOCNUM_GET_DOMAIN, struct vm_numa_domain)
 #define	VM_GET_GPA_PMAP \
 	_IOWR('v', IOCNUM_GET_GPA_PMAP, struct vm_gpa_pte)
 #define	VM_GLA2GPA	\

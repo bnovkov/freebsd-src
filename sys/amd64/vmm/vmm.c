@@ -654,7 +654,7 @@ vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
 }
 
 int
-vm_set_affinity(struct vm *vm, int ident, cpuset_t *cpus,
+vm_set_domain(struct vm *vm, int ident, cpuset_t cpus,
 			   vm_paddr_t start, vm_paddr_t end)
 {
 	struct mem_domain *dom, *curdom;
@@ -678,14 +678,14 @@ vm_set_affinity(struct vm *vm, int ident, cpuset_t *cpus,
 
 	dom->start = start;
 	dom->end = end;
-	dom->cpus = *cpus;
+	dom->cpus = cpus;
 
 	return (0);
 }
 
 int
 vm_get_domain(struct vm *vm, int ident, cpuset_t *cpus,
-			   vm_paddr_t *start, vm_paddr_t *end)
+			   vm_paddr_t *start, vm_paddr_t *end)h
 {
 	struct mem_domain *dom;
 
@@ -699,24 +699,6 @@ vm_get_domain(struct vm *vm, int ident, cpuset_t *cpus,
 
 	return (0);
 }
-
-int
-vm_cpu_get_affinity(struct vm *vm, int ident, cpuset_t *sockets,
-			   vm_paddr_t *start, vm_paddr_t *end)
-{
-	struct mem_domain *dom;
-
-	if (ident < 0 || ident >= VM_MAX_MEMDOMS)
-		return (EINVAL);
-
-	dom = &vm->domains[ident];
-	*start = dom->start;
-	*end = dom->end;
-	*sockets = dom->sockets;
-
-	return (0);
-}
-
 
 static void
 vm_cleanup(struct vm *vm, bool destroy)

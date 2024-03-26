@@ -1751,6 +1751,36 @@ vm_get_topology(struct vmctx *ctx,
 	return (error);
 }
 
+int vm_set_domain(struct vmctx *ctx, int ident, cpuset_t cpus,
+				  vm_paddr_t start, vm_paddr_t end)
+{
+	struct vm_numa_domain domain;
+
+	bzero(&domain, sizeof (struct vm_numa_domain));
+	domain.id = ident;
+	domain.cpus = cpus;
+	domain.start = start;
+	domain.end = end;
+	return (ioctl(ctx->fd, VM_SET_DOMAIN, &topology));
+}
+
+int vm_get_domain(struct vmctx *ctx, int ident, cpuset_t *cpus,
+				  vm_paddr_t *start, vm_paddr_t *end)
+{
+	struct vm_numa_domain domain;
+	int error;
+
+	bzero(&domain, sizeof (struct vm_numa_domain));
+	domain.id = ident;
+	error = ioctl(ctx->fd, VM_GET_DOMAIN, &domain);
+	if (error == 0) {
+		*start = domain.start;
+		*end = domain.end;
+		*cpus = domain.cpus;
+	}
+	return (error);
+}
+
 /* Keep in sync with machine/vmm_dev.h. */
 static const cap_ioctl_t vm_ioctl_cmds[] = { VM_RUN, VM_SUSPEND, VM_REINIT,
     VM_ALLOC_MEMSEG, VM_GET_MEMSEG, VM_MMAP_MEMSEG, VM_MMAP_MEMSEG,
@@ -1773,7 +1803,7 @@ static const cap_ioctl_t vm_ioctl_cmds[] = { VM_RUN, VM_SUSPEND, VM_REINIT,
     VM_SET_INTINFO, VM_GET_INTINFO,
     VM_RTC_WRITE, VM_RTC_READ, VM_RTC_SETTIME, VM_RTC_GETTIME,
     VM_RESTART_INSTRUCTION, VM_SET_TOPOLOGY, VM_GET_TOPOLOGY,
-    VM_SNAPSHOT_REQ, VM_RESTORE_TIME
+    VM_SET_DOMAIN, VM_GET_DOMAIN, VM_SNAPSHOT_REQ, VM_RESTORE_TIME
 };
 
 int
