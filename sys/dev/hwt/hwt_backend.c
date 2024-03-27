@@ -262,3 +262,33 @@ hwt_backend_svc_buf(struct hwt_context *ctx, int cpu_id)
 
 	return (error);
 }
+
+int
+hwt_backend_thread_alloc(struct hwt_context *ctx, struct hwt_thread *thr)
+{
+	int error;
+
+	dprintf("%s\n", __func__);
+
+	if (ctx->hwt_backend->ops->hwt_backend_thread_alloc == NULL)
+		return (0);
+	KASSERT(thr->private == NULL,
+		    ("%s: thread private data is not NULL\n", __func__));
+	error = ctx->hwt_backend->ops->hwt_backend_thread_alloc(thr);
+
+	return (error);
+}
+
+void
+hwt_backend_thread_free(struct hwt_thread *thr)
+{
+	dprintf("%s\n", __func__);
+
+	if (thr->ctx->hwt_backend->ops->hwt_backend_thread_free == NULL)
+		return;
+	KASSERT(thr->private != NULL,
+		    ("%s: thread private data is NULL\n", __func__));
+	thr->ctx->hwt_backend->ops->hwt_backend_thread_free(thr);
+
+	return;
+}

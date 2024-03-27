@@ -46,8 +46,8 @@ struct hwt_backend_ops {
 	void (*hwt_backend_enable_smp)(struct hwt_context *);
 	void (*hwt_backend_disable_smp)(struct hwt_context *);
 	/* Allocation and initialization of backend-specific thread data. */
-	int (*hwt_backend_alloc_thread_priv)(struct hwt_thread *);
-	void (*hwt_backend_free_thread_priv)(struct hwt_thread *);
+	int (*hwt_backend_thread_alloc)(struct hwt_thread *);
+	void (*hwt_backend_thread_free)(struct hwt_thread *);
 	/* Debugging only. */
 	void (*hwt_backend_dump)(int cpu_id);
 };
@@ -72,6 +72,8 @@ int hwt_backend_unregister(struct hwt_backend *);
 void hwt_backend_stop(struct hwt_context *);
 int hwt_backend_svc_buf(struct hwt_context *ctx, int cpu_id);
 struct hwt_backend * hwt_backend_lookup(const char *name);
+int hwt_backend_thread_alloc(struct hwt_context *ctx, struct hwt_thread *);
+void hwt_backend_thread_free(struct hwt_thread *);
 
 void hwt_backend_load(void);
 void hwt_backend_unload(void);

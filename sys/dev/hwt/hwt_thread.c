@@ -130,16 +130,6 @@ hwt_thread_alloc(struct hwt_context *ctx, struct hwt_thread **thr0, char *path, 
 	    M_WAITOK | M_ZERO);
 	thr->vm = vm;
 
-	/* Check if we need to store backend-specific data. */
-	if (ctx->hwt_backend->ops->hwt_backend_alloc_thread_priv != NULL) {
-		ctx->hwt_backend->ops->hwt_backend_alloc_thread_priv(thr);
-		if (thr->cookie == NULL){
-			dprintf("%s: failed to allocate thread cookie\n",
-			    __func__);
-			return (ENOMEM);
-		}
-	}
-
 	mtx_init(&thr->mtx, "thr", NULL, MTX_DEF);
 
 	refcount_init(&thr->refcnt, 1);
@@ -157,11 +147,7 @@ hwt_thread_free(struct hwt_thread *thr)
 
 	hwt_vm_free(thr->vm);
 	/* Free private backend data, if any. */
-	if (thr->ctx->hwt_backend->ops->hwt_backend_free_thread_priv != NULL) {
-		KASSERT(thr->cookie != NULL,
-		    ("%s: thread cookie is NULL\n", __func__));
-		thr->ctx->hwt_backend->ops->hwt_backend_free_thread_priv(thr);
-	}
+	hwt_backend_thread_free(thr);
 	free(thr, M_HWT_THREAD);
 }
 

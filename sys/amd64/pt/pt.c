@@ -477,9 +477,9 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 		TAILQ_FOREACH (thr, &ctx->threads, next) {
 			if (thr->thread_id != thread_id)
 				continue;
-			KASSERT(thr->cookie != NULL, ("%s: hwt thread cookie "
-			    "not set, thr %p", __func__, thr));
-			pt_ctx = (struct pt_ctx *)thr->cookie;
+			KASSERT(thr->private != NULL, ("%s: hwt thread private"
+			    " not set, thr %p", __func__, thr));
+			pt_ctx = (struct pt_ctx *)thr->private;
 			break;
 		}
 	}
@@ -620,9 +620,9 @@ pt_backend_deinit(struct hwt_context *ctx)
 	hwt_event_drain_all();
 	if (ctx->mode == HWT_MODE_THREAD) {
 		TAILQ_FOREACH (thr, &ctx->threads, next) {
-			KASSERT(thr->cookie != NULL,
-			    ("%s: thr->cookie not set", __func__));
-			pt_ctx = (struct pt_ctx *)thr->cookie;
+			KASSERT(thr->private != NULL,
+			    ("%s: thr->private not set", __func__));
+			pt_ctx = (struct pt_ctx *)thr->private;
 			/* Free ToPA table. */
 			pt_deinit_ctx(pt_ctx);
 		}
@@ -656,7 +656,7 @@ pt_backend_read(int cpu_id, int *curpage, vm_offset_t *curpage_offset)
 }
 
 static int
-pt_backend_alloc_thread_priv(struct hwt_thread *thr)
+pt_backend_alloc_thread(struct hwt_thread *thr)
 {
 	struct pt_ctx *pt_ctx;
 	int error;
@@ -670,16 +670,16 @@ pt_backend_alloc_thread_priv(struct hwt_thread *thr)
 	if (error)
 		return error;
 
-	thr->cookie = pt_ctx;
+	thr->private = pt_ctx;
 	return (0);
 }
 
 static void
-pt_backend_free_thread_priv(struct hwt_thread *thr)
+pt_backend_free_thread(struct hwt_thread *thr)
 {
 	struct pt_ctx *ctx;
 
-	ctx = (struct pt_ctx *)thr->cookie;
+	ctx = (struct pt_ctx *)thr->private;
 
 	pt_deinit_ctx(ctx);
 	free(ctx, M_PT);
@@ -707,8 +707,8 @@ static struct hwt_backend_ops pt_ops = {
 	.hwt_backend_read = pt_backend_read,
 	.hwt_backend_dump = pt_backend_dump,
 
-	.hwt_backend_alloc_thread_priv = pt_backend_alloc_thread_priv,
-	.hwt_backend_free_thread_priv = pt_backend_free_thread_priv,
+	.hwt_backend_thread_alloc = pt_backend_alloc_thread,
+	.hwt_backend_thread_free = pt_backend_free_thread,
 };
 
 static struct hwt_backend backend = {

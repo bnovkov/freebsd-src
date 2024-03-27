@@ -220,6 +220,15 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
 			hwt_ctx_free(ctx);
 			return (error);
 		}
+		/* Allocate backend-specific thread data. */
+		if (hwt_backend_thread_alloc(ctx, thr) != 0) {
+			dprintf("%s: failed to allocate thread backend data\n",
+			    __func__);
+			free(threads, M_HWT_IOCTL);
+			hwt_ctx_free(ctx);
+			return (ENOMEM);
+		}
+
 		/*
 		 * Insert a THREAD_CREATE record so userspace picks up
 		 * the thread's tracing buffers.

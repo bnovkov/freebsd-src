@@ -44,7 +44,7 @@ struct hwt_thread {
 	struct mtx			mtx;
 	u_int				refcnt;
 	int				cpu_id; /* last cpu_id */
-	void				*cookie; /* backend-specific private data */
+	void				*private; /* backend-specific private data */
 };
 
 /* Thread allocation. */
