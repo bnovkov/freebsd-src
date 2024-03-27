@@ -222,6 +222,20 @@ parse_int_value(const char *key, const char *value, int minval, int maxval)
 	return (lval);
 }
 
+static long long
+parse_ll_value(const char *key, const char *value, long long minval, long long maxval)
+{
+        char *cp;
+        long long lval;
+
+        errno = 0;
+        lval = strtol(value, &cp, 0);
+        if (errno != 0 || *cp != '\0' || cp == value || lval < minval ||
+            lval > maxval)
+                errx(4, "Invalid value for %s: '%s'", key, value);
+        return (lval);
+}
+
 static int
 numa_node_parse(const char *opt)
 {
@@ -613,11 +627,11 @@ num_vcpus_allowed(struct vmctx *ctx, struct vcpu *vcpu)
 
 static int
 set_mem_affinity(struct vmctx *ctx) {
-	char *reason;
-	int error, i;
+	int i;
+  const char *reason;
 	nvlist_t *nvl;
 	cpuset_t cpus;
-	char *cpuset_str;
+	const char *value;
 	vm_paddr_t start, end;
 	char pathbuf[64] = {0};
 
@@ -625,14 +639,18 @@ set_mem_affinity(struct vmctx *ctx) {
 		snprintf(pathbuf, 64, "domains.%d", i);
 		nvl = find_config_node(pathbuf);
 		if (nvl == NULL)
-			break;
+            break;
 
-		// TODO: parse start and end
-		parse_cpuset(i, cpuset_str, &cpus);
-		if (vm_set_affinity(ctx, i, cpus, start, end) == -1) {
+    value = get_config_value_node(nvl, "start");
+    start = parse_ll_value("domain start", value, 0, LLONG_MAX);
+    value = get_config_value_node(nvl, "end");
+    end = parse_ll_value("domain end", value, 0, LLONG_MAX);
+    value = get_config_value_node(nvl, "cpus");
+		parse_cpuset(i, value, &cpus);
+		if (vm_set_domain(ctx, i, cpus, start, end) == -1) {
 			switch(errno){
 				case EINVAL:
-					reason = "invalid domain id";
+          reason = "invalid domain id";
 					break;
 				case EEXIST:
 					reason = "configuring an already configured domain";
@@ -645,10 +663,12 @@ set_mem_affinity(struct vmctx *ctx) {
 					break;
 			}
 			EPRINTLN("Error while setting up domain %d: %s",
-					 i, reason;
+               i, reason);
 			return (-1);
 		}
 	}
+
+  return (0);
 }
 
 static struct vmctx *
@@ -712,6 +732,10 @@ do_open(const char *vmname)
 	error = vm_set_topology(ctx, cpu_sockets, cpu_cores, cpu_threads, 0);
 	if (error)
 		errx(EX_OSERR, "vm_set_topology");
+  error = set_mem_affinity(ctx);
+	if (error)
+          errx(EX_OSERR, "set_mem_affinity");
+
 	return (ctx);
 }
 

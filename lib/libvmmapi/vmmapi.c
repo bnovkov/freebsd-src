@@ -1761,7 +1761,7 @@ int vm_set_domain(struct vmctx *ctx, int ident, cpuset_t cpus,
 	domain.cpus = cpus;
 	domain.start = start;
 	domain.end = end;
-	return (ioctl(ctx->fd, VM_SET_DOMAIN, &topology));
+	return (ioctl(ctx->fd, VM_SET_DOMAIN, &domain));
 }
 
 int vm_get_domain(struct vmctx *ctx, int ident, cpuset_t *cpus,

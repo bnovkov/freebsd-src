@@ -233,7 +233,10 @@ void vm_get_topology(struct vm *vm, uint16_t *sockets, uint16_t *cores,
     uint16_t *threads, uint16_t *maxcpus);
 int vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
     uint16_t threads, uint16_t maxcpus);
-
+int vm_set_domain(struct vm *vm, int ident, cpuset_t *cpus,
+    vm_paddr_t start, vm_paddr_t end);
+int vm_get_domain(struct vm *vm, int ident, cpuset_t *cpus,
+                  vm_paddr_t *start, vm_paddr_t *end);
 /*
  * APIs that modify the guest memory map require all vcpus to be frozen.
  */

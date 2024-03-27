@@ -1062,7 +1062,7 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	case VM_SET_DOMAIN:
 		domain = (struct vm_numa_domain *)data;
 		error = vm_set_domain(sc->vm, domain->id,
-		    domain->cpus, domain->start, domain->end);
+		    &domain->cpus, domain->start, domain->end);
 		break;
 	case VM_GET_DOMAIN:
 		domain = (struct vm_numa_domain *)data;

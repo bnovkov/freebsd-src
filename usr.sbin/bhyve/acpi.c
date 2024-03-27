@@ -821,6 +821,7 @@ acpi_build(struct vmctx *ctx, int ncpu)
 	BASL_EXEC(build_mcfg(ctx));
 	BASL_EXEC(build_facs(ctx));
 	BASL_EXEC(build_spcr(ctx));
+  BASL_EXEC(build_srat(ctx));
 
 	/* Build ACPI device-specific tables such as a TPM2 table. */
 	const struct acpi_device_list_entry *entry;
