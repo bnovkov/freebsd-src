@@ -77,7 +77,7 @@
 
 MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
-SDT_PROVIDER_DECLARE(pt);
+SDT_PROVIDER_DEFINE(pt);
 SDT_PROBE_DEFINE(pt, , , topa__intr);
 
 static bool loaded = false;
