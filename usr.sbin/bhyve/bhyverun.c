@@ -630,43 +630,44 @@ set_mem_affinity(struct vmctx *ctx) {
 	int i;
   const char *reason;
 	nvlist_t *nvl;
-	cpuset_t cpus;
 	const char *value;
-	vm_paddr_t start, end;
+  struct vm_numa numa;
+  struct mem_domain *dom;
 	char pathbuf[64] = {0};
 
-	for (i = 0; i < UINT8_MAX; i++){
+  memset(&numa, 0, sizeof(struct vm_numa));
+	for (i = 0; i < VM_MAX_MEMDOMS; i++){
 		snprintf(pathbuf, 64, "domains.%d", i);
 		nvl = find_config_node(pathbuf);
 		if (nvl == NULL)
             break;
 
+    dom = &numa.domains[i];
     value = get_config_value_node(nvl, "start");
-    start = parse_ll_value("domain start", value, 0, LLONG_MAX);
+    dom->start = parse_ll_value("domain start", value, 0, LLONG_MAX);
     value = get_config_value_node(nvl, "end");
-    end = parse_ll_value("domain end", value, 0, LLONG_MAX);
+    dom->end = parse_ll_value("domain end", value, 0, LLONG_MAX);
     value = get_config_value_node(nvl, "cpus");
-		parse_cpuset(i, value, &cpus);
-		if (vm_set_domain(ctx, i, cpus, start, end) == -1) {
-			switch(errno){
-				case EINVAL:
-          reason = "invalid domain id";
-					break;
-				case EEXIST:
-					reason = "configuring an already configured domain";
-					break;
-				case EALREADY:
-					reason = "overlapping domain cpu sets";
-					break;
-				default:
-					reason = "unknown";
-					break;
-			}
-			EPRINTLN("Error while setting up domain %d: %s",
-               i, reason);
-			return (-1);
-		}
+		parse_cpuset(i, value, &dom->cpus);
 	}
+  numa.ndomains = i;
+
+  if (vm_set_numa_topology(ctx, &numa) == -1) {
+          switch(errno){
+          case EINVAL:
+                  reason = "invalid number of domains or invalid domain address ranges";
+                  break;
+          case EEXIST:
+                  reason = "cpu or address range overlap";
+                  break;
+          default:
+                  reason = "unknown";
+                  break;
+          }
+          EPRINTLN("Error while setting up NUMA topology: %s",
+                   reason);
+          return (-1);
+  }
 
   return (0);
 }

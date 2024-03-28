@@ -249,10 +249,8 @@ int	vm_get_topology(struct vmctx *ctx, uint16_t *sockets, uint16_t *cores,
 	    uint16_t *threads, uint16_t *maxcpus);
 
 /* NUMA topology */
-int vm_set_domain(struct vmctx *ctx, int ident, cpuset_t cpus,
-	    vm_paddr_t start, vm_paddr_t end);
-int vm_get_domain(struct vmctx *ctx, int ident, cpuset_t *cpus,
-	    vm_paddr_t *start, vm_paddr_t *end);
+int vm_set_numa_topology(struct vmctx *ctx, struct vm_numa *numa);
+int vm_get_numa_topology(struct vmctx *ctx, struct vm_numa *numa);
 /*
  * FreeBSD specific APIs
  */

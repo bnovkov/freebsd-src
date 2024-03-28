@@ -159,6 +159,7 @@ struct vm_object;
 struct vm_guest_paging;
 struct pmap;
 enum snapshot_req;
+struct vm_numa;
 
 struct vm_eventinfo {
 	cpuset_t *rptr;		/* rendezvous cookie */
@@ -233,10 +234,8 @@ void vm_get_topology(struct vm *vm, uint16_t *sockets, uint16_t *cores,
     uint16_t *threads, uint16_t *maxcpus);
 int vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
     uint16_t threads, uint16_t maxcpus);
-int vm_set_domain(struct vm *vm, int ident, cpuset_t *cpus,
-    vm_paddr_t start, vm_paddr_t end);
-int vm_get_domain(struct vm *vm, int ident, cpuset_t *cpus,
-                  vm_paddr_t *start, vm_paddr_t *end);
+int vm_get_numa_topology(struct vm *vm, struct vm_numa *numa);
+int vm_set_numa_topology(struct vm *vm, struct vm_numa *numa);
 /*
  * APIs that modify the guest memory map require all vcpus to be frozen.
  */
@@ -529,6 +528,16 @@ struct seg_desc {
 #define	SEG_DESC_DEF32(access)		(((access) & 0x4000) ? 1 : 0)
 #define	SEG_DESC_GRANULARITY(access)	(((access) & 0x8000) ? 1 : 0)
 #define	SEG_DESC_UNUSABLE(access)	(((access) & 0x10000) ? 1 : 0)
+
+#define VM_MAX_MEMDOMS 8
+struct vm_numa {
+        struct mem_domain {
+                vm_paddr_t start;
+                vm_paddr_t end;
+                cpuset_t cpus;
+        } domains[VM_MAX_MEMDOMS];
+        size_t ndomains;
+};
 
 enum vm_cpu_mode {
 	CPU_MODE_REAL,

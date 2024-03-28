@@ -147,13 +147,6 @@ struct mem_map {
 };
 #define	VM_MAX_MEMMAPS	8
 
-struct mem_domain {
-	vm_paddr_t start;
-	vm_paddr_t end;
-	cpuset_t cpus;
-};
-#define VM_MAX_MEMDOMS 8
-
 /*
  * Initialization:
  * (o) initialized the first time the VM is created
@@ -196,7 +189,7 @@ struct vm {
 	uint16_t	cores;			/* (o) num of cores/socket */
 	uint16_t	threads;		/* (o) num of threads/core */
 	uint16_t	maxcpus;		/* (o) max pluggable cpus */
-	struct mem_domain domains[VM_MAX_MEMDOMS]; /* (o) NUMA topology */
+  struct vm_numa numa; /* (o) NUMA topology */
 	struct sx	mem_segs_lock;		/* (o) */
 	struct sx	vcpus_init_lock;	/* (o) */
 	struct sx	mem_doms_lock;		/* (o) */
@@ -654,49 +647,43 @@ vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
 }
 
 int
-vm_set_domain(struct vm *vm, int ident, cpuset_t *cpus,
-			   vm_paddr_t start, vm_paddr_t end)
+vm_set_numa_topology(struct vm *vm, struct vm_numa *numa)
 {
-	struct mem_domain *dom, *curdom;
-	int i;
+  struct mem_domain *d1, *d2;
+	int i, j;
 
-	if (ident < 0 || ident >= VM_MAX_MEMDOMS)
+	if (numa->ndomains > VM_MAX_MEMDOMS)
 		return (EINVAL);
 
-	dom = &vm->domains[ident];
-	if (dom->start != 0 || dom->end != 0)
-		return (EALREADY);
-	// TODO: memory range and cpuset sanity checks
-	for (i=0; i<VM_MAX_MEMDOMS; i++){
-		curdom = &vm->domains[i];
-		if (curdom->start == 0 && curdom->end == 0)
-			continue;
-		/* Check if we have overlapping cpus. */
-		if (CPU_OVERLAP(&curdom->cpus, cpus))
-			return (EEXIST);
+  printf("%s: ndomains %zu\n", __func__, numa->ndomains);
+  for (i=0; i<numa->ndomains; i++){
+          d1 = &numa->domains[i];
+          printf("%s: start %p end %p\n", __func__, (void *)d1->start, (void *)d1->end);
+          if (d1->start >= d1->end)
+                  return (EINVAL);
+  }
+  /* Check if we have overlapping cpus or address ranges. */
+	for (i=0; i<numa->ndomains; i++){
+          d1 = &numa->domains[i];
+          for (j=0; j<numa->ndomains; j++){
+                  if (j == i)
+                          continue;
+                  d2 = &numa->domains[j];
+                  if (CPU_OVERLAP(&d1->cpus, &d2->cpus))
+                          return (EEXIST);
+                  /* if (d1->start <= d2->end && d1->end <= d2->start) */
+                  /*         return (EEXIST); */
+          }
 	}
-
-	dom->start = start;
-	dom->end = end;
-	dom->cpus = *cpus;
+  vm->numa = *numa;
 
 	return (0);
 }
 
 int
-vm_get_domain(struct vm *vm, int ident, cpuset_t *cpus,
-			   vm_paddr_t *start, vm_paddr_t *end)
+vm_get_numa_topology(struct vm *vm, struct vm_numa *numa)
 {
-	struct mem_domain *dom;
-
-	if (ident < 0 || ident >= VM_MAX_MEMDOMS)
-		return (EINVAL);
-
-	dom = &vm->domains[ident];
-	*start = dom->start;
-	*end = dom->end;
-	*cpus = dom->cpus;
-
+  *numa = vm->numa;
 	return (0);
 }
 

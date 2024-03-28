@@ -445,7 +445,7 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	struct vm_memmap *mm;
 	struct vm_munmap *mu;
 	struct vm_cpu_topology *topology;
-	struct vm_numa_domain *domain;
+	struct vm_numa *numa;
 	struct vm_readwrite_kernemu_device *kernemu;
 	uint64_t *regvals;
 	int *regnums;
@@ -1060,14 +1060,12 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		error = 0;
 		break;
 	case VM_SET_DOMAIN:
-		domain = (struct vm_numa_domain *)data;
-		error = vm_set_domain(sc->vm, domain->id,
-		    &domain->cpus, domain->start, domain->end);
+          numa = (struct vm_numa *)data;
+          error = vm_set_numa_topology(sc->vm, numa);
 		break;
 	case VM_GET_DOMAIN:
-		domain = (struct vm_numa_domain *)data;
-		error = vm_get_domain(sc->vm, domain->id,
-		    &domain->cpus, &domain->start, &domain->end);
+		numa = (struct vm_numa *)data;
+		error = vm_get_numa_topology(sc->vm, numa);
 		break;
 #ifdef BHYVE_SNAPSHOT
 	case VM_SNAPSHOT_REQ:

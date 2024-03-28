@@ -456,9 +456,9 @@ enum {
 #define VM_GET_TOPOLOGY \
 	_IOR('v', IOCNUM_GET_TOPOLOGY, struct vm_cpu_topology)
 #define VM_SET_DOMAIN \
-	_IOW('v', IOCNUM_SET_DOMAIN, struct vm_numa_domain)
+	_IOW('v', IOCNUM_SET_DOMAIN, struct vm_numa)
 #define VM_GET_DOMAIN \
-	_IOR('v', IOCNUM_GET_DOMAIN, struct vm_numa_domain)
+	_IOR('v', IOCNUM_GET_DOMAIN, struct vm_numa)
 #define	VM_GET_GPA_PMAP \
 	_IOWR('v', IOCNUM_GET_GPA_PMAP, struct vm_gpa_pte)
 #define	VM_GLA2GPA	\

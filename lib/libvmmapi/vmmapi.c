@@ -1751,34 +1751,14 @@ vm_get_topology(struct vmctx *ctx,
 	return (error);
 }
 
-int vm_set_domain(struct vmctx *ctx, int ident, cpuset_t cpus,
-				  vm_paddr_t start, vm_paddr_t end)
+int vm_set_numa_topology(struct vmctx *ctx, struct vm_numa *numa)
 {
-	struct vm_numa_domain domain;
-
-	bzero(&domain, sizeof (struct vm_numa_domain));
-	domain.id = ident;
-	domain.cpus = cpus;
-	domain.start = start;
-	domain.end = end;
-	return (ioctl(ctx->fd, VM_SET_DOMAIN, &domain));
+        return (ioctl(ctx->fd, VM_SET_DOMAIN, numa));
 }
 
-int vm_get_domain(struct vmctx *ctx, int ident, cpuset_t *cpus,
-				  vm_paddr_t *start, vm_paddr_t *end)
+int vm_get_numa_topology(struct vmctx *ctx, struct vm_numa *numa)
 {
-	struct vm_numa_domain domain;
-	int error;
-
-	bzero(&domain, sizeof (struct vm_numa_domain));
-	domain.id = ident;
-	error = ioctl(ctx->fd, VM_GET_DOMAIN, &domain);
-	if (error == 0) {
-		*start = domain.start;
-		*end = domain.end;
-		*cpus = domain.cpus;
-	}
-	return (error);
+        return (ioctl(ctx->fd, VM_GET_DOMAIN, numa));
 }
 
 /* Keep in sync with machine/vmm_dev.h. */
