@@ -256,10 +256,11 @@ hwt_hook_thread_create(struct thread *td)
 		return (ENXIO);
 	}
 	/* Allocate backend-specific thread data. */
-	if (hwt_backend_thread_alloc(ctx, thr) != 0) {
+	error = hwt_backend_thread_alloc(ctx, thr);
+	if (error != 0) {
 		dprintf("%s: failed to allocate backend thread data\n",
 			    __func__);
-		return (ENOMEM);
+		return (error);
 	}
 
 	thr->vm->ctx = ctx;
