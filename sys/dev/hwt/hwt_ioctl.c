@@ -213,7 +213,7 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
 		thread_id = atomic_fetchadd_int(&ctx->thread_counter, 1);
 		sprintf(path, "hwt_%d_%d", ctx->ident, thread_id);
 
-		error = hwt_thread_alloc(ctx, &thr, path, ctx->bufsize,
+		error = hwt_thread_alloc(&thr, path, ctx->bufsize,
 		    ctx->kva_req);
 		if (error) {
 			free(threads, M_HWT_IOCTL);

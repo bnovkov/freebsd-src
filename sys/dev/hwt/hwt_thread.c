@@ -115,7 +115,7 @@ hwt_thread_lookup(struct hwt_context *ctx, struct thread *td)
 }
 
 int
-hwt_thread_alloc(struct hwt_context *ctx, struct hwt_thread **thr0, char *path, size_t bufsize,
+hwt_thread_alloc(struct hwt_thread **thr0, char *path, size_t bufsize,
     int kva_req)
 {
 	struct hwt_thread *thr;

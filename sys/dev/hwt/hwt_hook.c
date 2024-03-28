@@ -236,7 +236,7 @@ hwt_hook_thread_create(struct thread *td)
 	hwt_ctx_put(ctx);
 
 	/* Step 2. Allocate some memory without holding ctx ref. */
-	error = hwt_thread_alloc(ctx, &thr, path, bufsize, kva_req);
+	error = hwt_thread_alloc(&thr, path, bufsize, kva_req);
 	if (error) {
 		printf("%s: could not allocate thread, error %d\n",
 		    __func__, error);
