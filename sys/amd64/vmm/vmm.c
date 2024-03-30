@@ -650,15 +650,14 @@ int
 vm_set_numa_topology(struct vm *vm, struct vm_numa *numa)
 {
   struct mem_domain *d1, *d2;
+  struct mem_map *end;
 	int i, j;
 
 	if (numa->ndomains > VM_MAX_MEMDOMS)
 		return (EINVAL);
-
-  printf("%s: ndomains %zu\n", __func__, numa->ndomains);
+  /* Check if the address ranges are well-formed. */
   for (i=0; i<numa->ndomains; i++){
           d1 = &numa->domains[i];
-          printf("%s: start %p end %p\n", __func__, (void *)d1->start, (void *)d1->end);
           if (d1->start >= d1->end)
                   return (EINVAL);
   }
@@ -671,10 +670,21 @@ vm_set_numa_topology(struct vm *vm, struct vm_numa *numa)
                   d2 = &numa->domains[j];
                   if (CPU_OVERLAP(&d1->cpus, &d2->cpus))
                           return (EEXIST);
-                  /* if (d1->start <= d2->end && d1->end <= d2->start) */
-                  /*         return (EEXIST); */
+                  if (d1->start <= d2->end && d1->end < d2->start)
+                           return (EEXIST);
           }
 	}
+  /* Check if the memory ranges fit. */
+  end = &vm->mem_maps[0];
+  for (i=1; i<VM_MAX_MEMMAPS; i++){
+          if (vm->mem_maps[i].len == 0)
+                  break;
+          if (end->gpa < vm->mem_maps[i].gpa)
+                  end = &vm->mem_maps[i];
+  }
+  if ((end->gpa + end->len) < numa->domains[numa->ndomains - 1].end)
+          return (E2BIG);
+
   vm->numa = *numa;
 
 	return (0);

@@ -628,9 +628,9 @@ num_vcpus_allowed(struct vmctx *ctx, struct vcpu *vcpu)
 static int
 set_mem_affinity(struct vmctx *ctx) {
 	int i;
-  const char *reason;
 	nvlist_t *nvl;
 	const char *value;
+  const char *reason;
   struct vm_numa numa;
   struct mem_domain *dom;
 	char pathbuf[64] = {0};
@@ -659,6 +659,9 @@ set_mem_affinity(struct vmctx *ctx) {
                   break;
           case EEXIST:
                   reason = "cpu or address range overlap";
+                  break;
+          case E2BIG:
+                  reason = "domain address range exceeds guest physical address range";
                   break;
           default:
                   reason = "unknown";
