@@ -417,8 +417,7 @@ pt_deinit_ctx(struct pt_ctx *pt_ctx)
 
 	if (pt_ctx->buf.topa_hw != NULL)
 		free(pt_ctx->buf.topa_hw, M_PT);
-
-	// TODO: memset?
+	memset(pt_ctx, 0, sizeof(*pt_ctx));
 	pt_ctx->buf.topa_hw = NULL;
 }
 
@@ -633,8 +632,10 @@ pt_backend_deinit(struct hwt_context *ctx)
 			KASSERT(pt_pcpu[cpu_id].ctx == &pt_pcpu_ctx[cpu_id],
 			    ("%s: CPU mode tracing with non-cpu mode PT "
 			    "context active", __func__));
-			pt_ctx = &pt_pcpu_ctx[cpu_id];
 			pt_pcpu[cpu_id].ctx = NULL;
+			pt_ctx = &pt_pcpu_ctx[cpu_id];
+			/* Free ToPA table. */
+			pt_deinit_ctx(pt_ctx);
 		}
 	}
 }
