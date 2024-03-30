@@ -262,7 +262,7 @@ numa_node_parse(const char *opt)
 			cpus = cp + strlen("cpus=");
 	}
 
-	/* Check if have everything we need. */
+	/* Check if we have everything we need. */
 	if (id == -1 || start == NULL || end == NULL || cpus == NULL) {
 		EPRINTLN("Incomplete NUMA domain information");
 		goto out;
