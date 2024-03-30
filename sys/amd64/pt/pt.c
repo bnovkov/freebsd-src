@@ -284,7 +284,7 @@ static void
 pt_cpu_stop(void *dummy)
 {
 	struct pt_cpu *cpu;
-	struct pt_ctx *ctx;
+	struct pt_ctx *ctx __diagused;
 
 	cpu = &pt_pcpu[curcpu];
 	ctx = cpu->ctx;
