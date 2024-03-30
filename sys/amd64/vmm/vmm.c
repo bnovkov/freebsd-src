@@ -189,7 +189,7 @@ struct vm {
 	uint16_t	cores;			/* (o) num of cores/socket */
 	uint16_t	threads;		/* (o) num of threads/core */
 	uint16_t	maxcpus;		/* (o) max pluggable cpus */
-	struct vm_numa numa;			/* (o) NUMA topology */
+	struct vm_numa	numa;			/* (o) NUMA topology */
 	struct sx	mem_segs_lock;		/* (o) */
 	struct sx	vcpus_init_lock;	/* (o) */
 };
