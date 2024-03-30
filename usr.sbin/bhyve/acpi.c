@@ -41,6 +41,8 @@
 #include <sys/errno.h>
 #include <sys/stat.h>
 
+#include <machine/vmm.h>
+
 #include <err.h>
 #include <paths.h>
 #include <stdarg.h>
@@ -57,6 +59,8 @@
 #include "acpi.h"
 #include "basl.h"
 #include "pci_emul.h"
+#include "sys/_stdint.h"
+#include "sys/types.h"
 #include "vmgenc.h"
 
 #define	BHYVE_ASL_TEMPLATE	"bhyve.XXXXXXX"
@@ -726,6 +730,72 @@ build_spcr(struct vmctx *const ctx)
 	return (0);
 }
 
+static int
+build_srat(struct vmctx *const ctx)
+{
+	ACPI_TABLE_SRAT srat;
+	ACPI_SRAT_MEM_AFFINITY srat_mem_affinity;
+	ACPI_SRAT_CPU_AFFINITY srat_cpu_affinity;
+
+	struct basl_table *table;
+	struct mem_domain *dom;
+	struct vm_numa numa;
+	u_int32_t i, cpu_id;
+
+	if (vm_get_numa_topology(ctx, &numa) != 0) {
+		/* Ignore errors. */
+		return (0);
+	}
+	/* Don't build SRAT if there are no domains. */
+	if (numa.ndomains == 0)
+		return (0);
+
+	BASL_EXEC(basl_table_create(&table, ctx, ACPI_SIG_SRAT,
+	    BASL_TABLE_ALIGNMENT));
+
+	memset(&srat, 0, sizeof(srat));
+	BASL_EXEC(basl_table_append_header(table, ACPI_SIG_SRAT, 1, 1));
+	srat.TableRevision = 1;
+	BASL_EXEC(basl_table_append_content(table, &srat, sizeof(srat)));
+
+	/* Add 'Memory Affinity Structures' for each domain. */
+	for (i = 0; i < numa.ndomains; i++) {
+		dom = &numa.domains[i];
+		/* Sanity checks. */
+		assert(dom->end > dom->start);
+		memset(&srat_mem_affinity, 0, sizeof(srat_mem_affinity));
+		srat_mem_affinity.Header.Type = ACPI_SRAT_TYPE_MEMORY_AFFINITY;
+		srat_mem_affinity.Header.Length = sizeof(srat_mem_affinity);
+		srat_mem_affinity.Flags |= ACPI_SRAT_MEM_ENABLED;
+		srat_mem_affinity.ProximityDomain = htole32(i);
+		srat_mem_affinity.BaseAddress = htole64(dom->start);
+		srat_mem_affinity.Length = htole64(dom->end - dom->start);
+		srat_mem_affinity.Flags = htole32(ACPI_SRAT_MEM_ENABLED);
+		BASL_EXEC(basl_table_append_bytes(table, &srat_mem_affinity,
+		    sizeof(srat_mem_affinity)));
+
+		/* Add all domain CPUs. */
+		CPU_FOREACH_ISSET (cpu_id, &dom->cpus) {
+			memset(&srat_cpu_affinity, 0,
+			    sizeof(srat_cpu_affinity));
+			srat_cpu_affinity.Header.Type =
+			    ACPI_SRAT_TYPE_CPU_AFFINITY;
+			srat_cpu_affinity.Header.Length = sizeof(
+			    srat_cpu_affinity);
+			srat_cpu_affinity.ProximityDomainLo = (uint8_t)i;
+			srat_cpu_affinity.ApicId = (uint8_t)cpu_id;
+			srat_cpu_affinity.Flags = htole32(
+			    ACPI_SRAT_CPU_USE_AFFINITY);
+			BASL_EXEC(basl_table_append_bytes(table,
+			    &srat_cpu_affinity, sizeof(srat_cpu_affinity)));
+		}
+	}
+
+	BASL_EXEC(basl_table_register_to_rsdt(table));
+
+	return (0);
+}
+
 int
 acpi_build(struct vmctx *ctx, int ncpu)
 {
@@ -765,6 +835,7 @@ acpi_build(struct vmctx *ctx, int ncpu)
 	BASL_EXEC(build_mcfg(ctx));
 	BASL_EXEC(build_facs(ctx));
 	BASL_EXEC(build_spcr(ctx));
+	BASL_EXEC(build_srat(ctx));
 
 	/* Build ACPI device-specific tables such as a TPM2 table. */
 	const struct acpi_device_list_entry *entry;

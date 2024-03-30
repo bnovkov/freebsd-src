@@ -189,6 +189,7 @@ struct vm {
 	uint16_t	cores;			/* (o) num of cores/socket */
 	uint16_t	threads;		/* (o) num of threads/core */
 	uint16_t	maxcpus;		/* (o) max pluggable cpus */
+	struct vm_numa numa;			/* (o) NUMA topology */
 	struct sx	mem_segs_lock;		/* (o) */
 	struct sx	vcpus_init_lock;	/* (o) */
 };
@@ -642,6 +643,57 @@ vm_set_topology(struct vm *vm, uint16_t sockets, uint16_t cores,
 	vm->cores = cores;
 	vm->threads = threads;
 	return(0);
+}
+
+int
+vm_set_numa_topology(struct vm *vm, struct vm_numa *numa)
+{
+	struct mem_domain *d1, *d2;
+	struct mem_map *end;
+	int i, j;
+
+	if (numa->ndomains > VM_MAX_MEMDOMS)
+		return (EINVAL);
+	/* Check if the address ranges are well-formed. */
+	for (i = 0; i < numa->ndomains; i++) {
+		d1 = &numa->domains[i];
+		if (d1->start >= d1->end)
+			return (EINVAL);
+	}
+	/* Check if we have overlapping cpus or address ranges. */
+	for (i = 0; i < numa->ndomains; i++) {
+		d1 = &numa->domains[i];
+		for (j = 0; j < numa->ndomains; j++) {
+			if (j == i)
+				continue;
+			d2 = &numa->domains[j];
+			if (CPU_OVERLAP(&d1->cpus, &d2->cpus))
+				return (EEXIST);
+			if (d1->start <= d2->end && d1->end < d2->start)
+				return (EEXIST);
+		}
+	}
+	/* Check if the memory ranges fit. */
+	end = &vm->mem_maps[0];
+	for (i = 1; i < VM_MAX_MEMMAPS; i++) {
+		if (vm->mem_maps[i].len == 0)
+			break;
+		if (end->gpa < vm->mem_maps[i].gpa)
+			end = &vm->mem_maps[i];
+	}
+	if ((end->gpa + end->len) < numa->domains[numa->ndomains - 1].end)
+		return (E2BIG);
+
+	vm->numa = *numa;
+
+	return (0);
+}
+
+int
+vm_get_numa_topology(struct vm *vm, struct vm_numa *numa)
+{
+	*numa = vm->numa;
+	return (0);
 }
 
 static void

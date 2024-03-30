@@ -1751,6 +1751,18 @@ vm_get_topology(struct vmctx *ctx,
 	return (error);
 }
 
+int
+vm_set_numa_topology(struct vmctx *ctx, struct vm_numa *numa)
+{
+	return (ioctl(ctx->fd, VM_SET_NUMA, numa));
+}
+
+int
+vm_get_numa_topology(struct vmctx *ctx, struct vm_numa *numa)
+{
+	return (ioctl(ctx->fd, VM_GET_NUMA, numa));
+}
+
 /* Keep in sync with machine/vmm_dev.h. */
 static const cap_ioctl_t vm_ioctl_cmds[] = { VM_RUN, VM_SUSPEND, VM_REINIT,
     VM_ALLOC_MEMSEG, VM_GET_MEMSEG, VM_MMAP_MEMSEG, VM_MMAP_MEMSEG,
@@ -1773,7 +1785,7 @@ static const cap_ioctl_t vm_ioctl_cmds[] = { VM_RUN, VM_SUSPEND, VM_REINIT,
     VM_SET_INTINFO, VM_GET_INTINFO,
     VM_RTC_WRITE, VM_RTC_READ, VM_RTC_SETTIME, VM_RTC_GETTIME,
     VM_RESTART_INSTRUCTION, VM_SET_TOPOLOGY, VM_GET_TOPOLOGY,
-    VM_SNAPSHOT_REQ, VM_RESTORE_TIME
+    VM_SET_DOMAIN, VM_GET_DOMAIN, VM_SNAPSHOT_REQ, VM_RESTORE_TIME
 };
 
 int

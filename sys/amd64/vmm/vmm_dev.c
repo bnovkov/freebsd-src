@@ -445,6 +445,7 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	struct vm_memmap *mm;
 	struct vm_munmap *mu;
 	struct vm_cpu_topology *topology;
+	struct vm_numa *numa;
 	struct vm_readwrite_kernemu_device *kernemu;
 	uint64_t *regvals;
 	int *regnums;
@@ -1057,6 +1058,14 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		vm_get_topology(sc->vm, &topology->sockets, &topology->cores,
 		    &topology->threads, &topology->maxcpus);
 		error = 0;
+		break;
+	case VM_SET_NUMA:
+		numa = (struct vm_numa *)data;
+		error = vm_set_numa_topology(sc->vm, numa);
+		break;
+	case VM_GET_NUMA:
+		numa = (struct vm_numa *)data;
+		error = vm_get_numa_topology(sc->vm, numa);
 		break;
 #ifdef BHYVE_SNAPSHOT
 	case VM_SNAPSHOT_REQ:
