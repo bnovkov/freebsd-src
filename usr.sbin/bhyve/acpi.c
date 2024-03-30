@@ -41,8 +41,6 @@
 #include <sys/errno.h>
 #include <sys/stat.h>
 
-#include <machine/vmm.h>
-
 #include <err.h>
 #include <paths.h>
 #include <stdarg.h>
@@ -59,8 +57,6 @@
 #include "acpi.h"
 #include "basl.h"
 #include "pci_emul.h"
-#include "sys/_stdint.h"
-#include "sys/types.h"
 #include "vmgenc.h"
 
 #define	BHYVE_ASL_TEMPLATE	"bhyve.XXXXXXX"

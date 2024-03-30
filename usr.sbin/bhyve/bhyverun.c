@@ -27,10 +27,6 @@
  */
 
 #include <sys/types.h>
-#include "sys/_cpuset.h"
-#include "sys/errno.h"
-#include "sys/systm.h"
-#include "x86/include/_stdint.h"
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
 #endif
@@ -924,7 +920,7 @@ main(int argc, char *argv[])
 		case 'n':
 			if (numa_node_parse(optarg) != 0)
 				errx(EX_USAGE,
-				    "invalid NUMA topology "
+				    "invalid NUMA node configuration "
 				    "'%s'",
 				    optarg);
 			break;
