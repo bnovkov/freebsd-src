@@ -212,10 +212,7 @@ hwt_vm_start_cpu_mode(struct hwt_context *ctx)
 {
 	int cpu_id;
 
-	CPU_FOREACH(cpu_id) {
-		if (!CPU_ISSET(cpu_id, &ctx->cpu_map))
-			continue;
-
+	CPU_FOREACH_ISSET(cpu_id, &ctx->cpu_map) {
 		/* Ensure CPU is not halted. */
 		if (CPU_ISSET(cpu_id, &hlt_cpus_mask))
 			return;

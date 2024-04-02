@@ -287,20 +287,17 @@ hwt_ioctl_alloc_mode_cpu(struct thread *td, struct hwt_owner *ho,
 	char path[MAXPATHLEN];
 	size_t cpusetsize;
 	cpuset_t cpu_map;
-	int cpu_count;
+	int cpu_count = 0;
 	int cpu_id;
 	int error;
 
-	cpu_count = 0;
-
+	CPU_ZERO(&cpu_map);
 	cpusetsize = min(halloc->cpusetsize, sizeof(cpuset_t));
 	error = copyin(halloc->cpu_map, &cpu_map, cpusetsize);
 	if (error)
 		return (error);
 
-	CPU_FOREACH(cpu_id) {
-		if (!CPU_ISSET(cpu_id, &cpu_map))
-			continue;
+	CPU_FOREACH_ISSET(cpu_id, &cpu_map) {
 		/* Ensure CPU is not halted. */
 		if (CPU_ISSET(cpu_id, &hlt_cpus_mask))
 			return (ENXIO);
@@ -335,10 +332,7 @@ hwt_ioctl_alloc_mode_cpu(struct thread *td, struct hwt_owner *ho,
 		return (error);
 	}
 
-	CPU_FOREACH(cpu_id) {
-		if (!CPU_ISSET(cpu_id, &cpu_map))
-			continue;
-
+	CPU_FOREACH_ISSET(cpu_id, &cpu_map) {
 		sprintf(path, "hwt_%d_%d", ctx->ident, cpu_id);
 		error = hwt_vm_alloc(ctx->bufsize, ctx->kva_req, path, &vm);
 		if (error) {
