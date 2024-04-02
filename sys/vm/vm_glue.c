@@ -427,7 +427,7 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
  * Create the kernel stack for a new thread.
  */
 static vm_offset_t
-vm_thread_stack_create(struct domainset *ds, int pages, int *res_domain)
+vm_thread_stack_create(struct domainset *ds, int pages)
 {
 
 	vm_page_t ma[KSTACK_MAX_PAGES];
@@ -477,8 +477,6 @@ vm_thread_stack_create(struct domainset *ds, int pages, int *res_domain)
 
 		break;
 	} while (vm_domainset_iter_page(&di, obj, &domain) == 0);
-	/* Save the kstack domain. */
-	*res_domain = domain;
 
 	return (ks);
 }
@@ -540,9 +538,13 @@ vm_thread_new(struct thread *td, int pages)
 	 */
 	if (ks == 0)
 		ks = vm_thread_stack_create(DOMAINSET_PREF(PCPU_GET(domain)),
-		    pages, &ks_domain);
+		    pages);
 	if (ks == 0)
 		return (0);
+
+	ks_domain = vm_phys_domain(vtophys(ks));
+	KASSERT(ks_domain >= 0 && ks_domain < vm_ndomains,
+	    ("%s: invalid domain for kstack %p", __func__, (void *)ks));
 	td->td_kstack = ks;
 	td->td_kstack_pages = pages;
 	td->td_kstack_domain = ks_domain;
