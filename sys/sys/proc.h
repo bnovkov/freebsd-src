@@ -368,7 +368,7 @@ struct thread {
 	struct trapframe *td_frame;	/* (k) */
 	vm_offset_t	td_kstack;	/* (a) Kernel VA of kstack. */
 	u_short td_kstack_pages;	/* (a) Size of the kstack. */
-	u_short td_kstack_domain;	/* (a) Domain backing kstack KVA. */
+	u_short td_kstack_domain;		/* (a) Domain backing kstack KVA. */
 	volatile u_int	td_critnest;	/* (k*) Critical section nest level. */
 	struct mdthread td_md;		/* (k) Any machine-dependent fields. */
 	struct kaudit_record	*td_ar;	/* (k) Active audit record, if any. */

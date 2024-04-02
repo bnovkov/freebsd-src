@@ -102,6 +102,7 @@
 #include <vm/vm_extern.h>
 #include <vm/vm_pager.h>
 #include <vm/swap_pager.h>
+#include <vm/vm_phys.h>
 
 #include <machine/cpu.h>
 
@@ -336,7 +337,7 @@ vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size, int domain)
 	arena = kernel_arena;
 #else
 	arena = vmd_kstack_arena[domain];
-	if (size != (kstack_pages + KSTACK_GUARD_PAGES) * PAGE_SIZE) {
+	if (size != ptoa(kstack_pages + KSTACK_GUARD_PAGES)) {
 		arena = vm_dom[domain].vmd_kernel_arena;
 	}
 #endif
@@ -399,27 +400,21 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 static void
 vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 {
-	int rem;
 	size_t kpages __diagused = kstack_pages + KSTACK_GUARD_PAGES;
 
 	KASSERT(size % kpages == 0,
 	    ("%s: Size %jd is not a multiple of kstack pages (%d)", __func__,
 	    (intmax_t)size, (int)kpages));
-	KASSERT(addr % kpages == 0,
-	    ("%s: Address %p is not a multiple of kstack pages (%d)", __func__,
-	    (void *)addr, (int)kpages));
 
+	KASSERT((addr - VM_MIN_KERNEL_ADDRESS) % kpages == 0,
+	    ("%s: Address %p is not properly aligned (%p)", __func__,
+		(void *)addr, (void *)VM_MIN_KERNEL_ADDRESS));
 	/*
 	 * If the address is not KVA_KSTACK_QUANTUM-aligned we have to decrement
 	 * it to account for the shift in kva_import_kstack.
 	 */
-	rem = addr % KVA_KSTACK_QUANTUM;
-	if (rem) {
-		KASSERT(rem <= ptoa(kpages),
-		    ("%s: rem > kpages (%d), (%d)", __func__, rem,
-		    (int)kpages));
-		addr -= rem;
-	}
+	addr = rounddown2(addr, vm_thread_kstack_import_quantum());
+
 	vmem_xfree(arena, addr, vm_thread_kstack_import_quantum());
 }
 
@@ -508,8 +503,8 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 	}
 	VM_OBJECT_WUNLOCK(obj);
 	kasan_mark((void *)ks, ptoa(pages), ptoa(pages), 0);
-	vm_thread_free_kstack_kva(ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
-	    (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE, domain);
+	vm_thread_free_kstack_kva(ks - ptoa(KSTACK_GUARD_PAGES),
+	    ptoa(pages + KSTACK_GUARD_PAGES), domain);
 }
 
 /*
@@ -519,7 +514,7 @@ int
 vm_thread_new(struct thread *td, int pages)
 {
 	vm_offset_t ks;
-	int ks_domain;
+	short ks_domain;
 
 	/* Bounds check */
 	if (pages <= 1)
@@ -566,6 +561,7 @@ vm_thread_dispose(struct thread *td)
 	ks = td->td_kstack;
 	td->td_kstack = 0;
 	td->td_kstack_pages = 0;
+	td->td_kstack_domain = UINT16_MAX;
 	kasan_mark((void *)ks, 0, ptoa(pages), KASAN_KSTACK_FREED);
 	if (pages == kstack_pages)
 		uma_zfree(kstack_cache, (void *)ks);
