@@ -300,6 +300,7 @@ static vm_offset_t
 vm_thread_alloc_kstack_kva(vm_size_t size, int domain)
 {
 #ifndef __ILP32__
+	int rv;
 	vmem_t *arena;
 	vm_offset_t addr = 0;
 
@@ -310,8 +311,9 @@ vm_thread_alloc_kstack_kva(vm_size_t size, int domain)
 	} else {
 		arena = vmd_kstack_arena[domain];
 	}
-	vmem_alloc(arena, size, M_BESTFIT | M_WAITOK, &addr);
-
+	rv = vmem_alloc(arena, size, M_BESTFIT | M_NOWAIT, &addr);
+	if (rv == ENOMEM)
+		return (0);
 	KASSERT(atop(addr - VM_MIN_KERNEL_ADDRESS) %
 	    (kstack_pages + KSTACK_GUARD_PAGES) == 0,
 	    ("%s: allocated kstack KVA not aligned to multiple of kstack size",
@@ -431,13 +433,11 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 	vm_object_t obj;
 	vm_offset_t ks;
 	int domain, i;
-	/* XXX: chicken-and-egg - pindex is derived from ks. */
-	int _pindex = 0;
 
 	obj = vm_thread_kstack_size_to_obj(pages);
 	if (vm_ndomains > 1)
 		obj->domain.dr_policy = ds;
-	vm_domainset_iter_page_init(&di, obj, _pindex, &domain, &req);
+	vm_domainset_iter_page_init(&di, obj, 0, &domain, &req);
 	do {
 
 		/*
@@ -445,10 +445,8 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 		 */
 		ks = vm_thread_alloc_kstack_kva(ptoa(pages + KSTACK_GUARD_PAGES),
 		    domain);
-		if (ks == 0) {
-			printf("%s: kstack allocation failed\n", __func__);
+		if (ks == 0)
 			continue;
-		}
 		if (KSTACK_GUARD_PAGES != 0) {
 			ks += ptoa(KSTACK_GUARD_PAGES);
 		}
@@ -583,7 +581,7 @@ vm_kstack_pindex(vm_offset_t ks, int kpages)
 #ifdef __ILP32__
 	return (pindex);
 #else
-	/* 
+	/*
 	 * Return the linear pindex if guard pages aren't active or if we are
 	 * allocating a non-standard kstack size.
 	 */
