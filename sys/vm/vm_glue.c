@@ -329,7 +329,7 @@ vm_thread_alloc_kstack_kva(vm_size_t size, int domain)
  *	Release a region of kernel virtual memory
  *	allocated from the kstack arena.
  */
-static void
+static __noinline void
 vm_thread_free_kstack_kva(vm_offset_t addr, vm_size_t size, int domain)
 {
 	vmem_t *arena;
@@ -376,7 +376,7 @@ static int
 vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
     vmem_addr_t *addrp)
 {
-	int error;
+	int error, rem;
 	size_t kpages = kstack_pages + KSTACK_GUARD_PAGES;
 
 	KASSERT(atop(size) % kpages == 0,
@@ -389,8 +389,12 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 	if (error) {
 		return (error);
 	}
-	*addrp = roundup(*addrp - VM_MIN_KERNEL_ADDRESS, kpages * PAGE_SIZE) +
-	    VM_MIN_KERNEL_ADDRESS;
+
+	rem = atop(*addrp - VM_MIN_KERNEL_ADDRESS) % kpages;
+	if (rem != 0) {
+		/* Bump addr to next aligned address */
+		*addrp = *addrp + (kpages - rem) * PAGE_SIZE;
+	}
 
 	return (0);
 }
@@ -402,6 +406,7 @@ vm_thread_kstack_arena_import(void *arena, vmem_size_t size, int flags,
 static void
 vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 {
+	int rem;
 	size_t kpages __diagused = kstack_pages + KSTACK_GUARD_PAGES;
 
 	KASSERT(size % kpages == 0,
@@ -415,8 +420,13 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 	 * If the address is not KVA_KSTACK_QUANTUM-aligned we have to decrement
 	 * it to account for the shift in kva_import_kstack.
 	 */
-	addr = rounddown2(addr, vm_thread_kstack_import_quantum());
-
+	rem = addr % KVA_KSTACK_QUANTUM;
+	if (rem) {
+		KASSERT(rem <= ptoa(kpages),
+		    ("%s: rem > kpages (%d), (%d)", __func__, rem,
+			(int)kpages));
+		addr -= rem;
+	}
 	vmem_xfree(arena, addr, vm_thread_kstack_import_quantum());
 }
 
@@ -447,9 +457,7 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 		    domain);
 		if (ks == 0)
 			continue;
-		if (KSTACK_GUARD_PAGES != 0) {
-			ks += ptoa(KSTACK_GUARD_PAGES);
-		}
+		ks += ptoa(KSTACK_GUARD_PAGES);
 
 		/*
 		 * Allocate physical pages to back the stack.
@@ -457,7 +465,6 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 		if (vm_thread_stack_back(ks, ma, pages, req, domain) != 0) {
 			vm_thread_free_kstack_kva(ks - ptoa(KSTACK_GUARD_PAGES),
 			    ptoa(pages + KSTACK_GUARD_PAGES), domain);
-			ks = 0;
 			continue;
 		}
 		if (KSTACK_GUARD_PAGES != 0) {
@@ -467,31 +474,28 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 		for (i = 0; i < pages; i++)
 			vm_page_valid(ma[i]);
 		pmap_qenter(ks, ma, pages);
-
-		break;
+		return (ks);
 	} while (vm_domainset_iter_page(&di, obj, &domain) == 0);
 
-	return (ks);
+	return (0);
 }
 
-static void
+static __noinline void
 vm_thread_stack_dispose(vm_offset_t ks, int pages)
 {
 	vm_page_t m;
 	vm_pindex_t pindex;
-	int i, domain = -1;
+	int i, domain;
 	vm_object_t obj = vm_thread_kstack_size_to_obj(pages);
 
 	pindex = vm_kstack_pindex(ks, pages);
-
+	domain = vm_phys_domain(vtophys(ks));
 	pmap_qremove(ks, pages);
 	VM_OBJECT_WLOCK(obj);
 	for (i = 0; i < pages; i++) {
 		m = vm_page_lookup(obj, pindex + i);
 		if (m == NULL)
 			panic("%s: kstack already missing?", __func__);
-		if (domain == -1)
-			domain = vm_page_domain(m);
 		KASSERT(vm_page_domain(m) == domain,
 		    ("%s: page %p domain mismatch, expected %d got %d",
 		    __func__, m, domain, vm_page_domain(m)));
@@ -501,7 +505,7 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 	}
 	VM_OBJECT_WUNLOCK(obj);
 	kasan_mark((void *)ks, ptoa(pages), ptoa(pages), 0);
-	vm_thread_free_kstack_kva(ks - ptoa(KSTACK_GUARD_PAGES),
+	vm_thread_free_kstack_kva(ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
 	    ptoa(pages + KSTACK_GUARD_PAGES), domain);
 }
 
@@ -512,7 +516,7 @@ int
 vm_thread_new(struct thread *td, int pages)
 {
 	vm_offset_t ks;
-	short ks_domain;
+	u_short ks_domain;
 
 	/* Bounds check */
 	if (pages <= 1)
@@ -613,19 +617,24 @@ vm_thread_stack_back(vm_offset_t ks, vm_page_t ma[], int npages, int req_class,
 
 	VM_OBJECT_WLOCK(obj);
 	for (n = 0; n < npages;) {
-		m = vm_page_alloc_domain(obj, pindex + n, domain,
-		    req_class | VM_ALLOC_WIRED);
+		m = vm_page_grab(obj, pindex + n,
+		    VM_ALLOC_NOCREAT | VM_ALLOC_WIRED);
+		if (m == NULL) {
+			m = vm_page_alloc_domain(obj, pindex + n, domain,
+			    req_class | VM_ALLOC_WIRED);
+		}
 		if (m == NULL)
 			break;
 		ma[n++] = m;
 	}
-	VM_OBJECT_WUNLOCK(obj);
 	if (n < npages)
 		goto cleanup;
+	VM_OBJECT_WUNLOCK(obj);
 
 	return (0);
 cleanup:
 	vm_object_page_remove(obj, pindex, pindex + n, 0);
+	VM_OBJECT_WUNLOCK(obj);
 
 	return (ENOMEM);
 }
@@ -703,8 +712,8 @@ kstack_cache_init(void *null)
 		    domain));
 		vmem_set_import(vmd_kstack_arena[domain],
 		    vm_thread_kstack_arena_import,
-		    vm_thread_kstack_arena_release, kernel_arena,
-		    kstack_quantum);
+		    vm_thread_kstack_arena_release,
+		    vm_dom[domain].vmd_kernel_arena, kstack_quantum);
 	}
 }
 SYSINIT(vm_kstacks, SI_SUB_KMEM, SI_ORDER_ANY, kstack_cache_init, NULL);
