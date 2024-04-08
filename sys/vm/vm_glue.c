@@ -436,7 +436,6 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 static vm_offset_t
 vm_thread_stack_create(struct domainset *ds, int pages)
 {
-
 	vm_page_t ma[KSTACK_MAX_PAGES];
 	struct vm_domainset_iter di;
 	int req = VM_ALLOC_NORMAL;
@@ -449,7 +448,6 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 		obj->domain.dr_policy = ds;
 	vm_domainset_iter_page_init(&di, obj, 0, &domain, &req);
 	do {
-
 		/*
 		 * Get a kernel virtual address for this thread's kstack.
 		 */
@@ -563,7 +561,7 @@ vm_thread_dispose(struct thread *td)
 	ks = td->td_kstack;
 	td->td_kstack = 0;
 	td->td_kstack_pages = 0;
-	td->td_kstack_domain = UINT16_MAX;
+	td->td_kstack_domain = MAXMEMDOM;
 	kasan_mark((void *)ks, 0, ptoa(pages), KASAN_KSTACK_FREED);
 	if (pages == kstack_pages)
 		uma_zfree(kstack_cache, (void *)ks);

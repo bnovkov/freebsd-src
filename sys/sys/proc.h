@@ -39,7 +39,6 @@
 
 #include <sys/callout.h>		/* For struct callout. */
 #include <sys/event.h>			/* For struct klist. */
-#include "sys/_stdint.h"
 #ifdef _KERNEL
 #include <sys/_eventhandler.h>
 #endif
