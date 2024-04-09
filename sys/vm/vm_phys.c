@@ -38,17 +38,15 @@
  * virtual memory system.
  */
 
+#include <sys/cdefs.h>
 #include "opt_ddb.h"
 #include "opt_vm.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/domainset.h>
-#include <sys/eventhandler.h>
-#include <sys/kernel.h>
-#include <sys/kthread.h>
 #include <sys/lock.h>
+#include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
@@ -58,17 +56,19 @@
 #include <sys/sysctl.h>
 #include <sys/tree.h>
 #include <sys/vmmeter.h>
+#include <sys/kthread.h>
+#include <sys/eventhandler.h>
+
+#include <ddb/ddb.h>
 
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
+#include <vm/vm_param.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
-#include <vm/vm_pagequeue.h>
-#include <vm/vm_param.h>
 #include <vm/vm_phys.h>
-
-#include <ddb/ddb.h>
+#include <vm/vm_pagequeue.h>
 
 _Static_assert(sizeof(long) * NBBY >= VM_PHYSSEG_MAX,
     "Too many physsegs.");
