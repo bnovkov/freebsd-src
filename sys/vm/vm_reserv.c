@@ -140,7 +140,8 @@ struct vm_reserv {
 	vm_page_t	pages;			/* (c) first page  */
 	uint16_t	popcnt;			/* (r) # of pages in use */
 	uint8_t		domain;			/* (c) NUMA domain. */
-	char		inpartpopq;		/* (d, r) */
+  unsigned int : 4		inpartpopq;		/* (d, r) */
+  unsigned int : 4		isnoobj;		/* (d, r) */
 	int		lasttick;		/* (r) last pop update tick. */
 	bitstr_t	bit_decl(popmap, VM_LEVEL_0_NPAGES_MAX);
 						/* (r) bit vector, used pages */
@@ -515,7 +516,7 @@ vm_reserv_populate(vm_reserv_t rv, int index)
 	vm_reserv_assert_locked(rv);
 	CTR5(KTR_VM, "%s: rv %p object %p popcnt %d inpartpop %d",
 	    __FUNCTION__, rv, rv->object, rv->popcnt, rv->inpartpopq);
-	KASSERT(rv->object != NULL,
+	KASSERT(rv->object != NULL && rv->isnoobj == 0,
 	    ("vm_reserv_populate: reserv %p is free", rv));
 	KASSERT(!bit_test(rv->popmap, index),
 	    ("vm_reserv_populate: reserv %p's popmap[%d] is set", rv,
@@ -1438,6 +1439,167 @@ vm_reserv_to_superpage(vm_page_t m)
 		m = NULL;
 
 	return (m);
+}
+
+
+static boolean_t
+vm_reserv_mark_noobj(vm_reserv_t rv)
+{
+        boolean_t ret = false;
+
+        vm_reserv_lock(rv);
+        if (rv->object == NULL && rv->popcnt == 0)
+                ret = true;
+        vm_reserv_unlock(rv);
+
+        return (ret);
+}
+
+static int
+vm_reserv_alloc_pages_noobj(vm_reserv_t rv, vm_page_t *ma, int npages, int req) {
+        struct vm_domain *vmd;
+        ssize_t i = 0;
+        int got = 0;
+        // assert locked
+        KASSERT(rv->isnoobj == true, ("%s: allocating pages from a non-noobj reservation", __func__));
+        vmd = VM_DOMAIN(rv->domain);
+        if(!vm_domain_allocate(vmd, req, npages))
+                goto out;
+        /* Scan bitmap and allocate pages */
+        bit_ffc(rv->popmap, VM_LEVEL_0_NPAGES, &i);
+        KASSERT(i != -1, ("%s: allocating noobj pages from a full reservation", __func__));
+        for(; i < VM_LEVEL_0_NPAGES  && got < npages; i++){
+                /* Test whether page at 'i' is free */
+                if(bit_test(rv->popmap, i))
+                        continue;
+                vm_reserv_populate(rv, i);
+                ma[got] = &rv->pages[i];
+                got++;
+        }
+
+ out:
+        return (got);
+}
+
+struct uma_reserv_import_queue {
+        struct mtx lock;
+        TAILQ_HEAD(rq, vm_reserv_t);
+};
+
+struct uma_reserv_import_ctx {
+        struct uma_reserv_import_queue fullq;
+        struct uma_reserv_import_queue partialq;
+        int req;
+};
+
+#define UMA_RESERVQ_LOCK(rqp) mtx_lock((rqp)->lock);
+#define UMA_RESERVQ_UNLOCK(rqp) mtx_unlock((rqp)->lock);
+
+vm_reserv_t
+uma_reserv_import_next(struct uma_reserv_import_ctx *ctx)
+{
+
+	vm_reserv_t rv = NULL;
+  struct vm_domain *vmd;
+  int nretries = 0;
+  vm_page_t m;
+
+	/* Try to grab a partially populated chunk. */
+  UMA_RESERVQ_LOCK(&ctx->partialq);
+  rv = TAILQ_FIRST(&ctx->partialq.rq);
+  UMA_RESERVQ_UNLOCK(&ctx->partialq);
+	if (rv != NULL)
+		goto found;
+retry:
+  /* Nothing was found - reach for the page allocator.  */
+  m = vm_page_alloc_noobj_contig(VM_ALLOC_WIRED,
+                                 VM_LEVEL_0_NPAGES, 0, ~0ul,
+                                 (1 << VM_LEVEL_0_SHIFT),
+                                 0, VM_MEMATTR_DEFAULT);
+  if (m != NULL) {
+          rv = vm_reserv_from_page(m);
+          if (vm_reserv_mark_noobj(rv) == false) {
+                  vmd = VM_DOMAIN(m->domain);
+                  vm_domain_free_lock(vmd);
+                  vm_phys_free_pages(m, VM_LEVEL_0_ORDER);
+                  vm_domain_free_unlock(vmd);
+
+                  if (nretries < 3){
+                          nretries++;
+                          goto retry;
+                  }
+                  return (NULL);
+          }
+  }
+  UMA_RESERVQ_LOCK(&ctx->partialq);
+  TAILQ_INSERT_HEAD(&ctx->partialq.rq, rv, objq);
+  UMA_RESERVQ_UNLOCK(&ctx->partialq);
+
+found:
+	return (m);
+}
+
+int
+uma_reserv_import(void *arg, void **store, int count, int domain,
+         int flags)
+{
+        struct uma_reserv_import_ctx *ctx;
+        vm_reserv_t rv;
+        int got;
+
+        ctx = (struct uma_reserv_import_ctx *)arg;
+        while(got < count) {
+                rv = uma_reserv_import_next(ctx);
+                if (rv == NULL){
+                        store[got] = vm_page_alloc_noobj(ctx->req);
+                        got++;
+                        continue;
+                }
+
+                vm_reserv_lock(rv);
+                got += vm_reserv_alloc_pages_noobj(rv, &store[got], count - got);
+                if (rv->popcnt == VM_LEVEL_0_NPAGES) {
+                        UMA_RESERVQ_LOCK(&ctx->partialq);
+                        TAILQ_REMOVE(&ctx->partialq->rq, rv);
+                        UMA_RESERVQ_UNLOCK(&ctx->partialq);
+
+                        UMA_RESERVQ_LOCK(&ctx->fullq);
+                        TAILQ_INSERT_HEAD(&ctx->fullq->rq, rv);
+                        UMA_RESERVQ_UNLOCK(&ctx->fullq);
+                }
+                vm_reserv_unlock(rv);
+        }
+}
+
+void
+uma_reserv_release(void *arg, void **store, int count)
+{
+        struct uma_reserv_import_ctx *ctx;
+        vm_reserv_t rv;
+        vm_page_t m;
+        int i;
+
+        ctx = (struct uma_reserv_import_ctx *)arg;
+        while (i < count){
+                m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
+                rv = vm_reserv_from_page(m);
+                vm_reserv_lock(rv);
+                if (rv->isnoobj) {
+                        do {
+                                m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
+                                vm_reserv_depopulate(rv, m - rv->pages);
+                                i++;
+                                if (i > count)
+                                        break;
+                                // TODO: optimize for sequential page case
+                        } while (vm_reserv_from_page(m) == rv);
+                        vm_reserv_unlock(rv);
+                } else {
+                        vm_reserv_unlock(rv);
+                        vm_page_free(m);
+                }
+        }
+
 }
 
 #endif	/* VM_NRESERVLEVEL > 0 */
