@@ -5405,7 +5405,6 @@ uma_avail(void)
 	return (uma_kmem_limit - uma_size());
 }
 
-
 #ifdef DDB
 /*
  * Generate statistics across both the zone and its per-cpu cache's.  Return

@@ -1443,7 +1443,7 @@ vm_reserv_to_superpage(vm_page_t m)
 
 
 static boolean_t
-vm_reserv_mark_noobj(vm_reserv_t rv)
+vm_reserv_is_noobj(vm_reserv_t rv)
 {
         boolean_t ret = false;
 
@@ -1455,40 +1455,64 @@ vm_reserv_mark_noobj(vm_reserv_t rv)
         return (ret);
 }
 
+static boolean_t
+vm_reserv_mark_noobj(vm_reserv_t rv)
+{
+        boolean_t ret = false;
+
+        vm_reserv_lock(rv);
+        if (rv->object == NULL && rv->popcnt == 0 && rv->isnoobj == 0)
+                rv->isnoobj = 1;
+        vm_reserv_unlock(rv);
+
+        return (ret);
+}
+
+
 static int
 vm_reserv_alloc_pages_noobj(vm_reserv_t rv, vm_page_t *ma, int npages, int req) {
         struct vm_domain *vmd;
         ssize_t i = 0;
         int got = 0;
-        // assert locked
-        KASSERT(rv->isnoobj == true, ("%s: allocating pages from a non-noobj reservation", __func__));
+
+        vm_reserv_assert_locked(rv);
+        KASSERT(rv->object == NULL && rv->isnoobj != 0,
+                ("vm_reserv_populate: reserv %p is not a noobj reserv", rv));
+        KASSERT(rv->pages->psind == 0,
+                ("vm_reserv_populate: reserv %p is already promoted", rv));
+        KASSERT(rv->domain < vm_ndomains,
+                ("vm_reserv_populate: reserv %p's domain is corrupted %d",
+                 rv, rv->domain));
         vmd = VM_DOMAIN(rv->domain);
         if(!vm_domain_allocate(vmd, req, npages))
                 goto out;
         /* Scan bitmap and allocate pages */
         bit_ffc(rv->popmap, VM_LEVEL_0_NPAGES, &i);
-        KASSERT(i != -1, ("%s: allocating noobj pages from a full reservation", __func__));
+        if (i == -1)
+                goto out;
         for(; i < VM_LEVEL_0_NPAGES  && got < npages; i++){
                 /* Test whether page at 'i' is free */
                 if(bit_test(rv->popmap, i))
                         continue;
-                vm_reserv_populate(rv, i);
+                bit_set(rv->popmap, i);
+                rv->popcnt++;
                 ma[got] = &rv->pages[i];
                 got++;
         }
-
  out:
         return (got);
 }
 
-struct uma_reserv_import_queue {
+struct vm_reserv_uma_queue {
         struct mtx lock;
         TAILQ_HEAD(rq, vm_reserv_t);
 };
 
-struct uma_reserv_import_ctx {
-        struct uma_reserv_import_queue fullq;
-        struct uma_reserv_import_queue partialq;
+struct vm_reserv_uma_ctx {
+        struct {
+                struct vm_reserv_uma_queue fullq;
+                struct vm_reserv_uma_queue partialq;
+        } domainqs[MAXMEMDOM];
         int req;
 };
 
@@ -1496,7 +1520,7 @@ struct uma_reserv_import_ctx {
 #define UMA_RESERVQ_UNLOCK(rqp) mtx_unlock((rqp)->lock);
 
 vm_reserv_t
-uma_reserv_import_next(struct uma_reserv_import_ctx *ctx)
+vm_reserv_uma_next(struct vm_reserv_uma_ctx *ctx, int domain)
 {
 
 	vm_reserv_t rv = NULL;
@@ -1512,7 +1536,7 @@ uma_reserv_import_next(struct uma_reserv_import_ctx *ctx)
 		goto found;
 retry:
   /* Nothing was found - reach for the page allocator.  */
-  m = vm_page_alloc_noobj_contig(VM_ALLOC_WIRED,
+  m = vm_page_alloc_noobj_contig_domain(domain, VM_ALLOC_WIRED,
                                  VM_LEVEL_0_NPAGES, 0, ~0ul,
                                  (1 << VM_LEVEL_0_SHIFT),
                                  0, VM_MEMATTR_DEFAULT);
@@ -1540,7 +1564,7 @@ found:
 }
 
 int
-uma_reserv_import(void *arg, void **store, int count, int domain,
+vm_reserv_uma_import(void *arg, void **store, int count, int domain,
          int flags)
 {
         struct uma_reserv_import_ctx *ctx;
@@ -1549,9 +1573,9 @@ uma_reserv_import(void *arg, void **store, int count, int domain,
 
         ctx = (struct uma_reserv_import_ctx *)arg;
         while(got < count) {
-                rv = uma_reserv_import_next(ctx);
+                rv = uma_reserv_import_next(ctx, domain);
                 if (rv == NULL){
-                        store[got] = vm_page_alloc_noobj(ctx->req);
+                        store[got] = vm_page_alloc_noobj_domain(domain, ctx->req);
                         got++;
                         continue;
                 }
@@ -1572,7 +1596,7 @@ uma_reserv_import(void *arg, void **store, int count, int domain,
 }
 
 void
-uma_reserv_release(void *arg, void **store, int count)
+vm_reserv_uma_release(void *arg, void **store, int count)
 {
         struct uma_reserv_import_ctx *ctx;
         vm_reserv_t rv;
