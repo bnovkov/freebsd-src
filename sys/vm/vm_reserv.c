@@ -1559,7 +1559,7 @@ static int
 vm_reserv_uma_alloc_npages(vm_reserv_t rv, void **pa, int npages, int req) {
         struct vm_domain *vmd;
         vm_offset_t pgva;
-        ssize_t i = 0;
+        ssize_t i;
         int got = 0;
 
         vm_reserv_assert_locked(rv);
@@ -1573,10 +1573,7 @@ vm_reserv_uma_alloc_npages(vm_reserv_t rv, void **pa, int npages, int req) {
         vmd = VM_DOMAIN(rv->domain);
         pgva = PHYS_TO_DMAP(VM_PAGE_TO_PHYS(rv->pages));
         /* Scan bitmap and allocate pages */
-        bit_ffc(rv->popmap, VM_LEVEL_0_NPAGES, &i);
-        if (i == -1)
-                goto out;
-        for(; i < VM_LEVEL_0_NPAGES  && got < npages; i++){
+        for(i = 0; i < VM_LEVEL_0_NPAGES  && got < npages; i++){
                 /* Test whether page at 'i' is free */
                 if(bit_test(rv->popmap, i))
                         continue;
@@ -1587,7 +1584,6 @@ vm_reserv_uma_alloc_npages(vm_reserv_t rv, void **pa, int npages, int req) {
                 pa[got] = (void *)(pgva + atop(i));
                 got++;
         }
- out:
         return (got);
 }
 
@@ -1695,7 +1691,6 @@ vm_reserv_uma_release(void *arg, void **store, int count)
                         qp = &ctx->partqs[rv->domain];
                         vmd = VM_DOMAIN(rv->domain);
                         do {
-                                m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
                                 index = m - rv->pages;
 
                                 vm_reserv_assert_locked(rv);
@@ -1718,6 +1713,7 @@ vm_reserv_uma_release(void *arg, void **store, int count)
                                 i++;
                                 if (i > count)
                                         break;
+                                m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
                                 // TODO: optimize for sequential page case
                         } while (vm_reserv_from_page(m) == rv);
                         vm_reserv_unlock(rv);
