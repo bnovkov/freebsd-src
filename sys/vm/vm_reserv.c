@@ -1475,11 +1475,9 @@ vm_reserv_fetch_noobj(int domain, int req){
         vm_reserv_t rv = NULL;
         struct vm_domain *vmd;
         vm_page_t m;
-        // TODO: switch to vm_phys_alloc_pages 
-        m = vm_page_alloc_noobj_contig_domain(domain, req | VM_ALLOC_WIRED,
-                                          VM_LEVEL_0_NPAGES, 0, ~0ul,
-                                          (1 << VM_LEVEL_0_SHIFT),
-                                          0, VM_MEMATTR_DEFAULT);
+
+        m = vm_phys_alloc_pages(domain, VM_FREEPOOL_DEFAULT,
+                                VM_LEVEL_0_ORDER);
         if (m != NULL) {
                 rv = vm_reserv_from_page(m);
                 if (!vm_reserv_mark_noobj(rv)) {
@@ -1572,7 +1570,7 @@ vm_reserv_uma_next(struct vm_reserv_uma_ctx *ctx, struct vm_reserv_uma_queue *qp
 
 	/* Try to grab a partially populated chunk. */
   UMA_RESERVQ_LOCK(qp);
-  rv = LIST_FIRST(qp->head);
+  rv = LIST_FIRST(&qp->head);
   UMA_RESERVQ_UNLOCK(qp);
 	if (rv != NULL)
           goto found;
@@ -1590,7 +1588,7 @@ vm_reserv_uma_next(struct vm_reserv_uma_ctx *ctx, struct vm_reserv_uma_queue *qp
   /* Save pointer to partq and ctx. */
   rv->noobj_priv = (void *) ctx;
   UMA_RESERVQ_LOCK(qp);
-  LIST_INSERT_HEAD(qp->head, rv, objq);
+  LIST_INSERT_HEAD(&qp->head, rv, objq);
   UMA_RESERVQ_UNLOCK(qp);
 
 found:
@@ -1664,6 +1662,7 @@ vm_reserv_uma_release(void *arg, void **store, int count)
 
                         enqueue = !!(rv->popcnt == VM_LEVEL_0_NPAGES);
                         qp = &ctx->partqs[rv->domain];
+                        vmd = VM_DOMAIN(rv->domain);
                         do {
                                 m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
                                 index = m - rv->pages;
@@ -1675,12 +1674,13 @@ vm_reserv_uma_release(void *arg, void **store, int count)
 
                                 bit_clear(rv->popmap, index);
                                 rv->popcnt--;
-                                vmd = VM_DOMAIN(rv->domain);
                                 if (rv->popcnt == 0) {
                                         vm_domain_free_lock(vmd);
                                         vm_phys_free_pages(rv->pages, VM_LEVEL_0_ORDER);
                                         vm_domain_free_unlock(vmd);
                                         counter_u64_add(vm_reserv_freed, 1);
+                                        /* We're releasing the reservation; don't queue it */
+                                        enqueue = false;
                                 }
                                 vm_domain_freecnt_inc(vmd, 1);
 
@@ -1694,7 +1694,7 @@ vm_reserv_uma_release(void *arg, void **store, int count)
                         if (enqueue) {
                                 /* Queue reserv on the domain's partq */
                                 UMA_RESERVQ_LOCK(qp);
-                                LIST_INSERT_HEAD(qp->head, rv, objq);
+                                LIST_INSERT_HEAD(&qp->head, rv, objq);
                                 UMA_RESERVQ_UNLOCK(qp);
                         }
                 } else {
