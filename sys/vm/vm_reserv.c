@@ -1628,6 +1628,7 @@ vm_reserv_uma_import(void *arg, void **store, int count, int domain,
         vm_reserv_t rv;
         int got;
 
+        KASSERT(arg != NULL, ("%s: arg is NULL; did you forget to pass the context?", __func__));
         ctx = (struct  vm_reserv_uma_ctx *)arg;
         // TODO: assert domain value
         qp = &ctx->partqs[domain];
@@ -1665,6 +1666,7 @@ vm_reserv_uma_release(void *arg, void **store, int count)
         int i, index;
         boolean_t enqueue;
 
+        KASSERT(arg != NULL, ("%s: arg is NULL; did you forget to pass the context?", __func__));
         i = 0;
         ctx = (struct  vm_reserv_uma_ctx *)arg;
         while (i < count){
