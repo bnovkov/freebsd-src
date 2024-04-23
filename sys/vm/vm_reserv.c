@@ -1493,7 +1493,6 @@ vm_reserv_fetch_noobj(int domain, int req){
                         rv = NULL;
                 }
         }
-        vm_domain_free_unlock(vmd);
 
         return (rv);
 }
