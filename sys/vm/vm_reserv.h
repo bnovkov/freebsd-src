@@ -70,6 +70,8 @@ vm_page_t	vm_reserv_to_superpage(vm_page_t m);
 
 int vm_reserv_uma_import(void *arg, void **store, int count, int domain, int flags);
 void vm_reserv_uma_release(void *arg, void **store, int count);
+void * vm_reserv_uma_alloc_ctx(int req);
+void vm_reserv_uma_free_ctx(void *ctx);
 
 #endif	/* VM_NRESERVLEVEL > 0 */
 #endif	/* _KERNEL */

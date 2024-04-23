@@ -1526,6 +1526,30 @@ struct vm_reserv_uma_ctx {
 #define UMA_RESERVQ_LOCK(rqp) mtx_lock(&(rqp)->lock);
 #define UMA_RESERVQ_UNLOCK(rqp) mtx_unlock(&(rqp)->lock);
 
+void *
+vm_reserv_uma_alloc_ctx(int req)
+{
+        struct vm_reserv_uma_queue *qp;
+        struct vm_reserv_uma_ctx *ctx;
+        int i;
+
+        ctx = malloc(sizeof(*ctx), M_TEMP, M_NOWAIT | M_ZERO);
+        ctx->req = req;
+        for (i=0; i < vm_ndomains; i++){
+                qp = &ctx->partqs[i];
+                mtx_init(&qp->lock, "rsv_uma", NULL, MTX_DEF);
+                LIST_INIT(&qp->head);
+        }
+
+        return ((void *)ctx);
+}
+
+void
+vm_reserv_uma_free_ctx(void *ctx)
+{
+        free(ctx, M_TEMP);
+}
+
 static int
 vm_reserv_uma_alloc_npages(vm_reserv_t rv, void **pa, int npages, int req) {
         struct vm_domain *vmd;
