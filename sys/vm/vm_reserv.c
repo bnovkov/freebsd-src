@@ -1581,7 +1581,7 @@ vm_reserv_uma_alloc_npages(vm_reserv_t rv, void **pa, int npages, int req) {
                         break;
                 bit_set(rv->popmap, i);
                 rv->popcnt++;
-                pa[got] = (void *)(pgva + atop(i));
+                pa[got] = (void *)(pgva + i*PAGE_SIZE);
                 got++;
         }
         return (got);
