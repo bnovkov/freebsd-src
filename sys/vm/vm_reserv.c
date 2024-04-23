@@ -1462,8 +1462,10 @@ vm_reserv_mark_noobj(vm_reserv_t rv)
         boolean_t ret = false;
 
         vm_reserv_lock(rv);
-        if (rv->object == NULL && rv->popcnt == 0 && rv->isnoobj == 0)
+        if (rv->object == NULL && rv->popcnt == 0 && rv->isnoobj == 0) {
                 rv->isnoobj = 1;
+                ret = true;
+        }
         vm_reserv_unlock(rv);
 
         return (ret);
@@ -1480,10 +1482,14 @@ vm_reserv_fetch_noobj(int domain, int req){
         vm_domain_free_lock(vmd);
         m = vm_phys_alloc_pages(domain, VM_FREEPOOL_DEFAULT,
                                 VM_LEVEL_0_ORDER);
+        vm_domain_free_unlock(vmd);
+
         if (m != NULL) {
                 rv = vm_reserv_from_page(m);
                 if (!vm_reserv_mark_noobj(rv)) {
+                        vm_domain_free_lock(vmd);
                         vm_phys_free_pages(m, VM_LEVEL_0_ORDER);
+                        vm_domain_free_unlock(vmd);
                         rv = NULL;
                 }
         }
