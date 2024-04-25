@@ -6,6 +6,6 @@ LIB=	door
 
 CFLAGS+=	-I${.CURDIR}
 
-SRCS+=	door.c door.h
+SRCS+=	doorsclient.c doors.h
 
 .include <bsd.lib.mk>
