@@ -367,7 +367,7 @@ vm_reserv_insert(vm_reserv_t rv, vm_object_t object, vm_pindex_t pindex)
 	    "%s: rv %p(%p) object %p new %p popcnt %d",
 	    __FUNCTION__, rv, rv->pages, rv->object, object,
 	   rv->popcnt);
-	KASSERT(rv->object == NULL,
+	KASSERT(rv->object == NULL && rv->isnoobj == 0,
 	    ("vm_reserv_insert: reserv %p isn't free", rv));
 	KASSERT(rv->popcnt == 0,
 	    ("vm_reserv_insert: reserv %p's popcnt is corrupted", rv));
@@ -963,11 +963,12 @@ vm_reserv_free_page(vm_page_t m)
 {
 	vm_reserv_t rv;
 	boolean_t ret;
-
+	
 	rv = vm_reserv_from_page(m);
 	if (rv->object == NULL)
 		return (FALSE);
 	vm_reserv_lock(rv);
+	KASSERT(rv->isnoobj == 0, ("%s: reserv %p is noobj ", __func__, rv));
 	/* Re-validate after lock. */
 	if (rv->object != NULL) {
 		vm_reserv_depopulate(rv, m - rv->pages);
@@ -1499,22 +1500,13 @@ vm_reserv_fetch_noobj(int domain, int req){
 
 
 static void
-vm_reserv_remove_noobj(vm_reserv_t rv){
-        vm_object_t object;
+vm_reserv_clear_noobj(vm_reserv_t rv){
 
         vm_reserv_assert_locked(rv);
-        CTR5(KTR_VM, "%s: rv %p object %p popcnt %d inpartpop %d",
-             __FUNCTION__, rv, rv->object, rv->popcnt, rv->inpartpopq);
-        KASSERT(rv->object != NULL,
-                ("vm_reserv_remove: reserv %p is free", rv));
-        KASSERT(!rv->inpartpopq,
-                ("vm_reserv_remove: reserv %p's inpartpopq is TRUE", rv));
-        object = rv->object;
-        vm_reserv_object_lock(object);
-        LIST_REMOVE(rv, objq);
-        rv->object = NULL;
-        vm_reserv_object_unlock(object);
-
+        KASSERT(rv->object == NULL && rv->isnoobj != 0,
+                ("vm_reserv_remove: reserv %p is managed", rv));
+	rv->isnoobj = 0;
+	rv->noobj_priv = NULL;
 }
 
 
@@ -1555,7 +1547,7 @@ vm_reserv_uma_free_ctx(void *ctx)
         free(ctx, M_TEMP);
 }
 
-static int
+static __noinline int
 vm_reserv_uma_alloc_npages(vm_reserv_t rv, void **pa, int npages, int req) {
         struct vm_domain *vmd;
         vm_offset_t pgva;
@@ -1601,7 +1593,7 @@ vm_reserv_uma_next(struct vm_reserv_uma_ctx *ctx, struct vm_reserv_uma_queue *qp
           goto found;
  retry:
   /* Nothing was found - reach for the page allocator.  */
-  rv = vm_reserv_fetch_noobj(domain, ctx->req | VM_ALLOC_WIRED);
+  rv = vm_reserv_fetch_noobj(domain, VM_ALLOC_WIRED);
   if (rv == NULL) {
           if (nretries < 3){
                   nretries++;
@@ -1610,7 +1602,7 @@ vm_reserv_uma_next(struct vm_reserv_uma_ctx *ctx, struct vm_reserv_uma_queue *qp
           return (NULL);
   }
 
-  /* Save pointer to partq and ctx. */
+  /* Save pointer to ctx. */
   rv->noobj_priv = (void *) ctx;
   UMA_RESERVQ_LOCK(qp);
   LIST_INSERT_HEAD(&qp->head, rv, objq);
@@ -1620,14 +1612,17 @@ found:
 	return (rv);
 }
 
-int
+int __noinline
 vm_reserv_uma_import(void *arg, void **store, int count, int domain,
          int flags)
 {
         struct vm_reserv_uma_queue *qp;
         struct vm_reserv_uma_ctx *ctx;
+	vm_page_t m;
         vm_reserv_t rv;
         int got;
+
+	// TODO: handle UMA_ANYDOMAIN
 
         KASSERT(arg != NULL, ("%s: arg is NULL; did you forget to pass the context?", __func__));
         ctx = (struct  vm_reserv_uma_ctx *)arg;
@@ -1637,13 +1632,14 @@ vm_reserv_uma_import(void *arg, void **store, int count, int domain,
         while(got < count) {
                 rv = vm_reserv_uma_next(ctx, qp, domain);
                 if (rv == NULL){
-                        store[got] = vm_page_alloc_noobj_domain(domain, ctx->req);
+                        m = vm_page_alloc_noobj_domain(domain, VM_ALLOC_WIRED | VM_ALLOC_WAITOK);
+			store[got] = (void *)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m));
                         got++;
                         continue;
                 }
 
                 vm_reserv_lock(rv);
-                got += vm_reserv_uma_alloc_npages(rv, &store[got], count - got, ctx->req);
+                got += vm_reserv_uma_alloc_npages(rv, &store[got], count - got, VM_ALLOC_WIRED | VM_ALLOC_WAITOK);
                 if (rv->popcnt == VM_LEVEL_0_NPAGES) {
                         /* Full reservations get unqueued. */
                         UMA_RESERVQ_LOCK(qp);
@@ -1665,12 +1661,13 @@ vm_reserv_uma_release(void *arg, void **store, int count)
         vm_reserv_t rv;
         vm_page_t m;
         int i, index;
-        boolean_t enqueue;
+        boolean_t enqueue, rv_full;
 
         KASSERT(arg != NULL, ("%s: arg is NULL; did you forget to pass the context?", __func__));
         i = 0;
         ctx = (struct  vm_reserv_uma_ctx *)arg;
         while (i < count){
+		KASSERT(((vm_offset_t)store[i]) % PAGE_SIZE == 0, ("%s: unaligned store value %p", __func__, store[i]));
                 m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
                 rv = vm_reserv_from_page(m);
                 // TODO: convert to racy check + locked recheck
@@ -1687,7 +1684,8 @@ vm_reserv_uma_release(void *arg, void **store, int count)
                                 ("%s: reserv %p's domain is corrupted %d", __func__,
                                  rv, rv->domain));
 
-                        enqueue = !!(rv->popcnt == VM_LEVEL_0_NPAGES);
+                        rv_full = !!(rv->popcnt == VM_LEVEL_0_NPAGES);
+			enqueue = rv_full;
                         qp = &ctx->partqs[rv->domain];
                         vmd = VM_DOMAIN(rv->domain);
                         do {
@@ -1706,12 +1704,19 @@ vm_reserv_uma_release(void *arg, void **store, int count)
                                         vm_domain_free_unlock(vmd);
                                         counter_u64_add(vm_reserv_freed, 1);
                                         /* We're releasing the reservation; don't queue it */
-                                        enqueue = false;
+					if (rv_full)
+	                                        enqueue = false;
+					else {
+						UMA_RESERVQ_LOCK(qp);
+						LIST_REMOVE(rv, objq);
+						UMA_RESERVQ_UNLOCK(qp);
+					}
+					vm_reserv_clear_noobj(rv);
                                 }
                                 vm_domain_freecnt_inc(vmd, 1);
 
                                 i++;
-                                if (i > count)
+                                if (i >= count)
                                         break;
                                 m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)store[i]));
                                 // TODO: optimize for sequential page case
@@ -1727,6 +1732,7 @@ vm_reserv_uma_release(void *arg, void **store, int count)
                 } else {
                         vm_reserv_unlock(rv);
                         vm_page_free(m);
+			i++;
                 }
         }
 }

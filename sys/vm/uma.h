@@ -231,58 +231,63 @@ uma_zone_t uma_zcache_create(const char *name, int size, uma_ctor ctor,
  * These flags share space with UMA_ZFLAGs in uma_int.h.  Be careful not to
  * overlap when adding new features.
  */
-#define	UMA_ZONE_UNMANAGED	0x0001	/*
-					 * Don't regulate the cache size, even
-					 * under memory pressure.
-					 */
-#define UMA_ZONE_ZINIT		0x0002	/* Initialize with zeros */
-#define UMA_ZONE_CONTIG		0x0004	/*
-					 * Physical memory underlying an object
-					 * must be contiguous.
-					 */
-#define UMA_ZONE_NOTOUCH	0x0008	/* UMA may not access the memory */
-#define UMA_ZONE_MALLOC		0x0010	/* For use by malloc(9) only! */
-#define UMA_ZONE_NOFREE		0x0020	/* Do not free slabs of this type! */
-#define UMA_ZONE_MTXCLASS	0x0040	/* Create a new lock class */
-#define	UMA_ZONE_VM		0x0080	/*
-					 * Used for internal vm datastructures
-					 * only.
-					 */
-#define	UMA_ZONE_NOTPAGE	0x0100	/* allocf memory not vm pages */
-#define	UMA_ZONE_SECONDARY	0x0200	/* Zone is a Secondary Zone */
-#define	UMA_ZONE_NOBUCKET	0x0400	/* Do not use buckets. */
-#define	UMA_ZONE_MAXBUCKET	0x0800	/* Use largest buckets. */
-#define	UMA_ZONE_CACHESPREAD	0x2000	/*
-					 * Spread memory start locations across
-					 * all possible cache lines.  May
-					 * require many virtually contiguous
-					 * backend pages and can fail early.
-					 */
-#define	UMA_ZONE_NODUMP		0x4000	/*
-					 * Zone's pages will not be included in
-					 * mini-dumps.
-					 */
-#define	UMA_ZONE_PCPU		0x8000	/*
-					 * Allocates mp_maxid + 1 slabs of
-					 * PAGE_SIZE
-					 */
-#define	UMA_ZONE_FIRSTTOUCH	0x10000	/* First touch NUMA policy */
-#define	UMA_ZONE_ROUNDROBIN	0x20000	/* Round-robin NUMA policy. */
-#define	UMA_ZONE_SMR		0x40000 /*
-					 * Safe memory reclamation defers
-					 * frees until all read sections
-					 * have exited.  This flag creates
-					 * a unique SMR context for this
-					 * zone.  To share contexts see
-					 * uma_zone_set_smr() below.
-					 *
-					 * See sys/smr.h for more details.
-					 */
-#define	UMA_ZONE_NOKASAN	0x80000	/*
-					 * Disable KASAN verification.  This is
-					 * implied by NOFREE.  Cache zones are
-					 * not verified by default.
-					 */
+#define	UMA_ZONE_UNMANAGED	0x0001	 /*
+					  * Don't regulate the cache size, even
+					  * under memory pressure.
+					  */
+#define UMA_ZONE_ZINIT		0x0002	 /* Initialize with zeros */
+#define UMA_ZONE_CONTIG		0x0004	 /*
+					  * Physical memory underlying an object
+					  * must be contiguous.
+					  */
+#define UMA_ZONE_NOTOUCH	0x0008	 /* UMA may not access the memory */
+#define UMA_ZONE_MALLOC		0x0010	 /* For use by malloc(9) only! */
+#define UMA_ZONE_NOFREE		0x0020	 /* Do not free slabs of this type! */
+#define UMA_ZONE_MTXCLASS	0x0040	 /* Create a new lock class */
+#define	UMA_ZONE_VM		0x0080	 /*
+					  * Used for internal vm datastructures
+					  * only.
+					  */
+#define	UMA_ZONE_NOTPAGE	0x0100	 /* allocf memory not vm pages */
+#define	UMA_ZONE_SECONDARY	0x0200	 /* Zone is a Secondary Zone */
+#define	UMA_ZONE_NOBUCKET	0x0400	 /* Do not use buckets. */
+#define	UMA_ZONE_MAXBUCKET	0x0800	 /* Use largest buckets. */
+#define	UMA_ZONE_CACHESPREAD	0x2000	 /*
+					  * Spread memory start locations across
+					  * all possible cache lines.  May
+					  * require many virtually contiguous
+					  * backend pages and can fail early.
+					  */
+#define	UMA_ZONE_NODUMP		0x4000	 /*
+					  * Zone's pages will not be included in
+					  * mini-dumps.
+					  */
+#define	UMA_ZONE_PCPU		0x8000	 /*
+					  * Allocates mp_maxid + 1 slabs of
+					  * PAGE_SIZE
+					  */
+#define	UMA_ZONE_FIRSTTOUCH	0x10000	 /* First touch NUMA policy */
+#define	UMA_ZONE_ROUNDROBIN	0x20000	 /* Round-robin NUMA policy. */
+#define	UMA_ZONE_SMR		0x40000  /*
+					  * Safe memory reclamation defers
+					  * frees until all read sections
+					  * have exited.  This flag creates
+					  * a unique SMR context for this
+					  * zone.  To share contexts see
+					  * uma_zone_set_smr() below.
+					  *
+					  * See sys/smr.h for more details.
+					  */
+#define	UMA_ZONE_NOKASAN	0x80000	 /*
+					  * Disable KASAN verification.  This is
+					  * implied by NOFREE.  Cache zones are
+					  * not verified by default.
+					  */
+#define UMA_ZONE_SUPERPAGE	0x100000 /*
+					  * Fetch pages for zone using a
+					  * superpage-aware algorithm.
+					  * Helps stave off memory fragmentation.
+					  */
 /* In use by UMA_ZFLAGs:	0xffe00000 */
 
 /*
