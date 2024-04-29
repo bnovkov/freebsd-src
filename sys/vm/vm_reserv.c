@@ -1422,6 +1422,8 @@ vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
 	vm_reserv_array = (void *)(uintptr_t)pmap_map(vaddr, new_end, end,
 	    VM_PROT_READ | VM_PROT_WRITE);
 	bzero(vm_reserv_array, size);
+	/* Initialize UMA small alloc ctx. */
+	vm_reserv_uma_init_ctx();
 
 	/*
 	 * Return the next available physical address.
@@ -1505,14 +1507,16 @@ vm_reserv_fetch_noobj(int domain, int req){
                         vm_domain_free_unlock(vmd);
                         rv = NULL;
                 }
+	        KASSERT(rv->pages == m,
+	            ("vm_reserv_alloc_page: reserv %p's pages is corrupted", rv));
         }
-
         return (rv);
 }
 
 static __noinline vm_page_t
 vm_reserv_alloc_page_noobj(vm_reserv_t rv, int req) {
         struct vm_domain *vmd;
+	vm_page_t m;
         ssize_t i;
 
         vm_reserv_assert_locked(rv);
@@ -1532,11 +1536,24 @@ vm_reserv_alloc_page_noobj(vm_reserv_t rv, int req) {
         /* Scan bitmap and allocate page. */
         bit_ffc(rv->popmap, VM_LEVEL_0_NPAGES, &i);
         KASSERT(i != -1, ("%s: no free pages found after passing popcnt < LEVEL_0_NPAGES check", __func__));
-        KASSERT(!bit_test(rv->popmap, i), ("%s: bit %d is allocated", __func__, i));
+        KASSERT(!bit_test(rv->popmap, i), ("%s: bit %zd is allocated", __func__, i));
         bit_set(rv->popmap, i);
         rv->popcnt++;
 
-        return (&rv->pages[i]);
+        m = &rv->pages[i];
+	vm_page_dequeue(m);
+        m->pindex = 0xdeadc0dedeadc0de;
+	m->flags = m->flags & PG_ZERO;
+        m->a.flags = 0;
+        m->oflags = VPO_UNMANAGED;
+        m->busy_lock = VPB_UNBUSIED;
+        vm_wire_add(1);
+        m->ref_count = 1;
+
+        if ((req & VM_ALLOC_ZERO) != 0 && (m->flags & PG_ZERO) == 0)
+                pmap_zero_page(m);
+
+	return (m);
 }
 
 static __noinline void
@@ -1553,9 +1570,6 @@ vm_reserv_free_page_noobj(vm_reserv_t rv, vm_page_t m) {
                  rv, rv->domain));
         vmd = VM_DOMAIN(rv->domain);
         index = m - rv->pages;
-        KASSERT(index <=,
-                ("%s: reserv %p's popmap[%d] is clear", __func__, rv,
-                 index));
         KASSERT(bit_test(rv->popmap, index),
                 ("%s: reserv %p's popmap[%d] is clear", __func__, rv,
                  index));
@@ -1570,6 +1584,9 @@ vm_reserv_free_page_noobj(vm_reserv_t rv, vm_page_t m) {
                 vm_reserv_clear_noobj(rv);
         }
         vm_domain_freecnt_inc(vmd, 1);
+	vm_wire_sub(1);
+	m->ref_count = 0;
+        m->busy_lock = VPB_FREED;
 }
 
 struct vm_reserv_uma_queue {
@@ -1654,9 +1671,11 @@ vm_reserv_uma_alloc_page(int domain, int flags)
         if (rv != NULL){
                 vm_reserv_lock(rv);
                 m = vm_reserv_alloc_page_noobj(rv, req);
-                if (m == NULL)
+                if (m == NULL){
                         /* No pages left in reservation - fetch another rv. */
+	                vm_reserv_unlock(rv);
                         goto retry;
+		}
                 if (rv->popcnt == VM_LEVEL_0_NPAGES && rv->inpartpopq != 0) {
                         /* Reservation is full - remove it from the partq. */
                         UMA_RESERVQ_LOCK(qp);
@@ -1683,8 +1702,16 @@ vm_reserv_uma_free_page(vm_page_t m)
 
         ctx = &uma_alloc_ctx;
         rv = vm_reserv_from_page(m);
-        vm_reserv_lock(rv);
-        if (rv->isnoobj != 0) {
+
+	/*
+	 * Check if the reservation is valid.
+	 * Since we are mixing noobj pages with 
+	 * reservation-backed pages, we can run 
+	 * into invalid reservations.
+	 */
+        if (rv->pages != NULL) {
+	        vm_reserv_lock(rv);
+		if (rv->isnoobj != 0){
                 domain = rv->domain;
                 qp = &ctx->partqs[domain];
                 vmd = VM_DOMAIN(domain);
@@ -1706,11 +1733,13 @@ vm_reserv_uma_free_page(vm_page_t m)
                 }
                 vm_domain_freecnt_inc(vmd, 1);
                 vm_reserv_unlock(rv);
-        } else {
+		return;
+		}
                 vm_reserv_unlock(rv);
-                vm_page_unwire_noq(m);
-                vm_page_free(m);
         }
+
+        vm_page_unwire_noq(m);
+        vm_page_free(m);
 }
 
 #endif	/* VM_NRESERVLEVEL > 0 */

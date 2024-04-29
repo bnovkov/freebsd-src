@@ -2068,6 +2068,8 @@ small_alloc(uma_zone_t zone, vm_size_t bytes __unused, int domain, uint8_t *flag
 #else
         m = vm_page_alloc_noobj_domain(domain, req);
 #endif
+	if (m == NULL)
+		return (NULL);
         uma_dump_add_page(VM_PAGE_TO_PHYS(m), wait);
 
         return ((void *)uma_vm_page_to_dmap(m));
