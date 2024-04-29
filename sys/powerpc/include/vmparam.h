@@ -122,13 +122,13 @@
  * Use the direct-mapped BAT registers for UMA small allocs. This
  * takes pressure off the small amount of available KVA.
  */
-#define UMA_MD_SMALL_ALLOC
+#define UMA_USE_DMAP
 
 #else /* Book-E */
 
 /* Use the direct map for UMA small allocs on powerpc64. */
 #ifdef __powerpc64__
-#define UMA_MD_SMALL_ALLOC
+#define UMA_USE_DMAP
 #else
 #define	VM_MIN_KERNEL_ADDRESS		0xc0000000
 #define	VM_MAX_KERNEL_ADDRESS		0xffffefff

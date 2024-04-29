@@ -664,13 +664,12 @@ uma_total_inc(unsigned long size)
 }
 
 /*
- * The following two functions may be defined by architecture specific code
- * if they can provide more efficient allocation functions.  This is useful
+ * Architecture-specific code must define these two functions
+ * if the DMAP is not constantly
  * for using direct mapped addresses.
  */
-void *uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain,
-    uint8_t *pflag, int wait);
-void uma_small_free(void *mem, vm_size_t size, uint8_t flags);
+vm_offset_t uma_vm_page_to_dmap(vm_page_t m);
+vm_page_t uma_dmap_to_vm_page(void *mem);
 
 /* Set a global soft limit on UMA managed memory. */
 void uma_set_limit(unsigned long limit);

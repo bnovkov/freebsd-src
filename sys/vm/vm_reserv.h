@@ -68,10 +68,9 @@ int		vm_reserv_size(int level);
 vm_paddr_t	vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end);
 vm_page_t	vm_reserv_to_superpage(vm_page_t m);
 
-int vm_reserv_uma_import(void *arg, void **store, int count, int domain, int flags);
-void vm_reserv_uma_release(void *arg, void **store, int count);
-void * vm_reserv_uma_alloc_ctx(int req);
-void vm_reserv_uma_free_ctx(void *ctx);
+vm_page_t
+vm_reserv_uma_alloc_page(int domain, int flags);
+void vm_reserv_uma_free_page(vm_page_t m);
 
 #endif	/* VM_NRESERVLEVEL > 0 */
 #endif	/* _KERNEL */

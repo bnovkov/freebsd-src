@@ -93,6 +93,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_dumpset.h>
+#include <vm/vm_reserv.h>
 #include <vm/uma.h>
 #include <vm/uma_int.h>
 #include <vm/uma_dbg.h>
@@ -281,11 +282,13 @@ enum zfreeskip {
 void	uma_startup1(vm_offset_t);
 void	uma_startup2(void);
 
+static void *small_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void *noobj_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void *page_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void *pcpu_page_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void *startup_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void *contig_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
+static void small_free(void *, vm_size_t, uint8_t);
 static void page_free(void *, vm_size_t, uint8_t);
 static void pcpu_page_free(void *, vm_size_t, uint8_t);
 static uma_slab_t keg_alloc_slab(uma_keg_t, uma_zone_t, int, int, int);
@@ -1791,6 +1794,9 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	if (keg->uk_flags & UMA_ZONE_NODUMP)
 		aflags |= M_NODUMP;
 
+  if (keg->uk_flags & UMA_ZONE_NOFREE)
+          aflags |= M_NEVERFREED;
+
 	/* zone is passed for legacy reasons. */
 	size = keg->uk_ppera * PAGE_SIZE;
 	mem = keg->uk_allocf(zone, size, domain, &sflags, aflags);
@@ -1865,6 +1871,49 @@ fail:
 	return (NULL);
 }
 
+static __inline void
+uma_dump_add_page(vm_paddr_t pa, int wait) {
+#if defined(__aarch64__) || defined(__amd64__) ||   \
+        defined(__riscv) || defined(__powerpc64__)
+        if ((wait & M_NODUMP) == 0)
+                dump_add_page(pa);
+#endif
+}
+
+static __inline void
+uma_dump_drop_page(vm_paddr_t pa) {
+#if defined(__aarch64__) || defined(__amd64__) ||   \
+        defined(__riscv) || defined(__powerpc64__)
+        dump_drop_page(pa);
+#endif
+}
+
+/*
+ * Architectures that use the DMAP for speeding up UMA allocations
+ * may override uma_{vm_page_to_dmap, dmap_to_vm_page} with alternative
+ * implementations (e.g. powerpc64/uma_machdep.c).
+ */
+vm_offset_t __weak_symbol
+uma_vm_page_to_dmap(vm_page_t m)
+{
+#ifdef UMA_USE_DMAP
+        return (PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m)));
+#else
+        panic("%s: attempting to use UMA DMAP with !defined(UMA_USE_DMAP)", __func__);
+#endif
+}
+
+vm_page_t __weak_symbol
+uma_dmap_to_vm_page(void *mem)
+{
+#ifdef UMA_USE_DMAP
+        return (PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)mem)));
+#else
+        panic("%s: attempting to use UMA DMAP with !UMA_USE_DMAP", __func__);
+#endif
+
+}
+
 /*
  * This function is intended to be used early on in place of page_alloc().  It
  * performs contiguous physical memory allocations and uses a bump allocator for
@@ -1888,15 +1937,10 @@ startup_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 	if (m == NULL)
 		return (NULL);
 
-	pa = VM_PAGE_TO_PHYS(m);
-	for (i = 0; i < pages; i++, pa += PAGE_SIZE) {
-#if defined(__aarch64__) || defined(__amd64__) || \
-    defined(__riscv) || defined(__powerpc64__)
-		if ((wait & M_NODUMP) == 0)
-			dump_add_page(pa);
-#endif
-	}
-
+  pa = VM_PAGE_TO_PHYS(m);
+  for (i = 0; i < pages; i++, pa += PAGE_SIZE) {
+          uma_dump_add_page(pa, wait);
+  }
 	/* Allocate KVA and indirectly advance bootmem. */
 	return ((void *)pmap_map(&bootmem, m->phys_addr,
 	    m->phys_addr + (pages * PAGE_SIZE), VM_PROT_READ | VM_PROT_WRITE));
@@ -1918,10 +1962,7 @@ startup_free(void *mem, vm_size_t bytes)
 	if (va >= bootstart && va + bytes <= bootmem)
 		pmap_remove(kernel_pmap, va, va + bytes);
 	for (; bytes != 0; bytes -= PAGE_SIZE, m++) {
-#if defined(__aarch64__) || defined(__amd64__) || \
-    defined(__riscv) || defined(__powerpc64__)
-		dump_drop_page(VM_PAGE_TO_PHYS(m));
-#endif
+		uma_dump_drop_page(VM_PAGE_TO_PHYS(m));
 		vm_page_unwire_noq(m);
 		vm_page_free(m);
 	}
@@ -2005,6 +2046,34 @@ fail:
 }
 
 /*
+ * Allocates a single page not belonging to a VM object.
+ *
+ * Arguments:
+ *	bytes  The number of bytes requested
+ *	wait   Shall we wait?
+ *
+ * Returns:
+ *	A pointer to the alloced memory or possibly
+ *	NULL if M_NOWAIT is set.
+ */
+static void *
+small_alloc(uma_zone_t zone, vm_size_t bytes __unused, int domain, uint8_t *flags,
+    int wait)
+{
+        vm_page_t m;
+
+        *flags = UMA_SLAB_PRIV;
+#if VM_NRESERVLEVEL > 0
+        m = vm_reserv_uma_alloc_page(domain, wait);
+#else
+        m = vm_page_alloc_noobj_domain(domain, req);
+#endif
+        uma_dump_add_page(VM_PAGE_TO_PHYS(m), wait);
+
+        return ((void *)uma_vm_page_to_dmap(m));
+}
+
+/*
  * Allocates a number of pages not belonging to a VM object
  *
  * Arguments:
@@ -2077,6 +2146,34 @@ contig_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 	*pflag = UMA_SLAB_KERNEL;
 	return ((void *)kmem_alloc_contig_domainset(DOMAINSET_FIXED(domain),
 	    bytes, wait, 0, ~(vm_paddr_t)0, 1, 0, VM_MEMATTR_DEFAULT));
+}
+
+/*
+ * Frees a number of pages to the system
+ *
+ * Arguments:
+ *	mem   A pointer to the memory to be freed
+ *	size  The size of the memory being freed
+ *	flags The original p->us_flags field
+ *
+ * Returns:
+ *	Nothing
+ */
+static void
+small_free(void *mem, vm_size_t size __unused, uint8_t flags)
+{
+        vm_page_t m;
+
+        KASSERT(((vm_offset_t)mem) % PAGE_SIZE == 0, ("%s: unaligned address %p", __func__, mem));
+
+        m = uma_dmap_to_vm_page(mem);
+#if VM_NRESERVLEVEL > 0
+        vm_reserv_uma_free_page(m);
+#else
+        vm_page_unwire_noq(m);
+        vm_page_free(m);
+#endif
+        uma_dump_drop_page(VM_PAGE_TO_PHYS(m));
 }
 
 /*
@@ -2488,9 +2585,9 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	 * If we haven't booted yet we need allocations to go through the
 	 * startup cache until the vm is ready.
 	 */
-#ifdef UMA_MD_SMALL_ALLOC
+#ifdef UMA_USE_DMAP
 	if (keg->uk_ppera == 1)
-		keg->uk_allocf = uma_small_alloc;
+		keg->uk_allocf = small_alloc;
 	else
 #endif
 	if (booted < BOOT_KVA)
@@ -2501,9 +2598,9 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 		keg->uk_allocf = contig_alloc;
 	else
 		keg->uk_allocf = page_alloc;
-#ifdef UMA_MD_SMALL_ALLOC
+#ifdef UMA_USE_DMAP
 	if (keg->uk_ppera == 1)
-		keg->uk_freef = uma_small_free;
+		keg->uk_freef = small_free;
 	else
 #endif
 	if (keg->uk_flags & UMA_ZONE_PCPU)
@@ -3154,7 +3251,7 @@ uma_startup1(vm_offset_t virtual_avail)
 	smr_init();
 }
 
-#ifndef UMA_MD_SMALL_ALLOC
+#ifndef UMA_USE_DMAP
 extern void vm_radix_reserve_kva(void);
 #endif
 
@@ -3174,7 +3271,7 @@ uma_startup2(void)
 		vm_map_unlock(kernel_map);
 	}
 
-#ifndef UMA_MD_SMALL_ALLOC
+#ifndef UMA_USE_DMAP
 	/* Set up radix zone to use noobj_alloc. */
 	vm_radix_reserve_kva();
 #endif
@@ -5171,7 +5268,7 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 
 	pages = howmany(count, keg->uk_ipers) * keg->uk_ppera;
 
-#ifdef UMA_MD_SMALL_ALLOC
+#ifdef UMA_USE_DMAP
 	if (keg->uk_ppera > 1) {
 #else
 	if (1) {
@@ -5186,8 +5283,8 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 	keg->uk_kva = kva;
 	keg->uk_offset = 0;
 	zone->uz_max_items = pages * keg->uk_ipers;
-#ifdef UMA_MD_SMALL_ALLOC
-	keg->uk_allocf = (keg->uk_ppera > 1) ? noobj_alloc : uma_small_alloc;
+#ifdef UMA_USE_DMAP
+	keg->uk_allocf = (keg->uk_ppera > 1) ? noobj_alloc : small_alloc;
 #else
 	keg->uk_allocf = noobj_alloc;
 #endif
