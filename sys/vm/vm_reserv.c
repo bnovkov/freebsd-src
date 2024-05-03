@@ -111,6 +111,8 @@
  */
 #define	PARTPOPSLOP	1
 
+#define VM_RESERV_NOOBJ_MARK ((vm_object_t)1)
+
 /*
  * The reservation structure
  *
@@ -118,12 +120,17 @@
  * speculatively allocated to an object.  The reservation provides the small
  * physical pages for the range [pindex, pindex + VM_LEVEL_0_NPAGES) of offsets
  * within that object.  The reservation's "popcnt" tracks the number of these
- * small physical pages that are in use at any given time.  When and if the
- * reservation is not fully utilized, it appears in the queue of partially
- * populated reservations.  The reservation always appears on the containing
- * object's list of reservations.
+ * small physical pages that are in use at any given time.  When and if a
+ * managed reservation is not fully utilized, it appears in the queue of
+ * partially populated managed reservations.  The managed reservation always
+ * appears on the containing object's list of reservations.
  *
- * A partially populated reservation can be broken and reclaimed at any time.
+ * A partially populated managed reservation can be broken and reclaimed at any
+ * time.
+ *
+ * Unmanaged reservations are not a part of any vm_object reservation
+ * lists and should be distinguished by setting the reservation's
+ * object to VM_RESERV_NOOBJ_MARK.
  *
  * c - constant after boot
  * d - vm_reserv_domain_lock
@@ -171,19 +178,22 @@ TAILQ_HEAD(vm_reserv_queue, vm_reserv);
  * array by computing a physical reservation number from the page's physical
  * address.  The physical reservation number is used as the array index.
  *
- * An "active" reservation is a valid reservation structure that has a non-NULL
- * "object" field and a non-zero "popcnt" field.  In other words, every active
- * reservation belongs to a particular object.  Moreover, every active
- * reservation has an entry in the containing object's list of reservations.  
+ * An "active" reservation is a valid reservation structure that is either
+ * managed or unmanaged. Active managed reservations have a non-NULL "object"
+ * field and a non-zero "popcnt" field, while active unmanaged reservations have
+ * a the "object" field to VM_RESERV_NOOBJ_MARK, and non-zero "popcnt"
+ * field. In other words, every active managed reservation belongs to a
+ * particular object.  Moreover, every active managed reservation has an entry
+ * in the containing object's list of reservations.
  */
 static vm_reserv_t vm_reserv_array;
 
 /*
- * The per-domain partially populated reservation queues
+ * The per-domain partially populated managed reservation queues
  *
  * These queues enable the fast recovery of an unused free small page from a
  * partially populated reservation.  The reservation at the head of a queue
- * is the least recently changed, partially populated reservation.
+ * is the least recently changed, partially populated managed reservation.
  *
  * Access to this queue is synchronized by the per-domain reservation lock.
  * Threads reclaiming free pages from the queue must hold the per-domain scan
@@ -259,7 +269,7 @@ static boolean_t	vm_reserv_has_pindex(vm_reserv_t rv,
 			    vm_pindex_t pindex);
 static void		vm_reserv_populate(vm_reserv_t rv, int index);
 static void		vm_reserv_reclaim(vm_reserv_t rv);
-
+static boolean_t	vm_reserv_is_noobj(vm_reserv_t rv);
 /*
  * Returns the current number of full reservations.
  *
@@ -517,6 +527,8 @@ vm_reserv_populate(vm_reserv_t rv, int index)
 	    __FUNCTION__, rv, rv->object, rv->popcnt, rv->inpartpopq);
 	KASSERT(rv->object != NULL,
 	    ("vm_reserv_populate: reserv %p is free", rv));
+	KASSERT(!vm_reserv_is_noobj(rv),
+	    ("vm_reserv_populate: reserv %p is a noobj reservation", rv));
 	KASSERT(!bit_test(rv->popmap, index),
 	    ("vm_reserv_populate: reserv %p's popmap[%d] is set", rv,
 	    index));
@@ -966,6 +978,8 @@ vm_reserv_free_page(vm_page_t m)
 	if (rv->object == NULL)
 		return (FALSE);
 	vm_reserv_lock(rv);
+	KASSERT(!vm_reserv_is_noobj(rv),
+	    ("%s: reserv %p is noobj ", __func__, rv));
 	/* Re-validate after lock. */
 	if (rv->object != NULL) {
 		vm_reserv_depopulate(rv, m - rv->pages);
@@ -1438,6 +1452,145 @@ vm_reserv_to_superpage(vm_page_t m)
 		m = NULL;
 
 	return (m);
+}
+
+/*
+ * Returns true if 'rv' is unmanaged, false otherwise.
+ */
+static boolean_t
+vm_reserv_is_noobj(vm_reserv_t rv)
+{
+	boolean_t ret = false;
+
+	vm_reserv_assert_locked(rv);
+	if (rv->object == VM_RESERV_NOOBJ_MARK) {
+		ret = true;
+	}
+	return (ret);
+}
+
+/*
+ * Marks a reservation as unmanaged.
+ */
+static void
+vm_reserv_mark_noobj(vm_reserv_t rv)
+{
+
+	vm_reserv_assert_locked(rv);
+	KASSERT(!vm_reserv_is_noobj(rv),
+	    ("%s: reservation %p already marked as noobj", __func__, rv));
+	KASSERT(rv->object == NULL, ("%s: reserv %p is managed", __func__, rv));
+	rv->object = VM_RESERV_NOOBJ_MARK;
+}
+
+/*
+ * Clears unmanaged status for a reservation.
+ */
+static void
+vm_reserv_clear_noobj(vm_reserv_t rv)
+{
+
+	vm_reserv_assert_locked(rv);
+	KASSERT(vm_reserv_is_noobj(rv),
+	    ("%s: reserv %p is managed", __func__, rv));
+	rv->object = NULL;
+}
+
+/*
+ * Tries to fetch an empty reservation from the specified domain
+ * and marks it as unmanaged.
+ */
+static vm_reserv_t
+vm_reserv_fetch_noobj(int domain, int req)
+{
+	vm_reserv_t rv = NULL;
+	struct vm_domain *vmd;
+	vm_page_t m;
+
+	vmd = VM_DOMAIN(domain);
+	vm_domain_free_lock(vmd);
+	m = vm_phys_alloc_pages(domain, VM_FREEPOOL_DEFAULT, VM_LEVEL_0_ORDER);
+	vm_domain_free_unlock(vmd);
+
+	if (m != NULL) {
+		rv = vm_reserv_from_page(m);
+		vm_reserv_lock(rv);
+		vm_reserv_mark_noobj(rv);
+		KASSERT(rv->pages == m,
+		    ("vm_reserv_alloc_page: reserv %p's pages is corrupted",
+			rv));
+		vm_reserv_unlock(rv);
+	}
+	return (rv);
+}
+
+/*
+ * Allocates a 0-order page from an unmanaged reservation 'rv'.
+ */
+static vm_page_t
+vm_reserv_alloc_page_noobj(vm_reserv_t rv, int req)
+{
+	struct vm_domain *vmd;
+	ssize_t i;
+
+	vm_reserv_assert_locked(rv);
+	KASSERT(vm_reserv_is_noobj(rv),
+	    ("%s: reserv %p is not a noobj reserv", __func__, rv));
+	KASSERT(rv->pages->psind == 0,
+	    ("%s: reserv %p is already promoted", __func__, rv));
+	KASSERT(rv->domain < vm_ndomains,
+	    ("%s: reserv %p's domain is corrupted %d", __func__, rv,
+		rv->domain));
+
+	if (rv->popcnt == VM_LEVEL_0_NPAGES)
+		return (NULL);
+	vmd = VM_DOMAIN(rv->domain);
+	if (vm_domain_allocate(vmd, req, 1) == 0)
+		return (NULL);
+	/* Scan bitmap and allocate page. */
+	bit_ffc(rv->popmap, VM_LEVEL_0_NPAGES, &i);
+	KASSERT(i != -1,
+	    ("%s: no free pages found after passing 'popcnt < VM_LEVEL_0_NPAGES' check",
+		__func__));
+	KASSERT(!bit_test(rv->popmap, i),
+	    ("%s: bit %zd is allocated", __func__, i));
+	bit_set(rv->popmap, i);
+	rv->popcnt++;
+
+	return (&rv->pages[i]);
+}
+
+/*
+ * Frees a 0-order page belonging to an unmanaged reservation 'rv'.
+ */
+static void
+vm_reserv_free_page_noobj(vm_reserv_t rv, vm_page_t m)
+{
+	struct vm_domain *vmd;
+	int index;
+
+	KASSERT(vm_reserv_is_noobj(rv),
+	    ("%s: reserv %p is not a noobj reserv", __func__, rv));
+	KASSERT(rv->popcnt > 0,
+	    ("%s: reserv %p's popcnt is corrupted", __func__, rv));
+	KASSERT(rv->domain < vm_ndomains,
+	    ("%s: reserv %p's domain is corrupted %d", __func__, rv,
+		rv->domain));
+	vmd = VM_DOMAIN(rv->domain);
+	index = m - rv->pages;
+	KASSERT(bit_test(rv->popmap, index),
+	    ("%s: reserv %p's popmap[%d] is clear", __func__, rv, index));
+	bit_clear(rv->popmap, index);
+	rv->popcnt--;
+	if (rv->popcnt == 0) {
+		/* Reservation is empty - release it. */
+		vm_domain_free_lock(vmd);
+		vm_phys_free_pages(rv->pages, VM_LEVEL_0_ORDER);
+		vm_domain_free_unlock(vmd);
+		counter_u64_add(vm_reserv_freed, 1);
+		vm_reserv_clear_noobj(rv);
+	}
+	vm_domain_freecnt_inc(vmd, 1);
 }
 
 #endif	/* VM_NRESERVLEVEL > 0 */
