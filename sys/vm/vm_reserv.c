@@ -216,6 +216,29 @@ static struct vm_reserv_domain vm_rvd[MAXMEMDOM];
 #define	vm_reserv_domain_scan_lock(d)	mtx_lock(&vm_rvd[(d)].marker.lock)
 #define	vm_reserv_domain_scan_unlock(d)	mtx_unlock(&vm_rvd[(d)].marker.lock)
 
+/*
+ * Reservation queues for UMA's small_alloc.
+ *
+ * Used by the reservation-aware 0-order page allocator
+ * to keep track of partially populated unmanaged reservations and
+ * unmanaged reservations used for UMA_ZONE_NOFREE pages.
+ */
+struct vm_reserv_uma_queue {
+	struct mtx lock;
+	LIST_HEAD(rq, vm_reserv) head;
+};
+
+/*
+ * Each domain has two small_alloc reservation queues.
+ */
+static struct {
+	struct vm_reserv_uma_queue partq;
+	struct vm_reserv_uma_queue nofreeq;
+} uma_small_alloc_queues[MAXMEMDOM];
+
+#define VM_RESERV_UMAQ_LOCK(rqp) mtx_lock(&(rqp)->lock)
+#define VM_RESERV_UMAQ_UNLOCK(rqp) mtx_unlock(&(rqp)->lock)
+
 static SYSCTL_NODE(_vm, OID_AUTO, reserv, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "Reservation Info");
 
@@ -1386,6 +1409,7 @@ vm_reserv_size(int level)
 vm_paddr_t
 vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
 {
+	struct vm_reserv_uma_queue *qp;
 	vm_paddr_t new_end;
 	vm_pindex_t count;
 	size_t size;
@@ -1429,6 +1453,15 @@ vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
 	vm_reserv_array = (void *)(uintptr_t)pmap_map(vaddr, new_end, end,
 	    VM_PROT_READ | VM_PROT_WRITE);
 	bzero(vm_reserv_array, size);
+	/* Initialize UMA small_alloc queues. */
+	for (i = 0; i < vm_ndomains; i++) {
+		qp = &uma_small_alloc_queues[i].partq;
+		mtx_init(&qp->lock, "rvuma", NULL, MTX_DEF);
+		LIST_INIT(&qp->head);
+		qp = &uma_small_alloc_queues[i].nofreeq;
+		mtx_init(&qp->lock, "rvuma", NULL, MTX_DEF);
+		LIST_INIT(&qp->head);
+	}
 
 	/*
 	 * Return the next available physical address.
@@ -1591,6 +1624,173 @@ vm_reserv_free_page_noobj(vm_reserv_t rv, vm_page_t m)
 		vm_reserv_clear_noobj(rv);
 	}
 	vm_domain_freecnt_inc(vmd, 1);
+}
+
+/*
+ * Attempts to fetch a partially populated reservation from the UMA small_alloc
+ * queues. If there are none available, try to allocate and enqueue a
+ * new unmanaged reservation.
+ */
+static vm_reserv_t
+vm_reserv_uma_next_rv(struct vm_reserv_uma_queue *qp, int domain, int req)
+{
+	vm_reserv_t rv;
+	int nretries = 0;
+
+	/* Try to grab a partially populated chunk. */
+	rv = LIST_FIRST(&qp->head);
+	if (rv != NULL)
+		return rv;
+retry:
+	/* Nothing was found - reach for the page allocator.  */
+	rv = vm_reserv_fetch_noobj(domain, req);
+	if (rv == NULL) {
+		if (nretries < 3) {
+			nretries++;
+			goto retry;
+		}
+		return (NULL);
+	}
+
+	VM_RESERV_UMAQ_LOCK(qp);
+	/* Record that we've enqueued the reservation. */
+	rv->inpartpopq = 1;
+	LIST_INSERT_HEAD(&qp->head, rv, objq);
+	VM_RESERV_UMAQ_UNLOCK(qp);
+
+	return (rv);
+}
+
+/*
+ * A reservation-aware 0-order page allocator for UMA zones.
+ * Uses the UMA small_alloc queues to allocate 0-order pages
+ * from unmanaged reservations.
+ *
+ * Allocating long-lived unmovable pages using this routine helps reduce
+ * the physical memory fragmentation rate.
+ */
+vm_page_t
+vm_reserv_uma_small_alloc(int domain, int flags)
+{
+	struct vm_reserv_uma_queue *qp;
+	vm_reserv_t rv;
+	vm_page_t m;
+	int req;
+
+	req = malloc2vm_flags(flags) | VM_ALLOC_WIRED;
+	/* Pages for UMA_NOFREE zones have their own queues. */
+	qp = (flags & M_NEVERFREED) == 0 ?
+	    &uma_small_alloc_queues[domain].partq :
+	    &uma_small_alloc_queues[domain].nofreeq;
+
+	/*
+	 * Try to fetch a partially populated reservation
+	 * from the domain queue.
+	 */
+again:
+	rv = vm_reserv_uma_next_rv(qp, domain, req);
+	if (rv != NULL) {
+		vm_reserv_lock(rv);
+		m = vm_reserv_alloc_page_noobj(rv, req);
+		if (m == NULL) {
+			if (rv->popcnt == VM_LEVEL_0_NPAGES) {
+				/* Somebody beat us to it - retry. */
+				vm_reserv_unlock(rv);
+				goto again;
+			}
+			/* vm_domain_allocate failed - bail. */
+			vm_reserv_unlock(rv);
+			return (NULL);
+		}
+		if (rv->popcnt == VM_LEVEL_0_NPAGES && rv->inpartpopq != 0) {
+			/* Reservation is full - remove it from the partq. */
+			VM_RESERV_UMAQ_LOCK(qp);
+			LIST_REMOVE(rv, objq);
+			VM_RESERV_UMAQ_UNLOCK(qp);
+		}
+		vm_reserv_unlock(rv);
+		/* Initialize page. */
+		vm_page_dequeue(m);
+		m->pindex = 0xdeadc0dedeadc0de;
+		m->flags = m->flags & PG_ZERO;
+		m->a.flags = 0;
+		m->oflags = VPO_UNMANAGED;
+		m->busy_lock = VPB_UNBUSIED;
+		vm_wire_add(1);
+		m->ref_count = 1;
+		if ((req & VM_ALLOC_ZERO) != 0 && (m->flags & PG_ZERO) == 0)
+			pmap_zero_page(m);
+	} else {
+
+		/*
+		 * No reservations available at the moment - fall back to
+		 * vm_page_alloc.
+		 */
+		m = vm_page_alloc_noobj_domain(domain, req);
+	}
+
+	return (m);
+}
+
+void
+vm_reserv_uma_small_free(vm_page_t m)
+{
+	struct vm_reserv_uma_queue *qp;
+	vm_reserv_t rv;
+
+	rv = vm_reserv_from_page(m);
+
+	/*
+	 * Check if the reservation is valid.
+	 * Since we are mixing 0-order noobj pages with
+	 * reservation-backed pages, we can run
+	 * into invalid reservations.
+	 */
+	if (rv->pages != NULL) {
+		vm_reserv_lock(rv);
+		if (vm_reserv_is_noobj(rv)) {
+			qp = &uma_small_alloc_queues[rv->domain].partq;
+			if (rv->popcnt == VM_LEVEL_0_NPAGES) {
+
+				/*
+				 * We're freeing from a full reservation - queue
+				 * it on the domain's partq.
+				 */
+				VM_RESERV_UMAQ_LOCK(qp);
+				LIST_INSERT_HEAD(&qp->head, rv, objq);
+				rv->inpartpopq = 1;
+				VM_RESERV_UMAQ_UNLOCK(qp);
+			}
+			vm_wire_sub(1);
+			m->ref_count = 0;
+			m->busy_lock = VPB_FREED;
+			vm_reserv_free_page_noobj(rv, m);
+			if (rv->popcnt == 0) {
+
+				/*
+				 * Reservation is empty and was released -
+				 * remove it from the partq.
+				 */
+				KASSERT(rv->inpartpopq != 0,
+				    ("%s: noobj reserv %p was not in partq",
+					__func__, rv));
+				VM_RESERV_UMAQ_LOCK(qp);
+				LIST_REMOVE(rv, objq);
+				rv->inpartpopq = 0;
+				VM_RESERV_UMAQ_UNLOCK(qp);
+			}
+			vm_reserv_unlock(rv);
+			return;
+		}
+		vm_reserv_unlock(rv);
+	}
+
+	/*
+	 * The page is not a part of a valid or noobj
+	 * reservation - free it to the queues.
+	 */
+	vm_page_unwire_noq(m);
+	vm_page_free(m);
 }
 
 #endif	/* VM_NRESERVLEVEL > 0 */

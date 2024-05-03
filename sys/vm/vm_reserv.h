@@ -68,6 +68,9 @@ int		vm_reserv_size(int level);
 vm_paddr_t	vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end);
 vm_page_t	vm_reserv_to_superpage(vm_page_t m);
 
+vm_page_t	vm_reserv_uma_small_alloc(int domain, int flags);
+void		vm_reserv_uma_small_free(vm_page_t m);
+
 #endif	/* VM_NRESERVLEVEL > 0 */
 #endif	/* _KERNEL */
 #endif	/* !_VM_RESERV_H_ */
