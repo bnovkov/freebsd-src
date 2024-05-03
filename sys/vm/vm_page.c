@@ -2369,6 +2369,11 @@ _vm_page_alloc_noobj_domain(int domain, const int freelist, int req)
 	    ("invalid request %#x", req));
 
 	flags = (req & VM_ALLOC_NODUMP) != 0 ? PG_NODUMP : 0;
+#if VM_NRESERVLEVEL > 0
+	m = vm_reserv_uma_small_alloc(domain, flags);
+	if (m != NULL)
+		goto found;
+#endif
 	vmd = VM_DOMAIN(domain);
 again:
 	if (freelist == VM_NFREELIST &&
