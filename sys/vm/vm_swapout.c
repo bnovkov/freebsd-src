@@ -565,8 +565,8 @@ vm_thread_swapin(struct thread *td, int oom_alloc)
 	pages = td->td_kstack_pages;
 	obj = vm_thread_kstack_size_to_obj(pages);
 	while (vm_thread_stack_back(kaddr, ma, pages, oom_alloc,
-	    td->td_kstack_domain) == ENOMEM)
-		    ;
+		   DOMAINSET_PREF(td->td_kstack_domain)) == ENOMEM)
+		;
 	for (i = 0; i < pages;) {
 		vm_page_assert_xbusied(ma[i]);
 		if (vm_page_all_valid(ma[i])) {

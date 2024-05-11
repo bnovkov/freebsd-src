@@ -432,6 +432,12 @@ vm_thread_kstack_arena_release(void *arena, vmem_addr_t addr, vmem_size_t size)
 
 /*
  * Create the kernel stack for a new thread.
+ *
+ * Returns a page-aligned kstack address with the kstack domain id
+ * embedded in the lower bits. This is necessary since the domains
+ * for the kstack KVA and individual kstack pages might be different
+ * and we can't store that information anywhere else when creating
+ * stacks in 'kstack_import'.
  */
 static vm_offset_t
 vm_thread_stack_create(struct domainset *ds, int pages)
@@ -460,7 +466,8 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 		/*
 		 * Allocate physical pages to back the stack.
 		 */
-		if (vm_thread_stack_back(ks, ma, pages, req, domain) != 0) {
+		if (vm_thread_stack_back(ks, ma, pages, req,
+			DOMAINSET_PREF(domain)) != 0) {
 			vm_thread_free_kstack_kva(ks - ptoa(KSTACK_GUARD_PAGES),
 			    ptoa(pages + KSTACK_GUARD_PAGES), domain);
 			continue;
@@ -472,7 +479,7 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 		for (i = 0; i < pages; i++)
 			vm_page_valid(ma[i]);
 		pmap_qenter(ks, ma, pages);
-		return (ks);
+		return ((ks & ~PAGE_MASK) | (u_short)domain);
 	} while (vm_domainset_iter_page(&di, obj, &domain) == 0);
 
 	return (0);
@@ -482,21 +489,19 @@ static __noinline void
 vm_thread_stack_dispose(vm_offset_t ks, int pages)
 {
 	vm_page_t m;
-	vm_pindex_t pindex;
 	int i, domain;
+	vm_pindex_t pindex;
 	vm_object_t obj = vm_thread_kstack_size_to_obj(pages);
 
 	pindex = vm_kstack_pindex(ks, pages);
-	domain = vm_phys_domain(vtophys(ks));
+	domain = ks & PAGE_MASK;
+	ks = ks & ~PAGE_MASK;
 	pmap_qremove(ks, pages);
 	VM_OBJECT_WLOCK(obj);
 	for (i = 0; i < pages; i++) {
 		m = vm_page_lookup(obj, pindex + i);
 		if (m == NULL)
 			panic("%s: kstack already missing?", __func__);
-		KASSERT(vm_page_domain(m) == domain,
-		    ("%s: page %p domain mismatch, expected %d got %d",
-		    __func__, m, domain, vm_page_domain(m)));
 		vm_page_xbusy_claim(m);
 		vm_page_unwire_noq(m);
 		vm_page_free(m);
@@ -537,9 +542,8 @@ vm_thread_new(struct thread *td, int pages)
 	if (ks == 0)
 		return (0);
 
-	ks_domain = vm_phys_domain(vtophys(ks));
-	KASSERT(ks_domain >= 0 && ks_domain < vm_ndomains,
-	    ("%s: invalid domain for kstack %p", __func__, (void *)ks));
+	ks_domain = ks & PAGE_MASK;
+	ks = ks & ~PAGE_MASK;
 	td->td_kstack = ks;
 	td->td_kstack_pages = pages;
 	td->td_kstack_domain = ks_domain;
@@ -556,16 +560,17 @@ vm_thread_dispose(struct thread *td)
 	int pages;
 
 	pages = td->td_kstack_pages;
-	ks = td->td_kstack;
+	ks = (td->td_kstack & ~PAGE_MASK) | td->td_kstack_domain;
 	td->td_kstack = 0;
 	td->td_kstack_pages = 0;
-	td->td_kstack_domain = MAXMEMDOM;
 	if (pages == kstack_pages) {
-		kasan_mark((void *)ks, 0, ptoa(pages), KASAN_KSTACK_FREED);
+		kasan_mark((void *)(ks & ~PAGE_MASK), 0, ptoa(pages),
+		    KASAN_KSTACK_FREED);
 		uma_zfree(kstack_cache, (void *)ks);
 	} else {
 		vm_thread_stack_dispose(ks, pages);
 	}
+	td->td_kstack_domain = MAXMEMDOM;
 }
 
 /*
@@ -603,7 +608,7 @@ vm_kstack_pindex(vm_offset_t ks, int kpages)
  */
 int
 vm_thread_stack_back(vm_offset_t ks, vm_page_t ma[], int npages, int req_class,
-    int domain)
+    struct domainset *ds)
 {
 	vm_object_t obj = vm_thread_kstack_size_to_obj(npages);
 	vm_pindex_t pindex;
@@ -613,15 +618,16 @@ vm_thread_stack_back(vm_offset_t ks, vm_page_t ma[], int npages, int req_class,
 	pindex = vm_kstack_pindex(ks, npages);
 
 	VM_OBJECT_WLOCK(obj);
+	obj->domain.dr_policy = ds;
 	for (n = 0; n < npages;) {
 		m = vm_page_grab(obj, pindex + n,
 		    VM_ALLOC_NOCREAT | VM_ALLOC_WIRED);
 		if (m == NULL) {
-			m = vm_page_alloc_domain(obj, pindex + n, domain,
+			m = vm_page_alloc(obj, pindex + n,
 			    req_class | VM_ALLOC_WIRED);
+			if (m == NULL)
+				break;
 		}
-		if (m == NULL)
-			break;
 		ma[n++] = m;
 	}
 	if (n < npages)
