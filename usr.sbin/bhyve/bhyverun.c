@@ -108,6 +108,9 @@ static const int BSP = 0;
 
 static cpuset_t cpumask;
 
+static struct vmdom guest_domains[VM_MAXMEMDOM];
+static int guest_ndomains;
+
 static void vm_loop(struct vmctx *ctx, struct vcpu *vcpu);
 
 static struct vcpu_info {
@@ -177,6 +180,115 @@ parse_int_value(const char *key, const char *value, int minval, int maxval)
 	    lval > maxval)
 		errx(4, "Invalid value for %s: '%s'", key, value);
 	return (lval);
+}
+
+int
+bhyve_numa_parse(const char *opt)
+{
+	int id = -1;
+	nvlist_t *nvl;
+	char *cp, *str, *tofree;
+	char pathbuf[64] = { 0 };
+	char *size = NULL, *cpus = NULL, *host_domain = NULL;
+
+	if (*opt == '\0') {
+		return (-1);
+	}
+
+	tofree = str = strdup(opt);
+	if (str == NULL)
+		errx(4, "Failed to allocate memory");
+
+	while ((cp = strsep(&str, ",")) != NULL) {
+		if (strncmp(cp, "id=", strlen("id=")) == 0)
+			id = parse_int_value("id", cp + strlen("id="), 0,
+			    UINT8_MAX);
+		else if (strncmp(cp, "size=", strlen("size=")) == 0)
+			size = cp + strlen("size=");
+		else if (strncmp(cp, "host_domain=", strlen("host_domain=")) ==
+		    0)
+			host_domain = cp + strlen("host_domain=");
+		else if (strncmp(cp, "cpus=", strlen("cpus=")) == 0)
+			cpus = cp + strlen("cpus=");
+	}
+
+	if (id == -1) {
+		EPRINTLN("Missing NUMA domain ID in '%s'", opt);
+		goto out;
+	}
+
+	snprintf(pathbuf, 64, "domains.%d", id);
+	nvl = find_config_node(pathbuf);
+	if (nvl == NULL)
+		nvl = create_config_node(pathbuf);
+	if (size != NULL)
+		set_config_value_node(nvl, "size", size);
+	if (host_domain != NULL)
+		set_config_value_node(nvl, "host_domain", host_domain);
+	if (cpus != NULL)
+		set_config_value_node(nvl, "cpus", cpus);
+
+	free(tofree);
+	return (0);
+
+out:
+	free(tofree);
+	return (-1);
+}
+
+static void
+calc_mem_affinity(size_t vm_memsize)
+{
+	int i, error;
+	nvlist_t *nvl;
+	const char *value;
+	char pathbuf[64] = { 0 };
+	struct vmdom *dom;
+	size_t total_size = 0;
+
+	i = 0;
+	while (i < VM_MAXMEMDOM) {
+		snprintf(pathbuf, 64, "domains.%d", i);
+		nvl = find_config_node(pathbuf);
+		if (nvl == NULL)
+			break;
+
+		dom = &guest_domains[i];
+		/* Check if all necessary properties have been defined. */
+		value = get_config_value_node(nvl, "size");
+		if (value == NULL) {
+			EPRINTLN("Missing memory size for domain %d", i);
+			exit(4);
+		}
+		error = vm_parse_memsize(value, &dom->size);
+		if (error)
+			errx(EX_USAGE, "invalid memsize for domain %d: '%s'", i,
+			    value);
+
+		value = get_config_value_node(nvl, "host_domain");
+		if (value == NULL) {
+			dom->host_domain = VM_MEMSEG_ANYDOMAIN;
+		} else {
+			dom->host_domain = parse_int_value(pathbuf, value, 0,
+			    VM_MAXMEMDOM);
+		}
+		i++;
+		total_size += dom->size;
+	}
+
+	if (i == 0) {
+		/*
+		 * No domains were specified - create domain
+		 * 0 holding all CPUs and memory.
+		 */
+		i = 1;
+		dom = &guest_domains[0];
+		dom->size = vm_memsize;
+	} else if (total_size != vm_memsize) {
+		errx(EX_USAGE,
+		    "Total NUMA domain memory size does not match provided VM memsize");
+	}
+	guest_ndomains = i;
 }
 
 /*
@@ -337,6 +449,75 @@ build_vcpumaps(void)
 		if (vcpumap[vcpu] == NULL)
 			err(4, "Failed to allocate cpuset for vcpu %d", vcpu);
 		parse_cpuset(vcpu, value, vcpumap[vcpu]);
+	}
+}
+
+static void
+set_domain_cpus(struct vmctx *ctx)
+{
+	int i, error;
+	nvlist_t *nvl = NULL;
+	cpuset_t cpus;
+	const char *value, *reason;
+	char pathbuf[64] = { 0 };
+
+	for (i = 0; i < guest_ndomains; i++) {
+		snprintf(pathbuf, 64, "domains.%d", i);
+		nvl = find_config_node(pathbuf);
+		if (nvl == NULL)
+			break;
+
+		value = get_config_value_node(nvl, "cpus");
+		if (value == NULL) {
+			EPRINTLN("Missing CPU set for domain %d", i);
+			exit(4);
+		}
+
+		parse_cpuset(i, value, &cpus);
+		error = vm_set_domain_cpus(ctx, i, &cpus);
+		if (error) {
+			switch (errno) {
+			case ENOENT:
+				reason = "domain does not exist";
+				break;
+			case EEXIST:
+				reason = "overlapping CPU sets";
+				break;
+			default:
+				reason = strerror(errno);
+				break;
+			}
+			EPRINTLN("Unable to set CPU affinity for domain %d: %s",
+			    i, reason);
+			exit(4);
+		}
+	}
+
+	/*
+	 * If we're dealing with one domain and no cpuset was provided, create a
+	 * default one holding all cpus.
+	 */
+	if (guest_ndomains == 1 && nvl == NULL) {
+		CPU_ZERO(&cpus);
+		for (i = 0; i < guest_ncpus; i++)
+			CPU_SET(i, &cpus);
+		error = vm_set_domain_cpus(ctx, 0, &cpus);
+		if (error) {
+			switch (errno) {
+			case ENOENT:
+				reason = "domain does not exist";
+				break;
+			case EEXIST:
+				reason = "overlapping CPU sets";
+				break;
+			default:
+				reason = strerror(errno);
+				break;
+			}
+			EPRINTLN("Unable to set CPU affinity for domain %d: %s",
+			    i, reason);
+			exit(4);
+		}
 	}
 }
 
@@ -741,18 +922,21 @@ main(int argc, char *argv[])
 			vcpu_info[vcpuid].vcpu = vm_vcpu_open(ctx, vcpuid);
 	}
 
+	calc_mem_affinity(memsize);
 	memflags = 0;
 	if (get_config_bool_default("memory.wired", false))
 		memflags |= VM_MEM_F_WIRED;
 	if (get_config_bool_default("memory.guest_in_core", false))
 		memflags |= VM_MEM_F_INCORE;
 	vm_set_memflags(ctx, memflags);
-	error = vm_setup_memory(ctx, memsize, VM_MMAP_ALL);
+	error = vm_setup_memory(ctx, guest_domains, guest_ndomains, memsize,
+	    VM_MMAP_ALL);
 	if (error) {
 		fprintf(stderr, "Unable to setup memory (%d)\n", errno);
 		exit(4);
 	}
 
+	set_domain_cpus(ctx);
 	init_mem(guest_ncpus);
 	init_bootrom(ctx);
 	if (bhyve_init_platform(ctx, bsp) != 0)

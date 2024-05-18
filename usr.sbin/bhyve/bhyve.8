@@ -269,8 +269,36 @@ or
 (either upper or lower case)
 to indicate a multiple of kilobytes, megabytes, gigabytes, or terabytes.
 If no suffix is given, the value is assumed to be in megabytes.
-.Pp
 The default is 256M.
+.Pp
+.It Fl n Ar id Ns Cm \&, Ns Ar size Ns Cm \&, Ns Ar cpus Ns Op Cm \&, Ns Ar host_domain
+Configure guest NUMA domains.
+.Pp
+.Nm
+provides NUMA emulation and can optionally be configured
+to allocate memory for emulated domain from a specific NUMA
+domain on the host. A guest can have up to 8 NUMA domains.
+.Pp
+Each domain is identified by a numerical
+.Em id.
+The domain memory
+.Em size
+is specified using the same format as the
+.Fl m
+flag.
+The
+.Em cpuset
+parameter specifies the set of CPUs that are part of the domain.
+The
+.Em host_domain
+parameter may be optionally used to signal that this domain's
+memory should be allocated from the specified host domain.
+
+For instance, to specify a single domain with 4GB of memory and 4 CPUs:
+.Bd -literal
+-n id=0,size=4G,cpus=0-4
+.Ed
+
 .It Fl o Ar var Ns Cm = Ns Ar value
 Set the configuration variable
 .Ar var
