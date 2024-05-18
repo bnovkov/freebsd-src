@@ -44,6 +44,7 @@
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/vnode.h>
+#include <sys/domainset.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -135,7 +136,7 @@ struct mem_seg {
 	bool	sysmem;
 	struct vm_object *object;
 };
-#define	VM_MAX_MEMSEGS	4
+#define VM_MAX_MEMSEGS VM_MEMSEG_END
 
 struct mem_map {
 	vm_paddr_t	gpa;
@@ -145,7 +146,7 @@ struct mem_map {
 	int		prot;
 	int		flags;
 };
-#define	VM_MAX_MEMMAPS	8
+#define VM_MAX_MEMMAPS (VM_MAX_MEMSEGS * 2)
 
 /*
  * Initialization:
@@ -806,7 +807,8 @@ vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa)
 }
 
 int
-vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem)
+vm_alloc_memseg(struct vm *vm, int ident, size_t len, int host_domain,
+    bool sysmem)
 {
 	struct mem_seg *seg;
 	vm_object_t obj;
@@ -817,6 +819,9 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem)
 		return (EINVAL);
 
 	if (len == 0 || (len & PAGE_MASK))
+		return (EINVAL);
+	if (host_domain != VM_MEMSEG_ANYDOMAIN &&
+	    (host_domain < 0 || host_domain >= vm_ndomains))
 		return (EINVAL);
 
 	seg = &vm->mem_segs[ident];
@@ -833,6 +838,10 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem)
 
 	seg->len = len;
 	seg->object = obj;
+	if (host_domain == VM_MEMSEG_ANYDOMAIN)
+		seg->object->domain.dr_policy = DOMAINSET_IL();
+	else
+		seg->object->domain.dr_policy = DOMAINSET_PREF(host_domain);
 	seg->sysmem = sysmem;
 	return (0);
 }
