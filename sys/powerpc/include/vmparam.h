@@ -111,7 +111,7 @@
 
 #define	KERNBASE		0x00100100	/* start of kernel virtual */
 
-#define UMA_MD_SMALL_ALLOC
+#define UMA_MD_SMALL_ALLOC_IMPL
 
 #ifdef AIM
 #ifndef __powerpc64__

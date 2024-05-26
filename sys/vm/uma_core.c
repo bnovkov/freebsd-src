@@ -2077,7 +2077,7 @@ contig_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 	    bytes, wait, 0, ~(vm_paddr_t)0, 1, 0, VM_MEMATTR_DEFAULT));
 }
 
-#if defined(UMA_USE_DMAP) && !defined(UMA_MD_SMALL_ALLOC)
+#if defined(UMA_USE_DMAP) && !defined(UMA_MD_SMALL_ALLOC_IMPL)
 void *
 uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *flags,
     int wait)
@@ -2161,7 +2161,7 @@ pcpu_page_free(void *mem, vm_size_t size, uint8_t flags)
 	kva_free(sva, size);
 }
 
-#if defined(UMA_USE_DMAP) && !defined(UMA_MD_SMALL_ALLOC)
+#if defined(UMA_USE_DMAP) && !defined(UMA_MD_SMALL_ALLOC_IMPL)
 void
 uma_small_free(void *mem, vm_size_t size, uint8_t flags)
 {
