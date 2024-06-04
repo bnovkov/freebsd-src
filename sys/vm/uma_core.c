@@ -378,6 +378,11 @@ SYSCTL_PROC(_vm, OID_AUTO, zone_stats, CTLFLAG_RD|CTLFLAG_MPSAFE|CTLTYPE_STRUCT,
 static int zone_warnings = 1;
 SYSCTL_INT(_vm, OID_AUTO, zone_warnings, CTLFLAG_RWTUN, &zone_warnings, 0,
     "Warn when UMA zones becomes full");
+static int sysctl_uma_nofree_reservs(SYSCTL_HANDLER_ARGS);
+SYSCTL_OID(_vm, OID_AUTO, uma_nofree,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_uma_nofree_reservs, "A",
+    "Phys Seg Info");
 
 static int multipage_slabs = 1;
 TUNABLE_INT("vm.debug.uma_multipage_slabs", &multipage_slabs);
@@ -5730,6 +5735,50 @@ sysctl_handle_uma_zone_items(SYSCTL_HANDLER_ARGS)
 
 	cur = UZ_ITEMS_COUNT(atomic_load_64(&zone->uz_items));
 	return (sysctl_handle_64(oidp, &cur, 0, req));
+}
+
+static void
+uma_nofree_reservs_scan_slabs(struct sbuf *sbuf, struct slabhead *sh)
+{
+	uma_slab_t slab;
+	vm_offset_t rv_vaddr;
+
+	LIST_FOREACH(slab, sh, us_link) {
+		rv_vaddr = vtophys(slab) >> 21;
+		sbuf_printf(sbuf, "%p\n", (void *)rv_vaddr);
+	}
+}
+
+static void
+uma_nofree_reservs_cb(uma_zone_t zone, void *arg) {
+	struct sbuf *sbuf;
+	uma_domain_t domain;
+	uma_keg_t keg;
+	int i;
+
+	if ((zone->uz_flags & UMA_ZONE_NOFREE) == 0 || zone->uz_flags & UMA_ZFLAG_CACHE)
+		return;
+	sbuf = arg;
+
+	keg = zone->uz_keg;
+	for (i = 0; i < vm_ndomains; i++) {
+		domain = &keg->uk_domain[i];
+		uma_nofree_reservs_scan_slabs(sbuf, &domain->ud_full_slab);
+		uma_nofree_reservs_scan_slabs(sbuf, &domain->ud_part_slab);
+	}
+}
+
+static int
+sysctl_uma_nofree_reservs(SYSCTL_HANDLER_ARGS)
+{
+	struct sbuf sbuf;
+
+	sbuf_new_for_sysctl(&sbuf, NULL, 1024, req);
+	zone_foreach(uma_nofree_reservs_cb, &sbuf);
+	sbuf_finish(&sbuf);
+	sbuf_delete(&sbuf);
+
+	return (0);
 }
 
 #ifdef INVARIANTS
