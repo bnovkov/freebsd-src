@@ -34,6 +34,7 @@
 
 struct trace_context;
 struct hwt_exec_img;
+struct pmcstat_image;
 
 struct trace_dev_methods {
 	int (*init)(struct trace_context *tc);
@@ -41,6 +42,8 @@ struct trace_dev_methods {
 	    struct hwt_record_user_entry *entry);
 	int (*process)(struct trace_context *tc);
 	int (*set_config)(struct trace_context *tc);
+	int (
+	    *image_load_cb)(struct trace_context *tc, struct hwt_exec_img *img);
 };
 
 struct trace_dev {
@@ -95,6 +98,8 @@ int hwt_record_fetch(struct trace_context *tc, int *nrecords);
 void hwt_procexit(pid_t pid, int status);
 void hwt_sleep(int msec);
 int hwt_find_sym(struct trace_context *tc);
+struct pmcstat_symbol *hwt_sym_lookup(const struct trace_context *tc,
+    uint64_t ip, struct pmcstat_image **img, uint64_t *newpc0);
 int hwt_start_tracing(struct trace_context *tc);
 int hwt_stop_tracing(struct trace_context *tc);
 int hwt_mmap_received(struct trace_context *tc,

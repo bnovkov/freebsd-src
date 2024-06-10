@@ -89,7 +89,7 @@ hwt_process_create(int *sockpair, char **cmd, char **env __unused, int *pid0)
 		return (-1);
 
 	signal(SIGCHLD, hwt_process_onsig);
-
+	siginterrupt(SIGCHLD, 1);
 	pid = fork();
 
 	switch (pid) {
