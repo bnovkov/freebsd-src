@@ -630,7 +630,10 @@ main(int argc, char **argv, char **env)
 			 * Name of dynamic lib or main executable for IP
 			 * address range filtering.
 			 */
-			tc->image_name = strdup(optarg);
+			tc->image_name = strdup(basename(optarg));
+			if (*tc->image_name == '.' || *tc->image_name == '/')
+				err(EX_USAGE,
+				    "Invalid executable path provided");
 			break;
 		case 'f':
 			/* Name of the func to trace. */
