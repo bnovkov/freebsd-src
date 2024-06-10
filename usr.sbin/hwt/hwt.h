@@ -33,6 +33,7 @@
 #define	TC_MAX_ADDR_RANGES	16
 
 struct trace_context;
+struct hwt_exec_img;
 
 struct trace_dev_methods {
 	int (*init)(struct trace_context *tc);
@@ -93,7 +94,6 @@ int hwt_process_start(int *sockpair);
 int hwt_record_fetch(struct trace_context *tc, int *nrecords);
 void hwt_procexit(pid_t pid, int status);
 void hwt_sleep(int msec);
-int hwt_elf_count_libs(const char *elf_path, uint32_t *nlibs0);
 int hwt_find_sym(struct trace_context *tc);
 int hwt_start_tracing(struct trace_context *tc);
 int hwt_stop_tracing(struct trace_context *tc);

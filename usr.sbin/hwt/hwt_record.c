@@ -48,6 +48,7 @@
 #include <string.h>
 
 #include "hwt.h"
+#include "hwt_elf.h"
 
 #include "libpmcstat_stubs.h"
 #include <libpmcstat.h>
@@ -61,27 +62,69 @@
 #define	dprintf(fmt, ...)
 #endif
 
-int
-hwt_record_fetch(struct trace_context *tc, int *nrecords)
+static int
+hwt_record_to_elf_img(struct trace_context *tc,
+    struct hwt_record_user_entry *entry, struct hwt_exec_img *img)
 {
-	struct hwt_record_user_entry *entry;
 	pmcstat_interned_string path;
 	struct pmcstat_image *image;
 	struct pmc_plugins plugins;
 	struct pmcstat_args args;
 	unsigned long addr;
-	struct hwt_record_get record_get;
 	char imagepath[PATH_MAX];
-	struct stat st;
-	int nentries;
-	int error;
-	int j;
+
+	dprintf("  path %s addr %lx\n", entry->fullpath,
+	    (unsigned long)entry->addr);
 
 	memset(&plugins, 0, sizeof(struct pmc_plugins));
 	memset(&args, 0, sizeof(struct pmcstat_args));
 	args.pa_fsroot = "/";
-	nentries = 256;
+	path = pmcstat_string_intern(entry->fullpath);
+	image = pmcstat_image_from_path(path, 0, &args, &plugins);
+	if (image == NULL)
+		return (-1);
 
+	if (image->pi_type == PMCSTAT_IMAGE_UNKNOWN)
+		pmcstat_image_determine_type(image, &args);
+
+	if (image->pi_end == 0) {
+		printf("  image '%s' has no executable sections, skipping\n",
+		    imagepath);
+		free(image);
+		image = NULL;
+		img->size = 0;
+		return (0);
+	}
+	addr = (unsigned long)entry->addr & ~1;
+	if (entry->record_type != HWT_RECORD_KERNEL)
+		addr -= (image->pi_start - image->pi_vaddr);
+
+	pmcstat_image_link(tc->pp, image, addr);
+	dprintf("image pi_vaddr %lx pi_start %lx"
+		" pi_end %lx pi_entry %lx\n",
+	    (unsigned long)image->pi_vaddr, (unsigned long)image->pi_start,
+	    (unsigned long)image->pi_end, (unsigned long)image->pi_entry);
+
+	if (hwt_elf_get_text_offs(entry->fullpath, &img->offs))
+		return (-1);
+	img->size = image->pi_end - image->pi_start;
+	img->addr = addr;
+	img->path = entry->fullpath;
+
+	return (0);
+}
+
+int
+hwt_record_fetch(struct trace_context *tc, int *nrecords)
+{
+	struct hwt_record_user_entry *entry;
+	struct hwt_record_get record_get;
+	struct hwt_exec_img img;
+	int nentries;
+	int error;
+	int j;
+
+	nentries = 256;
 	tc->records = malloc(sizeof(struct hwt_record_user_entry) * nentries);
 
 	record_get.records = tc->records;
@@ -104,58 +147,14 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 		case HWT_RECORD_MUNMAP:
 		case HWT_RECORD_EXECUTABLE:
 		case HWT_RECORD_INTERP:
-			printf("  lib #%d: path %s addr %lx\n", j,
-			    entry->fullpath,
-			    (unsigned long)entry->addr);
-
-			path = pmcstat_string_intern(entry->fullpath);
-			image = pmcstat_image_from_path(path, 0, &args,
-			    &plugins);
-			if (image == NULL)
-				return (-1);
-
-			if (image->pi_type == PMCSTAT_IMAGE_UNKNOWN)
-				pmcstat_image_determine_type(image, &args);
-
-			addr = (unsigned long)entry->addr & ~1;
-			addr -= (image->pi_start - image->pi_vaddr);
-			pmcstat_image_link(tc->pp, image, addr);
-			dprintf("image pi_vaddr %lx pi_start %lx"
-			    " pi_entry %lx\n",
-			    (unsigned long)image->pi_vaddr,
-			    (unsigned long)image->pi_start,
-			    (unsigned long)image->pi_entry);
-			hwt_mmap_received(tc, entry);
-			break;
 		case HWT_RECORD_KERNEL:
-			snprintf(imagepath, sizeof(imagepath), "%s/%s",
-			    tc->fs_root, entry->fullpath);
-			error = stat(imagepath, &st);
-			if (error)
-				errx(EX_OSERR, "Image \"%s\" not found\n",
-				    imagepath);
-			printf("  image #%d: path %s addr %lx\n", j,
-			    imagepath, (unsigned long)entry->addr);
-			path = pmcstat_string_intern(imagepath);
-			image = pmcstat_image_from_path(path, 1, &args,
-			    &plugins);
-			if (image == NULL)
-				return (-1);
-			if (image->pi_type == PMCSTAT_IMAGE_UNKNOWN)
-				pmcstat_image_determine_type(image, &args);
-			/*
-			 * Some images have no executable sections - skip them.
-			 */
-			if (image->pi_end == 0) {
-				printf(
-				    "  image '%s' has no executable sections, skipping\n",
-				    imagepath);
-				free(image);
-				image = NULL;
-				break;
-			}
-			addr = (unsigned long)entry->addr & ~1;
-			pmcstat_image_link(tc->pp, image, addr);
+			hwt_record_to_elf_img(tc, entry, &img);
+			/* Invoke backend callback, if any. */
+			if (tc->trace_dev->methods->image_load_cb != NULL &&
+			    (error = tc->trace_dev->methods->image_load_cb(tc,
+					 &img) != 0))
+				return (error);
+			hwt_mmap_received(tc, entry);
 			break;
 		case HWT_RECORD_THREAD_CREATE:
 			/* Let the backend register the newly created thread. */
@@ -169,6 +168,8 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 			break;
 		}
 	}
+	free(tc->records);
+	tc->records = NULL;
 
 	*nrecords = nentries;
 

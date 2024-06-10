@@ -53,9 +53,11 @@
 
 #include "libpmcstat_stubs.h"
 #include <libpmcstat.h>
+#include <libgen.h>
 #include <libxo/xo.h>
 
 #include "hwt.h"
+#include "hwt_elf.h"
 
 #if defined(__aarch64__)
 #include "hwt_coresight.h"

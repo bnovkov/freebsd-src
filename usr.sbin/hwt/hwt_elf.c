@@ -31,17 +31,28 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/cpuset.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/errno.h>
 #include <sys/hwt.h>
+#include <sys/hwt_record.h>
+#include <sys/stat.h>
 
 #include <assert.h>
 #include <fcntl.h>
 #include <gelf.h>
+#include <err.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "hwt.h"
+#include "hwt_elf.h"
+#include "sys/hwt_record.h"
+
+#include "libpmcstat_stubs.h"
+#include <libpmcstat.h>
 
 int
 hwt_elf_count_libs(const char *elf_path, uint32_t *nlibs0)
@@ -133,4 +144,53 @@ done:
 	*nlibs0 = nlibs;
 
 	return (0);
+}
+
+int
+hwt_elf_get_text_offs(const char *elf_path, uint64_t *offs)
+{
+	const char *scnname;
+	GElf_Shdr shdr;
+	int fd, error;
+	Elf_Scn *scn;
+	size_t ndx;
+	Elf *elf;
+
+	elf = NULL;
+	scn = NULL;
+	fd = open(elf_path, O_RDONLY, 0);
+	if (fd < 0) {
+		warnx("%s: cannot open \"%s\": %s", __func__, elf_path,
+		    elf_errmsg(elf_errno()));
+		return (-1);
+	}
+	if ((elf = elf_begin(fd, ELF_C_READ, NULL)) == NULL) {
+		warnx("%s: cannot read \"%s\": %s", __func__, elf_path,
+		    elf_errmsg(elf_errno()));
+		error = -1;
+		goto out;
+	}
+
+	error = -1;
+	while ((scn = elf_nextscn(elf, scn)) != NULL) {
+		if (elf_getshdrstrndx(elf, &ndx) != 0) {
+			warnx("%s: elf_getshdrstrndx failed: %s", __func__,
+			    elf_errmsg(elf_errno()));
+			goto out;
+		}
+		gelf_getshdr(scn, &shdr);
+		if ((scnname = elf_strptr(elf, ndx, shdr.sh_name)) == NULL)
+			continue;
+
+		if (strncmp(scnname, ".text", strlen(".text")) == 0) {
+			error = 0;
+			*offs = shdr.sh_offset;
+			break;
+		}
+	}
+
+out:
+	close(fd);
+
+	return (error);
 }
