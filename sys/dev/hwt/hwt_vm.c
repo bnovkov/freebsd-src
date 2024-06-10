@@ -318,12 +318,7 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case HWT_IOC_BUFPTR_GET:
 		ptr_get = (struct hwt_bufptr_get *)addr;
 
-		if (ctx->mode == HWT_MODE_THREAD)
-			cpu_id = vm->thr->cpu_id;
-		else
-			cpu_id = vm->cpu->cpu_id;
-
-		error = hwt_backend_read(ctx, cpu_id, &curpage,
+		error = hwt_backend_read(ctx, vm, &curpage,
 		    &curpage_offset);
 		if (error)
 			return (error);

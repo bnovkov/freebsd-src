@@ -149,14 +149,14 @@ hwt_backend_dump(struct hwt_context *ctx, int cpu_id)
 }
 
 int
-hwt_backend_read(struct hwt_context *ctx, int cpu_id, int *curpage,
+hwt_backend_read(struct hwt_context *ctx, struct hwt_vm *vm, int *curpage,
     vm_offset_t *curpage_offset)
 {
 	int error;
 
 	dprintf("%s\n", __func__);
 
-	error = ctx->hwt_backend->ops->hwt_backend_read(cpu_id, curpage,
+	error = ctx->hwt_backend->ops->hwt_backend_read(vm, curpage,
 	    curpage_offset);
 
 	return (error);
