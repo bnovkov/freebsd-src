@@ -101,7 +101,7 @@ hwt_ctx_alloc(struct hwt_context **ctx0)
 	ctx->thread_counter = 0;
 	ctx->kva_req = 1; /* default require kern VAs */
 
-	LIST_INIT(&ctx->records);
+	TAILQ_INIT(&ctx->records);
 	TAILQ_INIT(&ctx->threads);
 	TAILQ_INIT(&ctx->cpus);
 	mtx_init(&ctx->mtx, "ctx", NULL, MTX_SPIN);

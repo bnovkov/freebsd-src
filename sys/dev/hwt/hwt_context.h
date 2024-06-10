@@ -37,7 +37,7 @@ enum hwt_ctx_state {
 };
 
 struct hwt_context {
-	LIST_HEAD(, hwt_record_entry)	records;
+	TAILQ_HEAD(, hwt_record_entry)	records;
 
 	LIST_ENTRY(hwt_context)		next_hch; /* Entry in contexthash. */
 	LIST_ENTRY(hwt_context)		next_hwts; /* Entry in ho->hwts. */

@@ -83,7 +83,7 @@ hwt_record(struct thread *td, struct hwt_record_entry *ent)
 		return;
 	}
 	HWT_CTX_LOCK(ctx);
-	LIST_INSERT_HEAD(&ctx->records, entry, next);
+	TAILQ_INSERT_TAIL(&ctx->records, entry, next);
 	HWT_CTX_UNLOCK(ctx);
 
 	hwt_ctx_put(ctx);
@@ -116,9 +116,9 @@ hwt_record_grab(struct hwt_context *ctx,
 
 	for (i = 0; i < nitems_req; i++) {
 		HWT_CTX_LOCK(ctx);
-		entry = LIST_FIRST(&ctx->records);
+		entry = TAILQ_FIRST(&ctx->records);
 		if (entry)
-			LIST_REMOVE(entry, next);
+			TAILQ_REMOVE_HEAD(&ctx->records, next);
 		HWT_CTX_UNLOCK(ctx);
 
 		if (entry == NULL)
@@ -146,9 +146,9 @@ hwt_record_free_all(struct hwt_context *ctx)
 
 	while (1) {
 		HWT_CTX_LOCK(ctx);
-		entry = LIST_FIRST(&ctx->records);
+		entry = TAILQ_FIRST(&ctx->records);
 		if (entry)
-			LIST_REMOVE(entry, next);
+			TAILQ_REMOVE_HEAD(&ctx->records, next);
 		HWT_CTX_UNLOCK(ctx);
 
 		if (entry == NULL)
@@ -210,7 +210,7 @@ hwt_record_kernel_objects(struct hwt_context *ctx)
 		entry->addr = kobase[i].pm_address;
 
 		HWT_CTX_LOCK(ctx);
-		LIST_INSERT_HEAD(&ctx->records, entry, next);
+		TAILQ_INSERT_HEAD(&ctx->records, entry, next);
 		HWT_CTX_UNLOCK(ctx);
 	}
 	free(kobase, M_LINKER);

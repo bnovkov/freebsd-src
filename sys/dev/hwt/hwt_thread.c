@@ -162,5 +162,5 @@ hwt_thread_insert(struct hwt_context *ctx, struct hwt_thread *thr,
 
 	HWT_CTX_ASSERT_LOCKED(ctx);
 	TAILQ_INSERT_TAIL(&ctx->threads, thr, next);
-	LIST_INSERT_HEAD(&ctx->records, entry, next);
+	TAILQ_INSERT_TAIL(&ctx->records, entry, next);
 }
