@@ -212,6 +212,7 @@ hwt_load(void)
 	hwt_ctx_load();
 	hwt_contexthash_load();
 	hwt_ownerhash_load();
+	hwt_record_load();
 
 	error = make_dev_s(&args, &hwt_cdev, "hwt");
 	if (error != 0)
@@ -232,6 +233,7 @@ hwt_unload(void)
 	hwt_hook_unload();
 	EVENTHANDLER_DEREGISTER(process_exit, hwt_exit_tag);
 	destroy_dev(hwt_cdev);
+	hwt_record_unload();
 	hwt_ownerhash_unload();
 	hwt_contexthash_unload();
 	hwt_ctx_unload();

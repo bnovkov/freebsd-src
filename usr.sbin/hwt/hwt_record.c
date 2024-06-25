@@ -46,6 +46,7 @@
 #include <signal.h>
 #include <err.h>
 #include <string.h>
+#include <assert.h>
 
 #include "hwt.h"
 #include "hwt_elf.h"
@@ -147,7 +148,6 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 
 		switch (entry->record_type) {
 		case HWT_RECORD_MMAP:
-		case HWT_RECORD_MUNMAP:
 		case HWT_RECORD_EXECUTABLE:
 		case HWT_RECORD_INTERP:
 		case HWT_RECORD_KERNEL:
@@ -155,8 +155,11 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 			/* Invoke backend callback, if any. */
 			if (tc->trace_dev->methods->image_load_cb != NULL &&
 			    (error = tc->trace_dev->methods->image_load_cb(tc,
-					 &img) != 0))
+				 &img))) {
+				ioctl(tc->thr_fd, HWT_IOC_WAKEUP, &w);
 				return (error);
+			}
+
 			if (entry->record_type != HWT_RECORD_KERNEL)
 				hwt_mmap_received(tc, entry);
 			break;
@@ -167,7 +170,15 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 				return (error);
 			break;
 		case HWT_RECORD_THREAD_SET_NAME:
+		case HWT_RECORD_MUNMAP:
 			break;
+		case HWT_RECORD_BUFFER:
+			/* Invoke backend process method. */
+			assert(tc->trace_dev->methods->process_buffer != NULL);
+			if ((error = tc->trace_dev->methods->process_buffer(tc,
+				 entry->buf_id, entry->curpage,
+				 entry->offset)) != 0)
+				return (error);
 		default:
 			break;
 		}
@@ -177,5 +188,5 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 
 	*nrecords = nentries;
 
-	return (0);
+	return (error);
 }

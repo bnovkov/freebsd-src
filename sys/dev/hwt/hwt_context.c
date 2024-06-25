@@ -188,6 +188,12 @@ hwt_ctx_put(struct hwt_context *ctx)
 }
 
 void
+hwt_ctx_ref(struct hwt_context *ctx)
+{
+	refcount_acquire(&ctx->refcnt);
+}
+
+void
 hwt_ctx_load(void)
 {
 

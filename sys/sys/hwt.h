@@ -78,9 +78,24 @@ struct hwt_wakeup {
 
 struct hwt_record_user_entry {
 	enum hwt_record_type	record_type;
-	char			fullpath[MAXPATHLEN];
-	uintptr_t		addr;
-	int			thread_id;
+	union {
+		/*
+		 * Used for MMAP, EXECUTABLE, INTERP,
+		 * and KERNEL records.
+		 */
+		struct {
+			char fullpath[MAXPATHLEN];
+			uintptr_t addr;
+		};
+		/* Used for BUFFER records. */
+		struct {
+			int buf_id;
+			int curpage;
+			vm_offset_t offset;
+		};
+		/* Used for THREAD_* records. */
+		int thread_id;
+	};
 } __aligned(16);
 
 struct hwt_record_get {

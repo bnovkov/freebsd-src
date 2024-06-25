@@ -305,11 +305,11 @@ hwt_hook_handler(struct thread *td, int func, void *arg)
 		break;
 	case HWT_EXEC:
 	case HWT_MMAP:
-		hwt_record(td, arg);
+		hwt_record_td(td, arg, M_WAITOK | M_ZERO);
 		hwt_hook_mmap(td);
 		break;
 	case HWT_RECORD:
-		hwt_record(td, arg);
+		hwt_record_td(td, arg, M_WAITOK | M_ZERO);
 		break;
 	};
 }
