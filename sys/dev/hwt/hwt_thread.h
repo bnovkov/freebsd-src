@@ -36,6 +36,7 @@ struct hwt_record_entry;
 struct hwt_thread {
 	struct hwt_vm			*vm;
 	struct hwt_context		*ctx;
+	struct hwt_backend		*backend;
 	struct thread			*td;
 	TAILQ_ENTRY(hwt_thread)		next;
 	int				thread_id;

@@ -264,6 +264,7 @@ hwt_hook_thread_create(struct thread *td)
 
 	thr->vm->ctx = ctx;
 	thr->ctx = ctx;
+	thr->backend = ctx->hwt_backend;
 	thr->thread_id = thread_id;
 	thr->td = td;
 

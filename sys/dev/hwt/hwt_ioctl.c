@@ -241,6 +241,7 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
 		thr->vm->ctx = ctx;
 		thr->td = threads[i];
 		thr->ctx = ctx;
+		thr->backend = ctx->hwt_backend;
 		thr->thread_id = thread_id;
 
 		HWT_CTX_LOCK(ctx);

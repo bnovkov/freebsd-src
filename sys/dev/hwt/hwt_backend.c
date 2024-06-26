@@ -284,11 +284,11 @@ hwt_backend_thread_free(struct hwt_thread *thr)
 {
 	dprintf("%s\n", __func__);
 
-	if (thr->ctx->hwt_backend->ops->hwt_backend_thread_free == NULL)
+	if (thr->backend->ops->hwt_backend_thread_free == NULL)
 		return;
 	KASSERT(thr->private != NULL,
 		    ("%s: thread private data is NULL\n", __func__));
-	thr->ctx->hwt_backend->ops->hwt_backend_thread_free(thr);
+	thr->backend->ops->hwt_backend_thread_free(thr);
 
 	return;
 }
