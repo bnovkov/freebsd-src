@@ -261,19 +261,18 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 		} else {
 			tid = rec->thread_id;
 		}
-		dctx = calloc(1, sizeof(*dctx));
-		if (dctx == NULL)
-			return (ENOMEM);
 		sprintf(filename, "/dev/hwt_%d_%d", tc->ident, tid);
 		fd = open(filename, O_RDONLY);
 		if (fd < 0) {
 			printf("Can't open %s\n", filename);
-			free(dctx);
 			return (-1);
 		}
 		if (tc->thr_fd == 0) {
 			tc->thr_fd = fd;
 		}
+		dctx = calloc(1, sizeof(*dctx));
+		if (dctx == NULL)
+			return (ENOMEM);
 		dctx->dev_fd = fd;
 		dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED,
 		    fd, 0);
@@ -282,35 +281,38 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 			    "%s: failed to map tracing buffer for thread %d: %s\n",
 			    __func__, tid, strerror(errno));
 			free(dctx);
-			return (-1);
+			return (ENOMEM);
 		}
 		dctx->id = tid;
-		/* Grab another context, if any, and copy its decoder image. */
-		if (!RB_EMPTY(&threads)) {
-			srcctx = RB_ROOT(&threads);
-			srcimg = pt_blk_get_image(srcctx->dec);
-			dstimg = pt_blk_get_image(dctx->dec);
-			pt_image_copy(dstimg, srcimg);
+		if (!tc->raw) {
+			/*
+			 * Grab another context, if any, and copy its decoder
+			 * image.
+			 */
+			if (!RB_EMPTY(&threads)) {
+				srcctx = RB_ROOT(&threads);
+				srcimg = pt_blk_get_image(srcctx->dec);
+				dstimg = pt_blk_get_image(dctx->dec);
+				pt_image_copy(dstimg, srcimg);
+			}
+			memset(&config, 0, sizeof(config));
+			config.size = sizeof(config);
+			config.begin = dctx->tracebuf;
+			config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
+
+			dctx->dec = pt_blk_alloc_decoder(&config);
+			if (dctx->dec == NULL) {
+				printf(
+				    "%s: failed to allocate PT decoder for thread\n",
+				    __func__);
+				free(dctx);
+				return (ENOMEM);
+			}
 		}
 		RB_INSERT(threads, &threads, dctx);
 		break;
 	default:
 		return (EINVAL);
-	}
-
-	if (!tc->raw) {
-		memset(&config, 0, sizeof(config));
-		config.size = sizeof(config);
-		config.begin = dctx->tracebuf;
-		config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
-
-		dctx->dec = pt_blk_alloc_decoder(&config);
-		if (dctx->dec == NULL) {
-			printf("%s: failed to allocate PT decoder for thread\n",
-			    __func__);
-			free(dctx);
-			return (ENOMEM);
-		}
 	}
 
 	return (0);
@@ -385,7 +387,8 @@ hwt_pt_print(struct trace_context *tc, struct pt_dec_ctx *dctx, uint64_t ip)
 
 	if (sym) {
 		psname = pmcstat_string_unintern(sym->ps_name);
-		offset = newpc - (sym->ps_start + image->pi_vaddr);
+		offset = newpc -
+		    (sym->ps_start + (image != NULL ? image->pi_vaddr : 0));
 		xo_emit_h(dctx->xop, "\t");
 		xo_emit_h(dctx->xop, "{:psname/%s/%s}", psname);
 		xo_emit_h(dctx->xop, "{:offset/+0x%lx/%ju}", offset);
@@ -405,12 +408,11 @@ hwt_pt_decode_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
 	int error = 0;
 	struct pt_block blk;
 	struct pt_event event;
-	uint64_t prevoffs, offs;
+	uint64_t oldoffs, offs;
 	struct pt_block_decoder *dec;
-	uint64_t oldoffs;
 
 	dec = dctx->dec;
-	offs = prevoffs = start;
+	offs = start;
 	/* Set decoder to current offset. */
 	ret = pt_blk_sync_set(dec, start);
 	blk.ip = 0;
@@ -426,16 +428,16 @@ hwt_pt_decode_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
 			if (ret == -pte_eos) {
 				/* Restore to last valid offset. */
 				pt_blk_sync_backward(dec);
-				ret = 0;
+				error = 0;
 				break;
 			}
 
 			ret = pt_blk_sync_forward(dec);
 			oldoffs = offs;
 			pt_blk_get_offset(dec, &offs);
-			if (ret <= 0 || offs >= (start + len) ||
+			if (ret < 0 || offs >= (start + len) ||
 			    offs <= oldoffs) {
-				if (ret != -pte_eos) {
+				if (ret < 0 && ret != -pte_eos) {
 					error = ret;
 					printf("ip: %p\n", (void *)blk.ip);
 					printf(
