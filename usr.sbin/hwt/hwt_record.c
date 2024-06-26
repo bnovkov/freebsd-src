@@ -119,11 +119,12 @@ hwt_record_to_elf_img(struct trace_context *tc,
 }
 
 int
-hwt_record_fetch(struct trace_context *tc, int *nrecords)
+hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 {
 	struct hwt_record_user_entry *entry;
 	struct hwt_record_get record_get;
 	struct hwt_exec_img img;
+	struct hwt_wakeup w;
 	int nentries;
 	int error;
 	int j;
@@ -133,6 +134,7 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 
 	record_get.records = tc->records;
 	record_get.nentries = &nentries;
+	record_get.wait = wait;
 
 	error = ioctl(tc->thr_fd, HWT_IOC_RECORD_GET, &record_get);
 	if (error != 0) {

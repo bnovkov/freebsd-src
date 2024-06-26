@@ -70,6 +70,7 @@ struct hwt_context {
 	struct hwt_backend		*hwt_backend;
 
 	struct mtx			mtx;
+	struct mtx			rec_mtx;
 	enum hwt_ctx_state		state;
 	int				refcnt;
 };

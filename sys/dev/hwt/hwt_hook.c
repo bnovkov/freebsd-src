@@ -202,7 +202,7 @@ hwt_hook_mmap(struct thread *td)
 
 	if (pause) {
 		HWT_THR_LOCK(thr);
-		msleep(thr, &thr->mtx, 0, "hwt-mmap", 0);
+		msleep(thr, &thr->mtx, PCATCH, "hwt-mmap", 0);
 		HWT_THR_UNLOCK(thr);
 	}
 
@@ -272,6 +272,7 @@ hwt_hook_thread_create(struct thread *td)
 	HWT_CTX_UNLOCK(ctx);
 
 	/* Notify userspace. */
+	hwt_record_wakeup(ctx);
 
 	hwt_ctx_put(ctx);
 

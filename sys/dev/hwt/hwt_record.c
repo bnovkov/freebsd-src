@@ -166,6 +166,7 @@ hwt_record_td(struct thread *td, struct hwt_record_entry *ent, int flags)
 	HWT_CTX_LOCK(ctx);
 	TAILQ_INSERT_TAIL(&ctx->records, entry, next);
 	HWT_CTX_UNLOCK(ctx);
+	hwt_record_wakeup(ctx);
 
 	hwt_ctx_put(ctx);
 }
@@ -180,15 +181,35 @@ void
 hwt_record_entry_free(struct hwt_record_entry *entry)
 {
 
-	free(entry, M_HWT_RECORD);
+	switch (entry->record_type) {
+	case HWT_RECORD_MMAP:
+	case HWT_RECORD_EXECUTABLE:
+	case HWT_RECORD_INTERP:
+	case HWT_RECORD_KERNEL:
+		free(entry->fullpath, M_HWT_RECORD);
+		break;
+	default:
+		break;
+	}
+
+	uma_zfree(record_zone, entry);
 }
 
 static int
 hwt_record_grab(struct hwt_context *ctx,
-    struct hwt_record_user_entry *user_entry, int nitems_req)
+    struct hwt_record_user_entry *user_entry, int nitems_req, int wait)
 {
 	struct hwt_record_entry *entry;
 	int i;
+
+	if (wait) {
+		mtx_lock(&ctx->rec_mtx);
+		if (TAILQ_FIRST(&ctx->records) == NULL) {
+			/* Wait until we have new records. */
+			msleep(ctx, &ctx->rec_mtx, PCATCH, "recsnd", 0);
+		}
+		mtx_unlock(&ctx->rec_mtx);
+	}
 
 	for (i = 0; i < nitems_req; i++) {
 		HWT_CTX_LOCK(ctx);
@@ -221,9 +242,6 @@ hwt_record_free_all(struct hwt_context *ctx)
 		if (entry == NULL)
 			break;
 
-		if (entry->fullpath != NULL)
-			free(entry->fullpath, M_HWT_RECORD);
-
 		hwt_record_entry_free(entry);
 	}
 }
@@ -248,7 +266,7 @@ hwt_record_send(struct hwt_context *ctx, struct hwt_record_get *record_get)
 	user_entry = malloc(sizeof(struct hwt_record_user_entry) * nitems_req,
 	    M_HWT_RECORD, M_WAITOK | M_ZERO);
 
-	i = hwt_record_grab(ctx, user_entry, nitems_req);
+	i = hwt_record_grab(ctx, user_entry, nitems_req, record_get->wait);
 	if (i > 0)
 		error = copyout(user_entry, record_get->records,
 		    sizeof(struct hwt_record_user_entry) * i);
@@ -280,4 +298,10 @@ hwt_record_kernel_objects(struct hwt_context *ctx)
 		HWT_CTX_UNLOCK(ctx);
 	}
 	free(kobase, M_LINKER);
+}
+
+void
+hwt_record_wakeup(struct hwt_context *ctx)
+{
+	wakeup(ctx);
 }

@@ -101,6 +101,7 @@ struct hwt_record_user_entry {
 struct hwt_record_get {
 	struct hwt_record_user_entry	*records;
 	int				*nentries;
+	int             wait;
 } __aligned(16);
 
 struct hwt_bufptr_get {

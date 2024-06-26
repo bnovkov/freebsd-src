@@ -209,12 +209,12 @@ hwt_ncpu(void)
 }
 
 static int
-hwt_get_records(struct trace_context *tc, uint32_t *nrec)
+hwt_get_records(struct trace_context *tc, uint32_t *nrec, int wait)
 {
 	int nrecords;
 	int error;
 
-	error = hwt_record_fetch(tc, &nrecords);
+	error = hwt_record_fetch(tc, &nrecords, wait);
 	if (error)
 		return (error);
 
@@ -346,7 +346,7 @@ hwt_mode_cpu(struct trace_context *tc)
 
 	tc->pp->pp_pid = -1;
 
-	error = hwt_get_records(tc, &nrec);
+	error = hwt_get_records(tc, &nrec, 0);
 	if (error != 0)
 		return (error);
 
@@ -529,7 +529,7 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 	 */
 	tot_rec = 0;
 	do {
-		error = hwt_get_records(tc, &nrec);
+		error = hwt_get_records(tc, &nrec, 0);
 		if (error != 0 || nrec == 0)
 			break;
 		tot_rec += nrec;

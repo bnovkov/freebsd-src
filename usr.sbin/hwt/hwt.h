@@ -94,7 +94,7 @@ struct trace_context {
 struct pmcstat_process *hwt_process_alloc(void);
 int hwt_process_create(int *sockpair, char **cmd, char **env, int *pid0);
 int hwt_process_start(int *sockpair);
-int hwt_record_fetch(struct trace_context *tc, int *nrecords);
+int hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait);
 void hwt_procexit(pid_t pid, int status);
 void hwt_sleep(int msec);
 int hwt_find_sym(struct trace_context *tc);
