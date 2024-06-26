@@ -564,6 +564,31 @@ pt_process_data(struct trace_context *tc, struct pt_dec_ctx *dctx, uint64_t ts)
 }
 
 static int
+hwt_pt_process_buffer(struct trace_context *tc, int id, int curpage,
+    vm_offset_t offset)
+{
+	int error;
+	uint64_t ts;
+	struct pt_dec_ctx *dctx;
+
+	dctx = pt_get_decoder_ctx(tc, id);
+	if (dctx == NULL) {
+		printf("%s: unable to find decorder context for ID %d\n",
+		    __func__, id);
+
+		return (-1);
+	}
+
+	ts = (curpage * PAGE_SIZE) + offset;
+	error = pt_process_data(tc, dctx, ts);
+	if (error) {
+		return (error);
+	}
+
+	return (0);
+}
+
+static int
 pt_get_offs(int dev_fd, uint64_t *offs)
 {
 	struct hwt_bufptr_get bget;
@@ -584,7 +609,7 @@ pt_get_offs(int dev_fd, uint64_t *offs)
 }
 
 static void
-pt_ctx_process_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
+pt_ctx_shutdown_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
     void *arg __unused)
 {
 	int error;
@@ -598,89 +623,17 @@ pt_ctx_process_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		errx(EXIT_FAILURE, "pt_process_data");
 }
 
-static int
-hwt_pt_process(struct trace_context *tc)
+static void
+hwt_pt_shutdown(struct trace_context *tc)
 {
-	int status;
-	int ret, id;
-	int nrec, error;
-	struct kevent tevent;
-	struct pt_dec_ctx *dctx;
-
-	xo_open_container("trace");
-	xo_open_list("entries");
-
-	printf("Decoder started. Press ctrl+c to stop.\n");
-
-	while (1) {
-		waitpid(tc->pid, &status, WNOHANG);
-		if (WIFEXITED(status)) {
-			tc->terminate = 1;
-		}
-		if (!tc->terminate) {
-			printf("%s: waiting for new offset\n", __func__);
-			ret = kevent(tc->kqueue_fd, NULL, 0, &tevent, 1, NULL);
-			if (ret == -1) {
-				errx(EXIT_FAILURE, "kevent wait");
-			}
-		}
-		if (errno == EINTR || tc->terminate) {
-			printf(
-			    "%s: tracing terminated - fetching remaining data\n",
-			    __func__);
-			/* Fetch any remaining records. */
-			do {
-				error = hwt_record_fetch(tc, &nrec);
-				if (error != 0 || nrec == 0)
-					break;
-			} while (1);
-
-			/*
-			 * Iterate over all records and process remaining data.
-			 */
-			pt_foreach_ctx(tc, pt_ctx_process_cb, NULL);
-			return (0);
-		}
-
-		printf("EVENT ID: %lu\n", tevent.ident);
-		if (tevent.ident == HWT_KQ_BUFRDY_EV) {
-			id = tevent.fflags & HWT_KQ_BUFRDY_ID_MASK;
-			dctx = pt_get_decoder_ctx(tc, id);
-			if (dctx == NULL) {
-				printf(
-				    "%s: unable to find decorder context for ID %d\n",
-				    __func__, id);
-			}
-			errx(EXIT_FAILURE, "pt_get_decoder_ctx");
-
-			error = pt_process_data(tc, dctx, tevent.data);
-			if (error)
-				errx(EXIT_FAILURE, "pt_process_data");
-		} else if (tevent.ident == HWT_KQ_NEW_RECORD_EV) {
-			printf("%s: fetching new records\n", __func__);
-			do {
-				error = hwt_record_fetch(tc, &nrec);
-				if (error != 0 || nrec == 0)
-					break;
-			} while (1);
-		} else {
-			printf("%s: unknown event identifier %lu\n", __func__,
-			    tevent.ident);
-			errx(EXIT_FAILURE, "kevent ident");
-		}
-	}
-
-	xo_close_list("file");
-	xo_close_container("wc");
-	if (xo_finish() < 0)
-		xo_err(EXIT_FAILURE, "stdout");
-
-	return (0);
+	pt_foreach_ctx(tc, pt_ctx_shutdown_cb, NULL);
 }
 
-struct trace_dev_methods pt_methods = { .init = hwt_pt_init,
+struct trace_dev_methods pt_methods = {
+	.init = hwt_pt_init,
+	.shutdown = hwt_pt_shutdown,
 	.mmap = hwt_pt_mmap,
-	.process = hwt_pt_process,
+	.process_buffer = hwt_pt_process_buffer,
 	.set_config = hwt_pt_set_config,
 	.image_load_cb = hwt_pt_image_load_cb
 };
