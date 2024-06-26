@@ -63,7 +63,7 @@
 #include <dev/hwt/hwt_backend.h>
 #include <dev/hwt/hwt_hook.h>
 #include <dev/hwt/hwt_intr.h>
-#include <dev/hwt/hwt_event.h>
+#include <dev/hwt/hwt_record.h>
 
 #include "pt.h"
 
@@ -79,6 +79,8 @@ MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
 SDT_PROVIDER_DEFINE(pt);
 SDT_PROBE_DEFINE(pt, , , topa__intr);
+
+TASKQUEUE_FAST_DEFINE_THREAD(pt);
 
 static bool loaded = false;
 
@@ -98,7 +100,7 @@ struct pt_buffer {
 
 struct pt_ctx {
 	struct pt_buffer buf;	       /* ToPA buffer metadata */
-	struct task task;	       /* ToPA buffer kevent task */
+	struct task task;	       /* ToPA buffer notification task */
 	struct hwt_context *hwt_ctx;
 	struct pt_save_area save_area; /* PT XSAVE area */
 	int id;
@@ -129,6 +131,7 @@ static struct pt_cpu_info {
 	uint32_t l1_ebx;
 } pt_info;
 
+static void pt_send_buffer_record(void *arg, int pending __unused);
 static int pt_topa_intr(struct trapframe *tf);
 
 static __inline void
@@ -183,6 +186,16 @@ pt_update_buffer(struct pt_buffer *buf)
 
 	dprintf("%s: wrap_cnt: %lu, curpage: %d, offset: %zu\n", __func__,
 	    buf->wrap_count, buf->curpage, buf->offset);
+}
+
+static __inline void
+pt_fill_buffer_record(int id, struct pt_buffer *buf,
+    struct hwt_record_entry *rec)
+{
+	rec->record_type = HWT_RECORD_BUFFER;
+	rec->buf_id = id;
+	rec->curpage = buf->curpage;
+	rec->offset = buf->offset + (buf->wrap_count * buf->size);
 }
 
 /*
@@ -402,6 +415,7 @@ pt_init_ctx(struct pt_ctx *pt_ctx, struct hwt_vm *vm, int ctx_id)
 	}
 
 	pt_ctx->id = ctx_id;
+	TASK_INIT(&pt_ctx->task, 0, pt_send_buffer_record, pt_ctx);
 
 	return (0);
 }
@@ -713,6 +727,17 @@ static struct hwt_backend backend = {
 	.name = "pt",
 };
 
+static void
+pt_send_buffer_record(void *arg, int pending __unused)
+{
+	struct hwt_record_entry record;
+	struct pt_ctx *ctx = (struct pt_ctx *)arg;
+
+	/* Prepare buffer record. */
+	pt_fill_buffer_record(ctx->id, &ctx->buf, &record);
+	hwt_record_ctx(ctx->hwt_ctx, &record, M_ZERO | M_NOWAIT);
+}
+
 /*
  * ToPA PMI handler.
  */
@@ -751,13 +776,16 @@ pt_topa_intr(struct trapframe *tf)
 	reg |= GLOBAL_STATUS_FLAG_TRACETOPAPMI;
 	wrmsr(MSR_IA_GLOBAL_STATUS_RESET, reg);
 
+	/* Notify userspace. */
+	taskqueue_enqueue_flags(taskqueue_pt, &ctx->task,
+	    TASKQUEUE_FAIL_IF_PENDING);
+
 	/* Don't re-enable ToPA PMI if trace stop was requested. */
 	if (pt_cpu_get_state(curcpu) != PT_TERMINATING) {
 		lapic_reenable_pt_pmi();
 		/* Re-enable tracing. */
 		pt_cpu_toggle_local(&ctx->save_area, true);
 	}
-	/* Enable preemption. */
 	critical_exit();
 
 	return (1);
