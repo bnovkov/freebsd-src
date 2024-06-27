@@ -84,7 +84,8 @@ hwt_record_to_elf_img(struct trace_context *tc,
 	    entry->fullpath);
 	path = pmcstat_string_intern(imagepath);
 
-	image = pmcstat_image_from_path(path, 0, &args, &plugins);
+	image = pmcstat_image_from_path(path,
+	    !!(entry->record_type == HWT_RECORD_KERNEL), &args, &plugins);
 	if (image == NULL)
 		return (-1);
 
@@ -158,7 +159,8 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 			if (tc->trace_dev->methods->image_load_cb != NULL &&
 			    (error = tc->trace_dev->methods->image_load_cb(tc,
 				 &img))) {
-				ioctl(tc->thr_fd, HWT_IOC_WAKEUP, &w);
+				if (tc->mode == HWT_MODE_THREAD)
+					ioctl(tc->thr_fd, HWT_IOC_WAKEUP, &w);
 				return (error);
 			}
 
