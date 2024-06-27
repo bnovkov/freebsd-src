@@ -110,7 +110,8 @@ struct pt_ctx {
 static struct pt_ctx *pt_pcpu_ctx;
 
 enum pt_cpu_state {
-	PT_STOPPED = 0,
+	PT_DISABLED = 0,
+	PT_STOPPED,
 	PT_TERMINATING,
 	PT_ACTIVE
 };
@@ -293,11 +294,14 @@ static void
 pt_cpu_stop(void *dummy)
 {
 	struct pt_cpu *cpu;
-	struct pt_ctx *ctx __diagused;
+	struct pt_ctx *ctx;
+
+	/* Shutdown may occur before PT gets properly configured on curcpu. */
+	if (pt_cpu_get_state(curcpu) == PT_DISABLED)
+		return;
 
 	cpu = &pt_pcpu[curcpu];
 	ctx = cpu->ctx;
-
 	MPASS(ctx != NULL);
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
 
@@ -308,7 +312,7 @@ pt_cpu_stop(void *dummy)
 	pt_cpu_toggle_local(&cpu->ctx->save_area, false);
 	pt_cpu_set_state(curcpu, PT_STOPPED);
 	/* Update buffer offset. */
-	pt_update_buffer(&cpu->ctx->buf);
+	pt_update_buffer(&ctx->buf);
 
 	pt_cpu_dump(curcpu);
 }
@@ -518,6 +522,8 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
 
 	pt_pcpu[cpu_id].ctx = pt_ctx;
+	/* Mark CPU as initialized. */
+	pt_cpu_set_state(cpu_id, PT_STOPPED);
 
 	return (0);
 }
@@ -636,13 +642,17 @@ pt_backend_deinit(struct hwt_context *ctx)
 		CPU_FOREACH(cpu_id) {
 			if (!CPU_ISSET(cpu_id, &ctx->cpu_map))
 				continue;
-			KASSERT(pt_pcpu[cpu_id].ctx == &pt_pcpu_ctx[cpu_id],
-			    ("%s: CPU mode tracing with non-cpu mode PT "
-			    "context active", __func__));
-			pt_pcpu[cpu_id].ctx = NULL;
+			if (pt_pcpu[cpu_id].ctx != NULL) {
+				KASSERT(pt_pcpu[cpu_id].ctx == &pt_pcpu_ctx[cpu_id],
+				    ("%s: CPU mode tracing with non-cpu mode PT "
+				    "context active", __func__));
+				pt_pcpu[cpu_id].ctx = NULL;
+			}
 			pt_ctx = &pt_pcpu_ctx[cpu_id];
 			/* Free ToPA table. */
 			pt_deinit_ctx(pt_ctx);
+			/* Reset pcpu entry. */
+			memset(&pt_pcpu[cpu_id], 0, sizeof(struct pt_cpu));
 		}
 	}
 }
