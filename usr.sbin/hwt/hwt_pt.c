@@ -136,6 +136,7 @@ pt_cpu_ctx_init_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
 {
 	int cpu_id, fd;
 	char filename[32];
+	struct pt_config config;
 
 	cpu_id = dctx - cpus;
 	sprintf(filename, "/dev/hwt_%d_%d", tc->ident, cpu_id);
@@ -159,6 +160,21 @@ pt_cpu_ctx_init_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		    __func__, cpu_id, strerror(errno));
 	}
 	dctx->id = cpu_id;
+
+	if (!tc->raw) {
+		memset(&config, 0, sizeof(config));
+		config.size = sizeof(config);
+		config.begin = dctx->tracebuf;
+		config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
+
+		dctx->dec = pt_blk_alloc_decoder(&config);
+		if (dctx->dec == NULL) {
+			printf("%s: failed to allocate PT decoder for CPU %d\n",
+			    __func__, cpu_id);
+			free(dctx);
+			return;
+		}
+	}
 }
 
 static void
