@@ -1009,11 +1009,17 @@ vm_reserv_free_page(vm_page_t m)
 	if (rv->object == NULL)
 		return (FALSE);
 	vm_reserv_lock(rv);
+	/* Re-validate after lock. */
 	if (vm_reserv_is_noobj(rv)) {
+		VM_RESERV_UMAQ_LOCK(&uma_small_alloc_queues[rv->domain].partq);
+		if (rv->inpartpopq == 1) {
+			LIST_REMOVE(rv, objq);
+			rv->inpartpopq = 0;
+		}
 		vm_reserv_free_page_noobj(rv, m);
+		VM_RESERV_UMAQ_UNLOCK(&uma_small_alloc_queues[rv->domain].partq);
 		ret = TRUE;
 	} else {
-		/* Re-validate after lock. */
 		if (rv->object != NULL) {
 			vm_reserv_depopulate(rv, m - rv->pages);
 			ret = TRUE;
