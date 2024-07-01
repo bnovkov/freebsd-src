@@ -831,6 +831,10 @@ vm_reserv_alloc_page(vm_object_t object, vm_pindex_t pindex, int domain,
 		index = VM_RESERV_INDEX(object, pindex);
 		m = &rv->pages[index];
 		vm_reserv_lock(rv);
+		if (vm_reserv_is_noobj(rv)) {
+			m = NULL;
+			goto out;
+		}
 		/* Handle reclaim race. */
 		if (rv->object != object ||
 		    /* Handle vm_page_rename(m, new_object, ...). */
@@ -1521,6 +1525,7 @@ vm_reserv_mark_noobj(vm_reserv_t rv)
 	    ("%s: reservation %p already marked as noobj", __func__, rv));
 	KASSERT(rv->object == NULL, ("%s: reserv %p is managed", __func__, rv));
 	rv->object = VM_RESERV_NOOBJ_MARK;
+	rv->inpartpopq = 0;
 }
 
 /*
@@ -1559,7 +1564,6 @@ vm_reserv_fetch_noobj(int domain, int req)
 		KASSERT(rv->pages == m,
 		    ("vm_reserv_alloc_page: reserv %p's pages is corrupted",
 			rv));
-		vm_reserv_unlock(rv);
 	}
 	return (rv);
 }
@@ -1649,6 +1653,7 @@ vm_reserv_uma_next_rv(struct vm_reserv_uma_queue *qp, int domain, int req)
 	rv = LIST_FIRST(&qp->head);
 	VM_RESERV_UMAQ_UNLOCK(qp);
 	if (rv != NULL) {
+		vm_reserv_lock(rv);
 		return rv;
 	}
 retry:
@@ -1696,7 +1701,6 @@ vm_reserv_uma_small_alloc(int domain, int req)
 again:
 	rv = vm_reserv_uma_next_rv(qp, domain, req);
 	if (rv != NULL) {
-		vm_reserv_lock(rv);
 		m = vm_reserv_alloc_page_noobj(rv, req);
 		if (m == NULL) {
 			if (rv->popcnt == VM_LEVEL_0_NPAGES) {
