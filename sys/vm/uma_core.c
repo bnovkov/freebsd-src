@@ -2045,7 +2045,7 @@ small_alloc(uma_zone_t zone, vm_size_t bytes __unused, int domain,
 	vm_page_t m;
 
 	*flags = UMA_SLAB_PRIV;
-	m = vm_page_alloc_noobj_domain(domain,  VM_ALLOC_WIRED);
+	m = vm_page_alloc_noobj_domain(domain, malloc2vm_flags(wait) | VM_ALLOC_WIRED);
 	if (m == NULL)
 		return (NULL);
 	if ((wait & M_NODUMP) == 0)

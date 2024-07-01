@@ -1645,9 +1645,12 @@ vm_reserv_uma_next_rv(struct vm_reserv_uma_queue *qp, int domain, int req)
 	int nretries = 0;
 
 	/* Try to grab a partially populated chunk. */
+	VM_RESERV_UMAQ_LOCK(qp);
 	rv = LIST_FIRST(&qp->head);
-	if (rv != NULL)
+	VM_RESERV_UMAQ_UNLOCK(qp);
+	if (rv != NULL) {
 		return rv;
+	}
 retry:
 	/* Nothing was found - reach for the page allocator.  */
 	rv = vm_reserv_fetch_noobj(domain, req);
@@ -1677,18 +1680,14 @@ retry:
  * the physical memory fragmentation rate.
  */
 vm_page_t
-vm_reserv_uma_small_alloc(int domain, int flags)
+vm_reserv_uma_small_alloc(int domain, int req)
 {
 	struct vm_reserv_uma_queue *qp;
 	vm_reserv_t rv;
-	vm_page_t m;
-	int req;
+	vm_page_t m = NULL;
 
-	req = malloc2vm_flags(flags) | VM_ALLOC_WIRED;
 	/* Pages for UMA_NOFREE zones have their own queues. */
-	qp = (flags & M_NEVERFREED) == 0 ?
-	    &uma_small_alloc_queues[domain].partq :
-	    &uma_small_alloc_queues[domain].nofreeq;
+	qp = &uma_small_alloc_queues[domain].partq;
 
 	/*
 	 * Try to fetch a partially populated reservation
@@ -1727,26 +1726,20 @@ vm_reserv_uma_small_free(vm_page_t m)
 	struct vm_reserv_uma_queue *qp;
 	vm_reserv_t rv;
 
-	MPASS(vm_reserv_is_noobj(rv));
 	rv = vm_reserv_from_page(m);
 	vm_reserv_lock(rv);
+	MPASS(vm_reserv_is_noobj(rv));
 	qp = &uma_small_alloc_queues[rv->domain].partq;
+	VM_RESERV_UMAQ_LOCK(qp);
 	if (rv->popcnt == VM_LEVEL_0_NPAGES) {
 
 		/*
 		 * We're freeing from a full reservation - queue
 		 * it on the domain's partq.
 		 */
-		VM_RESERV_UMAQ_LOCK(qp);
 		LIST_INSERT_HEAD(&qp->head, rv, objq);
 		rv->inpartpopq = 1;
-		VM_RESERV_UMAQ_UNLOCK(qp);
-	}
-	vm_wire_sub(1);
-	m->ref_count = 0;
-	m->busy_lock = VPB_FREED;
-	vm_reserv_free_page_noobj(rv, m);
-	if (rv->popcnt == 0) {
+	} else if (rv->popcnt == 1) {
 
 		/*
 		 * Reservation is empty and was released -
@@ -1755,11 +1748,14 @@ vm_reserv_uma_small_free(vm_page_t m)
 		KASSERT(rv->inpartpopq != 0,
 				("%s: noobj reserv %p was not in partq",
 				 __func__, rv));
-		VM_RESERV_UMAQ_LOCK(qp);
 		LIST_REMOVE(rv, objq);
 		rv->inpartpopq = 0;
-		VM_RESERV_UMAQ_UNLOCK(qp);
 	}
+	VM_RESERV_UMAQ_UNLOCK(qp);
+	vm_wire_sub(1);
+	m->ref_count = 0;
+	m->busy_lock = VPB_FREED;
+	vm_reserv_free_page_noobj(rv, m);
 	vm_reserv_unlock(rv);
 	return;
 }
