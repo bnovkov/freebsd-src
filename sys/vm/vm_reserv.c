@@ -1655,9 +1655,7 @@ vm_reserv_uma_next_rv(struct vm_reserv_uma_queue *qp, int domain, int req)
 	int nretries = 0;
 
 	/* Try to grab a partially populated chunk. */
-	VM_RESERV_UMAQ_LOCK(qp);
 	rv = LIST_FIRST(&qp->head);
-	VM_RESERV_UMAQ_UNLOCK(qp);
 	if (rv != NULL) {
 		vm_reserv_lock(rv);
 		return rv;
@@ -1722,6 +1720,7 @@ again:
 			/* Reservation is full - remove it from the partq. */
 			VM_RESERV_UMAQ_LOCK(qp);
 			LIST_REMOVE(rv, objq);
+			rv->inpartpopq = 0;
 			VM_RESERV_UMAQ_UNLOCK(qp);
 		}
 		vm_reserv_unlock(rv);
