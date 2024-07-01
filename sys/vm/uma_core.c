@@ -2045,11 +2045,7 @@ small_alloc(uma_zone_t zone, vm_size_t bytes __unused, int domain,
 	vm_page_t m;
 
 	*flags = UMA_SLAB_PRIV;
-#if VM_NRESERVLEVEL > 0
-	m = vm_reserv_uma_small_alloc(domain, wait);
-#else
-	m = vm_page_alloc_noobj_domain(domain, req);
-#endif
+	m = vm_page_alloc_noobj_domain(domain,  VM_ALLOC_WIRED);
 	if (m == NULL)
 		return (NULL);
 	if ((wait & M_NODUMP) == 0)
@@ -2154,12 +2150,8 @@ small_free(void *mem, vm_size_t size __unused, uint8_t flags)
 
 	m = uma_dmap_to_vm_page(mem);
 	dump_drop_page(VM_PAGE_TO_PHYS(m));
-#if VM_NRESERVLEVEL > 0
-	vm_reserv_uma_small_free(m);
-#else
 	vm_page_unwire_noq(m);
 	vm_page_free(m);
-#endif
 }
 
 /*

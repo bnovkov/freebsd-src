@@ -68,6 +68,7 @@
 #include <vm/vm_radix.h>
 #include <vm/vm_reserv.h>
 
+
 /*
  * The reservation system supports the speculative allocation of large physical
  * pages ("superpages").  Speculative allocation enables the fully automatic
@@ -265,6 +266,9 @@ SYSCTL_OID(_vm_reserv, OID_AUTO, partpopq,
 static COUNTER_U64_DEFINE_EARLY(vm_reserv_reclaimed);
 SYSCTL_COUNTER_U64(_vm_reserv, OID_AUTO, reclaimed, CTLFLAG_RD,
     &vm_reserv_reclaimed, "Cumulative number of reclaimed reservations");
+
+static void
+vm_reserv_free_page_noobj(vm_reserv_t rv, vm_page_t m);
 
 /*
  * The object lock pool is used to synchronize the rvq.  We can not use a
@@ -1001,14 +1005,17 @@ vm_reserv_free_page(vm_page_t m)
 	if (rv->object == NULL)
 		return (FALSE);
 	vm_reserv_lock(rv);
-	KASSERT(!vm_reserv_is_noobj(rv),
-	    ("%s: reserv %p is noobj ", __func__, rv));
-	/* Re-validate after lock. */
-	if (rv->object != NULL) {
-		vm_reserv_depopulate(rv, m - rv->pages);
+	if (vm_reserv_is_noobj(rv)) {
+		vm_reserv_free_page_noobj(rv, m);
 		ret = TRUE;
-	} else
-		ret = FALSE;
+	} else {
+		/* Re-validate after lock. */
+		if (rv->object != NULL) {
+			vm_reserv_depopulate(rv, m - rv->pages);
+			ret = TRUE;
+		} else
+			ret = FALSE;
+	}
 	vm_reserv_unlock(rv);
 
 	return (ret);
@@ -1709,24 +1716,6 @@ again:
 			VM_RESERV_UMAQ_UNLOCK(qp);
 		}
 		vm_reserv_unlock(rv);
-		/* Initialize page. */
-		vm_page_dequeue(m);
-		m->pindex = 0xdeadc0dedeadc0de;
-		m->flags = m->flags & PG_ZERO;
-		m->a.flags = 0;
-		m->oflags = VPO_UNMANAGED;
-		m->busy_lock = VPB_UNBUSIED;
-		vm_wire_add(1);
-		m->ref_count = 1;
-		if ((req & VM_ALLOC_ZERO) != 0 && (m->flags & PG_ZERO) == 0)
-			pmap_zero_page(m);
-	} else {
-
-		/*
-		 * No reservations available at the moment - fall back to
-		 * vm_page_alloc.
-		 */
-		m = vm_page_alloc_noobj_domain(domain, req);
 	}
 
 	return (m);
@@ -1738,59 +1727,41 @@ vm_reserv_uma_small_free(vm_page_t m)
 	struct vm_reserv_uma_queue *qp;
 	vm_reserv_t rv;
 
+	MPASS(vm_reserv_is_noobj(rv));
 	rv = vm_reserv_from_page(m);
+	vm_reserv_lock(rv);
+	qp = &uma_small_alloc_queues[rv->domain].partq;
+	if (rv->popcnt == VM_LEVEL_0_NPAGES) {
 
-	/*
-	 * Check if the reservation is valid.
-	 * Since we are mixing 0-order noobj pages with
-	 * reservation-backed pages, we can run
-	 * into invalid reservations.
-	 */
-	if (rv->pages != NULL) {
-		vm_reserv_lock(rv);
-		if (vm_reserv_is_noobj(rv)) {
-			qp = &uma_small_alloc_queues[rv->domain].partq;
-			if (rv->popcnt == VM_LEVEL_0_NPAGES) {
-
-				/*
-				 * We're freeing from a full reservation - queue
-				 * it on the domain's partq.
-				 */
-				VM_RESERV_UMAQ_LOCK(qp);
-				LIST_INSERT_HEAD(&qp->head, rv, objq);
-				rv->inpartpopq = 1;
-				VM_RESERV_UMAQ_UNLOCK(qp);
-			}
-			vm_wire_sub(1);
-			m->ref_count = 0;
-			m->busy_lock = VPB_FREED;
-			vm_reserv_free_page_noobj(rv, m);
-			if (rv->popcnt == 0) {
-
-				/*
-				 * Reservation is empty and was released -
-				 * remove it from the partq.
-				 */
-				KASSERT(rv->inpartpopq != 0,
-				    ("%s: noobj reserv %p was not in partq",
-					__func__, rv));
-				VM_RESERV_UMAQ_LOCK(qp);
-				LIST_REMOVE(rv, objq);
-				rv->inpartpopq = 0;
-				VM_RESERV_UMAQ_UNLOCK(qp);
-			}
-			vm_reserv_unlock(rv);
-			return;
-		}
-		vm_reserv_unlock(rv);
+		/*
+		 * We're freeing from a full reservation - queue
+		 * it on the domain's partq.
+		 */
+		VM_RESERV_UMAQ_LOCK(qp);
+		LIST_INSERT_HEAD(&qp->head, rv, objq);
+		rv->inpartpopq = 1;
+		VM_RESERV_UMAQ_UNLOCK(qp);
 	}
+	vm_wire_sub(1);
+	m->ref_count = 0;
+	m->busy_lock = VPB_FREED;
+	vm_reserv_free_page_noobj(rv, m);
+	if (rv->popcnt == 0) {
 
-	/*
-	 * The page is not a part of a valid or noobj
-	 * reservation - free it to the queues.
-	 */
-	vm_page_unwire_noq(m);
-	vm_page_free(m);
+		/*
+		 * Reservation is empty and was released -
+		 * remove it from the partq.
+		 */
+		KASSERT(rv->inpartpopq != 0,
+				("%s: noobj reserv %p was not in partq",
+				 __func__, rv));
+		VM_RESERV_UMAQ_LOCK(qp);
+		LIST_REMOVE(rv, objq);
+		rv->inpartpopq = 0;
+		VM_RESERV_UMAQ_UNLOCK(qp);
+	}
+	vm_reserv_unlock(rv);
+	return;
 }
 
 #endif	/* VM_NRESERVLEVEL > 0 */
