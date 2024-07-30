@@ -283,7 +283,7 @@ sdt_enable(void *arg __unused, dtrace_id_t id, void *parg)
 	if (sdt_probes_enabled_count == 1)
 		sdt_probes_enabled = true;
 
-	sdt_probe_update(probe, true);
+    zcond_enable(probe->enabled);
 }
 
 static void
@@ -294,7 +294,7 @@ sdt_disable(void *arg __unused, dtrace_id_t id, void *parg)
 	probe = parg;
 	KASSERT(probe->sdtp_lf->nenabled > 0, ("no probes enabled"));
 
-	sdt_probe_update(probe, false);
+    zcond_disable(probe->enabled);
 
 	sdt_probes_enabled_count--;
 	if (sdt_probes_enabled_count == 0)
@@ -306,7 +306,7 @@ sdt_disable(void *arg __unused, dtrace_id_t id, void *parg)
 	}
 	probe->id = 0;
 	probe->sdtp_lf->nenabled--;
-    zcond_disable(probe->enabled);
+
 }
 
 static void
@@ -376,7 +376,6 @@ sdt_kld_load_probes(struct linker_file *lf)
 {
 	struct sdt_probe **p_begin, **p_end;
 	struct sdt_argtype **a_begin, **a_end;
-	struct sdt_tracepoint *tp_begin, *tp_end;
 
 	if (linker_file_lookup_set(lf, "sdt_probes_set", &p_begin, &p_end,
 	    NULL) == 0) {
@@ -385,7 +384,6 @@ sdt_kld_load_probes(struct linker_file *lf)
 			(*probe)->sdtp_lf = lf;
 			sdt_create_probe(*probe);
 			TAILQ_INIT(&(*probe)->argtype_list);
-			STAILQ_INIT(&(*probe)->tracepoint_list);
 		}
 	}
 
@@ -396,23 +394,6 @@ sdt_kld_load_probes(struct linker_file *lf)
 			(*argtype)->probe->n_args++;
 			TAILQ_INSERT_TAIL(&(*argtype)->probe->argtype_list,
 			    *argtype, argtype_entry);
-		}
-	}
-
-	if (linker_file_lookup_set(lf, __XSTRING(_SDT_TRACEPOINT_SET),
-	    &tp_begin, &tp_end, NULL) == 0) {
-		for (struct sdt_tracepoint *tp = tp_begin; tp < tp_end; tp++) {
-			if (!sdt_tracepoint_valid(tp->patchpoint, tp->target)) {
-				printf(
-			    "invalid tracepoint %#jx->%#jx for %s:%s:%s:%s\n",
-				    (uintmax_t)tp->patchpoint,
-				    (uintmax_t)tp->target,
-				    tp->probe->prov->name, tp->probe->mod,
-				    tp->probe->func, tp->probe->name);
-				continue;
-			}
-			STAILQ_INSERT_TAIL(&tp->probe->tracepoint_list, tp,
-			    tracepoint_entry);
 		}
 	}
 }
