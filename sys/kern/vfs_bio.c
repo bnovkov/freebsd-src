@@ -3155,7 +3155,8 @@ vfs_vmio_extend(struct buf *bp, int desiredpages, int size)
 		(void)vm_page_grab_pages_unlocked(obj,
 		    OFF_TO_IDX(bp->b_offset) + bp->b_npages,
 		    VM_ALLOC_SYSTEM | VM_ALLOC_IGN_SBUSY |
-		    VM_ALLOC_NOBUSY | VM_ALLOC_WIRED,
+		    VM_ALLOC_NOBUSY | VM_ALLOC_WIRED |
+		    VM_ALLOC_WAITOK,
 		    &bp->b_pages[bp->b_npages], desiredpages - bp->b_npages);
 		bp->b_npages = desiredpages;
 	}

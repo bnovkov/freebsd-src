@@ -37,6 +37,8 @@
 #ifdef _KERNEL
 
 typedef void (*pctrie_cb_t)(void *ptr, void *arg);
+typedef void *(*pctrie_allocfn_t)(struct pctrie *);
+
 
 #define	PCTRIE_DEFINE_SMR(name, type, field, allocfn, freefn, smr)	\
     PCTRIE_DEFINE(name, type, field, allocfn, freefn)			\
@@ -188,6 +190,31 @@ name##_PCTRIE_INSERT_LOOKUP_LE(struct pctrie *ptree, struct type *ptr,	\
 	return (0);							\
 }									\
 									\
+static __inline __unused int 						\
+name##_PCTRIE_INSERT_BATCH(struct pctrie *ptree,			\
+    struct type **arr, int nitems)					\
+{									\
+	int total, rv;							\
+	uint64_t *val;							\
+	struct pctrie_node *node;					\
+									\
+	total = 0;							\
+	do {								\
+		val = name##_PCTRIE_PTR2VAL(arr[total]);		\
+		rv = pctrie_batch_insert_next(ptree,			\
+		    allocfn, val, &node, nitems - total);		\
+		if (__predict_false(rv < 0))				\
+			return (total);					\
+		if (rv == 1) { 						\
+			return (total+1); \
+		}							\
+		total += pctrie_batch_insert(node,			\
+		    (uintptr_t *)&arr[total], nitems - total,		\
+		    *val, __offsetof(struct type, field)); 		\
+	} while (total < nitems);					\
+	return (total);							\
+}									\
+									\
 static __inline __unused struct type *					\
 name##_PCTRIE_LOOKUP(struct pctrie *ptree, uint64_t key)		\
 {									\
@@ -282,6 +309,11 @@ void		*pctrie_insert_lookup_strict(struct pctrie *ptree,
 		    uint64_t *val);
 void		pctrie_insert_node(void *parentp,
 		    struct pctrie_node *parent, uint64_t *val);
+int		pctrie_batch_insert(struct pctrie_node *node, uintptr_t *arr,
+		    int nitems, uint64_t index, uintptr_t offs);
+int		pctrie_batch_insert_next(struct pctrie *ptree,
+		    pctrie_allocfn_t allocfn, uint64_t *val,
+		    struct pctrie_node **found, int cnt);
 uint64_t	*pctrie_lookup(struct pctrie *ptree, uint64_t key);
 uint64_t	*pctrie_lookup_ge(struct pctrie *ptree, uint64_t key);
 uint64_t	*pctrie_lookup_le(struct pctrie *ptree, uint64_t key);
