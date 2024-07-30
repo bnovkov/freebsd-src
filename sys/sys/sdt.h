@@ -187,58 +187,14 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define	SDT_PROBES_ENABLED()	__predict_false(sdt_probes_enabled)
 
-#ifdef _ILP32
-#define	_SDT_ASM_WORD			".long"
-#else
-#define	_SDT_ASM_WORD			".quad"
-#endif
-
-#ifndef _SDT_ASM_PROBE_CONSTRAINT
-#define	_SDT_ASM_PROBE_CONSTRAINT	"i"
-#endif
-#ifndef	_SDT_ASM_PROBE_OPERAND
-#define	_SDT_ASM_PROBE_OPERAND		"c"
-#endif
-
-/*
- * The asm below generates records corresponding to the structure's layout, so
- * the two must be kept in sync.
- */
-struct sdt_tracepoint {
-	struct sdt_probe *probe;
-	uintptr_t	patchpoint;
-	uintptr_t	target;
-	STAILQ_ENTRY(sdt_tracepoint) tracepoint_entry;
-};
-
-#define __SDT_PROBE(prov, mod, func, name, uniq, f, ...) do {		\
-	__WEAK(__CONCAT(__start_set_, _SDT_TRACEPOINT_SET));		\
-	__WEAK(__CONCAT(__stop_set_, _SDT_TRACEPOINT_SET));		\
-	asm goto(							\
-	    "0:\n"							\
-	    _SDT_ASM_PATCH_INSTR "\n"					\
-	    ".pushsection " _SDT_TRACEPOINT_SECTION ", \"aw\"\n"	\
-	    _SDT_ASM_WORD " %" _SDT_ASM_PROBE_OPERAND "0\n"		\
-	    _SDT_ASM_WORD " 0b\n"					\
-	    _SDT_ASM_WORD " %l1\n"					\
-	    _SDT_ASM_WORD " 0\n"					\
-	    ".popsection\n"						\
-	    :								\
-	    : _SDT_ASM_PROBE_CONSTRAINT (_SDT_PROBE_NAME(prov, mod,	\
-	    func, name))						\
-	    :								\
-	    : __sdt_probe##uniq);					\
-	if (0) {							\
-__sdt_probe##uniq:;							\
-		f(_SDT_PROBE_NAME(prov, mod, func, name)->id, __VA_ARGS__); \
-	}								\
-} while (0)
-#define _SDT_PROBE(prov, mod, func, name, uniq, f, ...)			\
-	__SDT_PROBE(prov, mod, func, name, uniq, f, __VA_ARGS__)
-#define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
-	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe,	\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3, (uintptr_t)arg4)
+#define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) do {	\
+    if(SDT_PROBES_ENABLED()) { \
+        if (zcond_true(_SDT_PROBE_NAME(prov, mod, func, name)->enabled)) \
+            (sdt_probe6_func)(_SDT_PROBE_NAME(prov, mod, func, name)->id,	\
+ 		    (uintptr_t) arg0, (uintptr_t) arg1, (uintptr_t) arg2,	\
+ 		    (uintptr_t) arg3, (uintptr_t) arg4); \
+    } \
+ } while(0);
 
 #define SDT_PROBE_ARGTYPE(_prov, _mod, _func, _name, _num, _type, _xtype) \
 	static struct sdt_argtype					\
@@ -344,21 +300,19 @@ __sdt_probe##uniq:;							\
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 5, arg5, xarg5)
 
 #define	SDT_PROBE0(prov, mod, func, name)				\
-	SDT_PROBE(prov, mod, func, name, 0, 0, 0, 0, 0)
+	SDT_PROBE(prov, mod, func, name, 0, 0, 0, 0, 0, 0)
 #define	SDT_PROBE1(prov, mod, func, name, arg0)				\
-	SDT_PROBE(prov, mod, func, name, arg0, 0, 0, 0, 0)
+	SDT_PROBE(prov, mod, func, name, arg0, 0, 0, 0, 0, 0)
 #define	SDT_PROBE2(prov, mod, func, name, arg0, arg1)			\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, 0, 0, 0)
+	SDT_PROBE(prov, mod, func, name, arg0, arg1, 0, 0, 0, 0)
 #define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)		\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2,  0, 0)
+	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2,  0, 0, 0)
 #define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)	\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, 0)
+	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, 0, 0)
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, 0)
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) \
-	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe6,	\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5)
+	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5)
 
 #ifndef KDTRACE_NO_MIB_SDT
 #define	MIB_SDT_PROBE1(...)	SDT_PROBE1(mib, __VA_ARGS__)
