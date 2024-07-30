@@ -43,4 +43,13 @@ struct pctrie {
 	struct pctrie_node	*pt_root;
 };
 
+struct pctrie_batch_iter {
+	uintptr_t offs;
+	struct pctrie *ptree;
+
+	int state;
+	int slot;
+	struct pctrie_node *node;
+};
+
 #endif /* !__SYS_PCTRIE_H_ */

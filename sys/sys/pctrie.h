@@ -37,6 +37,8 @@
 #ifdef _KERNEL
 
 typedef void (*pctrie_cb_t)(void *ptr, void *arg);
+typedef void *(*pctrie_allocfn_t)(struct pctrie *);
+
 
 #define	PCTRIE_DEFINE_SMR(name, type, field, allocfn, freefn, smr)	\
     PCTRIE_DEFINE(name, type, field, allocfn, freefn)			\
@@ -188,6 +190,25 @@ name##_PCTRIE_INSERT_LOOKUP_LE(struct pctrie *ptree, struct type *ptr,	\
 	return (0);							\
 }									\
 									\
+static __inline __unused int										\
+name##_PCTRIE_INSERT_BATCH(struct pctrie *ptree, struct type **arr,	\
+						   int nitems)								\
+{																	\
+	int total; \
+	uint64_t *val; \
+	struct pctrie_node *node;																\
+\
+	total = 0;															\
+	do {																\
+		val =  name##_PCTRIE_PTR2VAL(arr[total]);								\
+		if (__predict_false(pctrie_batch_insert_next(ptree, allocfn, val, &node) < 0))						\
+			return (total);\
+		total += pctrie_batch_insert(node, (uintptr_t *)&arr[total],	\
+									 nitems - total, *val,  __offsetof(struct type, field)); \
+	} while (total < nitems);											\
+	return (total);														\
+}																		\
+																	\
 static __inline __unused struct type *					\
 name##_PCTRIE_LOOKUP(struct pctrie *ptree, uint64_t key)		\
 {									\
@@ -281,7 +302,11 @@ void		*pctrie_insert_lookup_lt(struct pctrie *ptree, uint64_t *val,
 void		*pctrie_insert_lookup_strict(struct pctrie *ptree,
 		    uint64_t *val);
 void		pctrie_insert_node(void *parentp,
-		    struct pctrie_node *parent, uint64_t *val);
+							   struct pctrie_node *parent, uint64_t *val);
+int    pctrie_batch_insert(struct pctrie_node *node, uintptr_t *arr,
+						   int nitems, uint64_t index, uintptr_t offs);
+int         pctrie_batch_insert_next(struct pctrie *ptree, pctrie_allocfn_t allocfn,
+									 uint64_t *val, struct pctrie_node **found);
 uint64_t	*pctrie_lookup(struct pctrie *ptree, uint64_t key);
 uint64_t	*pctrie_lookup_ge(struct pctrie *ptree, uint64_t key);
 uint64_t	*pctrie_lookup_le(struct pctrie *ptree, uint64_t key);
@@ -304,6 +329,8 @@ uint64_t	*pctrie_subtree_lookup_lt(struct pctrie_node *node,
 		    uint64_t key);
 size_t		pctrie_node_size(void);
 int		pctrie_zone_init(void *mem, int size, int flags);
+void *
+pctrie_slot_ptr(struct pctrie_node *node, uint64_t index);
 
 /*
  * Each search path in the trie terminates at a leaf, which is a pointer to a

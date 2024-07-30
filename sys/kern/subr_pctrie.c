@@ -313,7 +313,7 @@ pctrie_insert_lookup_compound(struct pctrie *ptree, uint64_t *val,
 					ptree->pt_root = pctrie_toleaf(val);
 				else
 					pctrie_addnode(parent, index,
-					    pctrie_toleaf(val), PCTRIE_LOCKED);
+								   pctrie_toleaf(val), PCTRIE_LOCKED);
 				return (NULL);
 			}
 			if (*pctrie_toval(node) == index) {
@@ -425,14 +425,9 @@ pctrie_insert_lookup_lt(struct pctrie *ptree, uint64_t *val,
 	    neighbor_out, PCTRIE_INSERT_NEIGHBOR_LT));
 }
 
-/*
- * Uses new node to insert key-value pair into the trie at given location.
- */
-void
-pctrie_insert_node(void *parentp, struct pctrie_node *parent, uint64_t *val)
+static void
+pctrie_init_node(struct pctrie_node *parent, uint64_t index, uint64_t newind)
 {
-	struct pctrie_node *node;
-	uint64_t index, newind;
 
 	/*
 	 * Clear the last child pointer of the newly allocated parent.  We want
@@ -447,15 +442,6 @@ pctrie_insert_node(void *parentp, struct pctrie_node *parent, uint64_t *val)
 	}
 
 	/*
-	 * Recover the values of the two children of the new parent node.  If
-	 * 'node' is not a leaf, this stores into 'newind' the 'owner' field,
-	 * which must be first in the node.
-	 */
-	index = *val;
-	node = pctrie_node_load(parentp, NULL, PCTRIE_UNSERIALIZED);
-	newind = *pctrie_toval(node);
-
-	/*
 	 * From the highest-order bit where the indexes differ,
 	 * compute the highest level in the trie where they differ.  Then,
 	 * compute the least index of this subtrie.
@@ -468,7 +454,154 @@ pctrie_insert_node(void *parentp, struct pctrie_node *parent, uint64_t *val)
 	parent->pn_owner = PCTRIE_COUNT;
 	parent->pn_owner = index & -(parent->pn_owner << parent->pn_clev);
 
+}
 
+enum {PCTRIE_BATCH_FOUND, PCTRIE_BATCH_SPLIT, PCTRIE_BATCH_INSERT};
+
+static int
+pctrie_lookup_batch(struct pctrie *ptree, uint64_t *val, struct pctrie_node **out)
+{
+	struct pctrie_node *node, *parent;
+	uint64_t index;
+	int slot;
+
+	index = *val;
+	node = pctrie_root_load(ptree, NULL, PCTRIE_LOCKED);
+	parent = NULL;
+	for (;;) {
+		if (pctrie_isleaf(node)) {
+			if (node == PCTRIE_NULL) {
+				if (parent == NULL) {
+					*out = NULL;
+					return (PCTRIE_BATCH_INSERT);
+				}
+				if (parent->pn_clev == 0) {
+					*out = parent;
+					return (PCTRIE_BATCH_FOUND);
+				} else {
+					*out = parent;
+					return (PCTRIE_BATCH_INSERT);
+				}
+			}
+			if (__predict_false(*pctrie_toval(node) == index))
+				panic("%s: key '%lu' already present", __func__, index);
+			break;
+		}
+		if (pctrie_keybarr(node, index, &slot))
+			break;
+
+		parent = node;
+		node = pctrie_node_load(&node->pn_child[slot], NULL,
+								PCTRIE_LOCKED);
+	}
+
+	/*
+	 * 'node' must be replaced in the tree with a new branch node, with
+	 * children 'node' and 'val'. Return the place that points to 'node'
+	 * now, and will point to to the new branching node later.
+	 */
+	*out = parent;
+	return (PCTRIE_BATCH_SPLIT);
+}
+
+int
+pctrie_batch_insert_next(struct pctrie *ptree, pctrie_allocfn_t allocfn,
+			     uint64_t *val, struct pctrie_node **out) {
+	int rv;
+	int slot = -1;
+	void *parentp;
+	struct pctrie_node *parent_node;
+	struct pctrie_node *next, *node;
+
+	rv = pctrie_lookup_batch(ptree, val, &next);
+	switch (rv) {
+		case PCTRIE_BATCH_SPLIT:
+			node = allocfn(ptree);
+			if (__predict_false(node == NULL))
+				return (-1);
+			if (__predict_false(next == NULL)) {
+				parentp = (void *)&ptree->pt_root;
+			} else {
+				pctrie_keybarr(next, *val, &slot);
+				parentp = (void *)&next->pn_child[slot];
+			}
+			parent_node = pctrie_node_load(parentp, NULL, PCTRIE_UNSERIALIZED);
+			pctrie_init_node(node, *val, *pctrie_toval(parent_node));
+			pctrie_addnode(node, *pctrie_toval(parent_node), parent_node, PCTRIE_UNSERIALIZED);
+			pctrie_node_store(parentp, node, PCTRIE_LOCKED);
+			next = node;
+			/* FALLTHROUGH */
+		case PCTRIE_BATCH_INSERT:
+			node = allocfn(ptree);
+			if (__predict_false(node == NULL))
+				return (-1);
+
+			/* pn_clev must be set to zero - pretend that newind = index + 1  to make it happen */
+			pctrie_init_node(node, *val, (*val) + 1);
+			if (__predict_false(next == NULL)) {
+				pctrie_node_store((void *)&ptree->pt_root, node, PCTRIE_LOCKED);
+			} else {
+				pctrie_addnode(next, *val, node, PCTRIE_LOCKED);
+			}
+			*out = node;
+			break;
+		case PCTRIE_BATCH_FOUND:
+			*out = next;
+			break;
+		default:
+			panic("%s: unexpected batch lookup result %d", __func__, rv);
+	}
+
+	return (0);
+}
+
+int
+pctrie_batch_insert(struct pctrie_node *node, uintptr_t *arr,
+					int nitems, uint64_t index, uintptr_t offs)
+{
+	uint64_t *val;
+	int slot, n;
+
+	KASSERT(node != NULL,
+			("%s: node is NULL", __func__));
+	KASSERT(node->pn_clev == 0,
+			("%s: node %p has nonzero clev", __func__, node));
+
+	n = 0;
+	slot = pctrie_slot(node, index);
+	while (n < nitems && slot < PCTRIE_COUNT) {
+		val = (uint64_t *)(arr[n] + offs);
+		pctrie_node_store(&node->pn_child[slot], pctrie_toleaf(val),
+						  PCTRIE_LOCKED);
+		node->pn_popmap ^= 1 << slot;
+		KASSERT((node->pn_popmap & (1 << slot)) != 0,
+				("%s: bad popmap slot %d in node %p", __func__, slot,
+				 node));
+		n++;
+		slot++;
+	}
+
+	return (n);
+}
+
+/*
+ * Uses new node to insert key-value pair into the trie at given location.
+ */
+void
+pctrie_insert_node(void *parentp, struct pctrie_node *parent, uint64_t *val)
+{
+	struct pctrie_node *node;
+	uint64_t index, newind;
+
+	/*
+	 * Recover the values of the two children of the new parent node.  If
+	 * 'node' is not a leaf, this stores into 'newind' the 'owner' field,
+	 * which must be first in the node.
+	 */
+	index = *val;
+	node = pctrie_node_load(parentp, NULL, PCTRIE_UNSERIALIZED);
+	newind = *pctrie_toval(node);
+	pctrie_init_node(parent, index, newind);
 	/* These writes are not yet visible due to ordering. */
 	pctrie_addnode(parent, index, pctrie_toleaf(val), PCTRIE_UNSERIALIZED);
 	pctrie_addnode(parent, newind, node, PCTRIE_UNSERIALIZED);
