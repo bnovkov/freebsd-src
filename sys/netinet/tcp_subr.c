@@ -3964,7 +3964,7 @@ void
 tcp_state_change(struct tcpcb *tp, int newstate)
 {
 #if defined(KDTRACE_HOOKS)
-	int pstate = tp->t_state;
+	//int pstate = tp->t_state;
 #endif
 
 	TCPSTATES_DEC(tp->t_state);
