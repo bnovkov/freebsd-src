@@ -5,9 +5,6 @@
 #include <sys/types.h>
 #include <sys/param.h>
 
-#include <vm/vm.h>
-#include <vm/vm_page.h>
-
 #include <machine/zcond.h>
 
 /*
