@@ -2336,6 +2336,13 @@ vm_object_coalesce(vm_object_t prev_object, vm_ooffset_t prev_offset,
 }
 
 void
+vm_object_set_writeable_dirty_count(vm_object_t object, int count)
+{
+	MPASS(count > 0);
+	atomic_add_int(&object->generation, count);
+}
+
+void
 vm_object_set_writeable_dirty_(vm_object_t object)
 {
 	atomic_add_int(&object->generation, 1);

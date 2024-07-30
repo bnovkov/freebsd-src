@@ -358,6 +358,7 @@ void vm_object_deallocate (vm_object_t);
 void vm_object_destroy (vm_object_t);
 void vm_object_terminate (vm_object_t);
 void vm_object_set_writeable_dirty (vm_object_t);
+void vm_object_set_writeable_dirty_count (vm_object_t, int);
 void vm_object_set_writeable_dirty_(vm_object_t object);
 bool vm_object_mightbedirty(vm_object_t object);
 bool vm_object_mightbedirty_(vm_object_t object);
