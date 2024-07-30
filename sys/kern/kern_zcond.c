@@ -155,7 +155,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 		pmap_qremove(p->mirror_address, 1);
 		kva_free(p->mirror_address, PAGE_SIZE);
 
-        pmap_invalidate_page(kernel_pmap, p->patch_addri & (!PAGE_MASK));
+        pmap_invalidate_page(kernel_pmap, p->patch_addr & (!PAGE_MASK));
 	}
 }
 
