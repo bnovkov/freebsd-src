@@ -144,6 +144,8 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 		    VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
 		printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
 		    p->mirror_address);
+
+        pmap_invalidate_page(kernel_pmap, patch_page);
 	}
 
 	zcond_before_rendezvous();
@@ -153,6 +155,9 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	SLIST_FOREACH(p, &cond->ins_points, next) {
 		pmap_qremove(p->mirror_address, 1);
 		kva_free(p->mirror_address, PAGE_SIZE);
+
+		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
+        pmap_invalidate_page(kernel_pmap, patch_page);
 	}
 }
 
