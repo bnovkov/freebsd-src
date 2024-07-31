@@ -455,7 +455,7 @@ sdt_unload(void)
 	EVENTHANDLER_DEREGISTER(kld_unload_try, sdt_kld_unload_try_tag);
 
 	sdt_probe_func = sdt_probe_stub;
-    sdt_probe6_func = (std_probe6_func)sdt_probe_stub;
+    sdt_probe6_func = (sdt_probe6_func_t)sdt_probe_stub;
 
 	TAILQ_FOREACH_SAFE(prov, &sdt_prov_list, prov_entry, tmp) {
 		ret = dtrace_unregister(prov->id);
