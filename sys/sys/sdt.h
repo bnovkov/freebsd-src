@@ -197,7 +197,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 
 #define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
-    _SDT_PROBE(prov, mod, func, name, sdt_probe, arg0, arg1, arg2, arg3, arg4, 0)
+    _SDT_PROBE(prov, mod, func, name, sdt_probe,                        \
+            (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3, (uintptr_t)arg4)
 
 #define SDT_PROBE_ARGTYPE(_prov, _mod, _func, _name, _num, _type, _xtype) \
 	static struct sdt_argtype					\
