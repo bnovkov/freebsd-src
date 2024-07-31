@@ -77,8 +77,9 @@
 
 #else /* _KERNEL */
 
+#include <sys/cdefs.h>
 #include <sys/linker_set.h>
-#include <machine/sdt_machdep.h>
+#include <sys/zcond.h>
 
 extern volatile bool sdt_probes_enabled;
 
@@ -177,6 +178,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 		    .mod = #_mod,					\
 		    .func = #_func,					\
 		    .name = #_name,					\
+            .enabled = ZCOND_INIT(false)    \
 		},							\
 	};								\
 	DATA_SET(sdt_probes_set, _SDT_PROBE_NAME(_prov, _mod, _func, _name))
@@ -186,58 +188,17 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define	SDT_PROBES_ENABLED()	__predict_false(sdt_probes_enabled)
 
-#ifdef _ILP32
-#define	_SDT_ASM_WORD			".long"
-#else
-#define	_SDT_ASM_WORD			".quad"
-#endif
+#define _SDT_PROBE(prov, mod, func, name, f, ...) do {	\
+    if(SDT_PROBES_ENABLED()) { \
+        if (zcond_true(_SDT_PROBE_NAME(prov, mod, func, name)->enabled)) \
+            f(_SDT_PROBE_NAME(prov, mod, func, name)->id, __VA_ARGS__); \
+    } \
+ } while(0)
 
-#ifndef _SDT_ASM_PROBE_CONSTRAINT
-#define	_SDT_ASM_PROBE_CONSTRAINT	"i"
-#endif
-#ifndef	_SDT_ASM_PROBE_OPERAND
-#define	_SDT_ASM_PROBE_OPERAND		"c"
-#endif
 
-/*
- * The asm below generates records corresponding to the structure's layout, so
- * the two must be kept in sync.
- */
-struct sdt_tracepoint {
-	struct sdt_probe *probe;
-	uintptr_t	patchpoint;
-	uintptr_t	target;
-	STAILQ_ENTRY(sdt_tracepoint) tracepoint_entry;
-};
-
-#define __SDT_PROBE(prov, mod, func, name, uniq, f, ...) do {		\
-	__WEAK(__CONCAT(__start_set_, _SDT_TRACEPOINT_SET));		\
-	__WEAK(__CONCAT(__stop_set_, _SDT_TRACEPOINT_SET));		\
-	asm goto(							\
-	    "0:\n"							\
-	    _SDT_ASM_PATCH_INSTR "\n"					\
-	    ".pushsection " _SDT_TRACEPOINT_SECTION ", \"aw\"\n"	\
-	    _SDT_ASM_WORD " %" _SDT_ASM_PROBE_OPERAND "0\n"		\
-	    _SDT_ASM_WORD " 0b\n"					\
-	    _SDT_ASM_WORD " %l1\n"					\
-	    _SDT_ASM_WORD " 0\n"					\
-	    ".popsection\n"						\
-	    :								\
-	    : _SDT_ASM_PROBE_CONSTRAINT (_SDT_PROBE_NAME(prov, mod,	\
-	    func, name))						\
-	    :								\
-	    : __sdt_probe##uniq);					\
-	if (0) {							\
-__sdt_probe##uniq:;							\
-		f(_SDT_PROBE_NAME(prov, mod, func, name)->id, __VA_ARGS__); \
-	}								\
-} while (0)
-#define _SDT_PROBE(prov, mod, func, name, uniq, f, ...)			\
-	__SDT_PROBE(prov, mod, func, name, uniq, f, __VA_ARGS__)
 #define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
-	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe,	\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3, (uintptr_t)arg4)
+    _SDT_PROBE(prov, mod, func, name, sdt_probe,                        \
+            (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3, (uintptr_t)arg4)
 
 #define SDT_PROBE_ARGTYPE(_prov, _mod, _func, _name, _num, _type, _xtype) \
 	static struct sdt_argtype					\
@@ -355,9 +316,7 @@ __sdt_probe##uniq:;							\
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) \
-	_SDT_PROBE(prov, mod, func, name, __COUNTER__, sdt_probe6,	\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5)
+	_SDT_PROBE(prov, mod, func, name, sdt_probe6, (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5)
 
 #ifndef KDTRACE_NO_MIB_SDT
 #define	MIB_SDT_PROBE1(...)	SDT_PROBE1(mib, __VA_ARGS__)
@@ -419,12 +378,15 @@ __sdt_probe##uniq:;							\
  * way to avoid having to rely on CDDL code.
  */
 typedef	void (*sdt_probe_func_t)(uint32_t, uintptr_t arg0, uintptr_t arg1,
-    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4, uintptr_t arg5);
+    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4);
 
+typedef	void (*sdt_probe6_func_t)(uint32_t, uintptr_t arg0, uintptr_t arg1,
+    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4, uintptr_t arg5);
 /*
  * The 'sdt' provider will set it to dtrace_probe when it loads.
  */
 extern sdt_probe_func_t		sdt_probe_func;
+extern sdt_probe6_func_t    sdt_probe6_func;
 
 struct sdt_probe;
 struct sdt_provider;
@@ -452,6 +414,7 @@ struct sdt_probe {
 	id_t		id;		/* DTrace probe ID. */
 	int		n_args;		/* Number of arguments. */
 	struct linker_file *sdtp_lf;	/* Module in which we're defined. */
+    struct zcond_false enabled;
 };
 
 struct sdt_provider {
@@ -463,7 +426,7 @@ struct sdt_provider {
 };
 
 void sdt_probe_stub(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
-    uintptr_t, uintptr_t);
+    uintptr_t);
 
 SDT_PROVIDER_DECLARE(sdt);
 
