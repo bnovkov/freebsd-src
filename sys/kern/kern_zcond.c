@@ -149,8 +149,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	zcond_before_rendezvous();
 	smp_rendezvous(NULL, rendezvous_cb, NULL, &arg);
 	zcond_after_rendezvous();
-	
-	invltlb();
+    
 	SLIST_FOREACH(p, &cond->ins_points, next) {
 		pmap_qremove_zcond(&zcond_patching_pmap, p->mirror_address);
 		kva_free(p->mirror_address, PAGE_SIZE);
