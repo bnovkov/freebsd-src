@@ -49,7 +49,7 @@ volatile bool __read_frequently sdt_probes_enabled;
 void
 sdt_probe_stub(uint32_t id __unused, uintptr_t arg0 __unused,
     uintptr_t arg1 __unused, uintptr_t arg2 __unused, uintptr_t arg3 __unused,
-    uintptr_t arg4 __unused, uintptr_t arg5 __unused)
+    uintptr_t arg4 __unused)
 {
 	printf("sdt_probe_stub: unexpectedly called\n");
 	kdb_backtrace();
