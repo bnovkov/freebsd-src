@@ -182,5 +182,6 @@ void zcond_after_rendezvous(void);
  */
 void zcond_get_patch_insn(struct ins_point *ins_p, unsigned char insn[],
     size_t *size);
+
 #endif
 #endif
