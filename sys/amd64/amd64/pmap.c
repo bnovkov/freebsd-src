@@ -11683,6 +11683,35 @@ pmap_pkru_clear(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 	return (error);
 }
 
+void
+pmap_qenter_zcond(pmap_t pmap, vm_page_t m, vm_offset_t sva) {
+        pt_entry_t oldpte, pa;
+        pt_entry_t *pte;
+        int cache_bits;
+
+        oldpte = 0;
+        pte = pmap_pte(pmap, sva);
+
+        cache_bits = pmap_cache_bits(pmap, m->md.pat_mode, false);
+        pa = VM_PAGE_TO_PHYS(m) | cache_bits;
+        if ((*pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
+                oldpte |= *pte;
+                pte_store(pte, pa | pg_g | pg_nx | X86_PG_A |
+                    X86_PG_M | X86_PG_RW | X86_PG_V);
+        }
+
+        if (__predict_false((oldpte & X86_PG_V) != 0))
+                pmap_invalidate_range(kernel_pmap, sva, sva + PAGE_SIZE);
+}
+
+void
+pmap_qremove_zcond(pmap_t pmap, vm_offset_t sva) {
+        pt_entry_t *pte;
+
+        pte = pmap_pte(pmap, sva);
+	pte_clear(pte);
+}
+
 #if defined(KASAN) || defined(KMSAN)
 
 /*
