@@ -316,7 +316,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) \
-	_SDT_PROBE(prov, mod, func, name, sdt_probe6, arg0, arg1, arg2, arg3, arg4, arg5)
+	_SDT_PROBE(prov, mod, func, name, sdt_probe6, (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5)
 
 #ifndef KDTRACE_NO_MIB_SDT
 #define	MIB_SDT_PROBE1(...)	SDT_PROBE1(mib, __VA_ARGS__)
