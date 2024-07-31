@@ -426,7 +426,7 @@ struct sdt_provider {
 };
 
 void sdt_probe_stub(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
-    uintptr_t, uintptr_t);
+    uintptr_t);
 
 SDT_PROVIDER_DECLARE(sdt);
 
