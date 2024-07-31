@@ -22,7 +22,7 @@ zcond_after_patch(void)
 {
 	// restore_wp(wp);
 	// load_cr3(cr3);
-    invltlb();
+	mfence();
 }
 
 void
