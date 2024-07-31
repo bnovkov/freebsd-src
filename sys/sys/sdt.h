@@ -188,19 +188,16 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define	SDT_PROBES_ENABLED()	__predict_false(sdt_probes_enabled)
 
-#define _SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) do {	\
+#define _SDT_PROBE(prov, mod, func, name, f, ...) do {	\
     if(SDT_PROBES_ENABLED()) { \
         if (zcond_true(_SDT_PROBE_NAME(prov, mod, func, name)->enabled)) \
-            (*(void (*)(uint32_t, uintptr_t, uintptr_t, uintptr_t, \
-			    uintptr_t, uintptr_t, uintptr_t))sdt_probe_func)(_SDT_PROBE_NAME(prov, mod, func, name)->id,	\
- 		    (uintptr_t) arg0, (uintptr_t) arg1, (uintptr_t) arg2,	\
- 		    (uintptr_t) arg3, (uintptr_t) arg4, (uintptr_t) arg5); \
+            f(_SDT_PROBE_NAME(prov, mod, func, name)->id, __VA_ARGS__); \
     } \
  } while(0)
 
 
 #define SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
-    _SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, 0)
+    _SDT_PROBE(prov, mod, func, name, sdt_probe, arg0, arg1, arg2, arg3, arg4, 0)
 
 #define SDT_PROBE_ARGTYPE(_prov, _mod, _func, _name, _num, _type, _xtype) \
 	static struct sdt_argtype					\
@@ -318,7 +315,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) \
-	_SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5)
+	_SDT_PROBE(prov, mod, func, name, sdt_probe6, arg0, arg1, arg2, arg3, arg4, arg5)
 
 #ifndef KDTRACE_NO_MIB_SDT
 #define	MIB_SDT_PROBE1(...)	SDT_PROBE1(mib, __VA_ARGS__)
