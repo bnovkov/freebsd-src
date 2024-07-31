@@ -36,6 +36,7 @@ void
 zcond_after_rendezvous(void)
 {
 	load_cr3(cr3);
+    invltlb();
 }
 
 static void
