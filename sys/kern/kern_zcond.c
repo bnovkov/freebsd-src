@@ -3,7 +3,10 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cpuset.h>
+#include <sys/eventhandler.h>
 #include <sys/kernel.h>
+#include <sys/linker.h>
+#include <sys/linker_set.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/sbuf.h>
@@ -29,7 +32,8 @@ MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 struct pmap zcond_patching_pmap;
 
 static void
-zcond_load_ins_point(struct ins_point *ins_p) {
+zcond_load_ins_point(struct ins_point *ins_p) 
+{
 	struct zcond *owning_zcond;
     
     owning_zcond = ins_p->zcond;
@@ -39,6 +43,19 @@ zcond_load_ins_point(struct ins_point *ins_p) {
     }
 
     SLIST_INSERT_HEAD(&owning_zcond->ins_points, ins_p, next);
+}
+
+static void
+zcond_kld_load(struct linker_file *lf)
+{
+    struct ins_point **begin, **end;
+    struct ins_point **ins_p;
+
+    if(linker_file_lookup_set(lf, "__zcond_table", &begin, &end, NULL) == 0) {
+        for(ins_p = begin; ins_p < end; ins_p++) {
+            zcond_load_ins_p(*ins_p);
+        }
+    }
 }
 
 /*
@@ -64,6 +81,8 @@ zcond_init(const void *unused)
         zcond_load_ins_point(entry);
 	}
 
+    EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL, EVENTHANDLER_PRI_ANY);
+
 	memset(&zcond_patching_pmap, 0, sizeof(zcond_patching_pmap));
 	PMAP_LOCK_INIT(&zcond_patching_pmap);
 	pmap_pinit(&zcond_patching_pmap);
@@ -74,8 +93,8 @@ zcond_init(const void *unused)
 	pmap_copy(&zcond_patching_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
 }
-SYSINIT(zcond, SI_SUB_LAST, SI_ORDER_ANY, zcond_init,
-    NULL); // do we declare a new SI_SUB? is the order important?
+SYSINIT(zcond, SI_SUB_KLD - 1, SI_ORDER_ANY, zcond_init,
+    NULL);
 
 struct rendezvous_data {
 	int patching_cpu;
