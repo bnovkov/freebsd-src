@@ -38,7 +38,7 @@ zcond_load_ins_point(struct ins_point *ins_p) {
         SLIST_INIT(&owning_zcond->ins_points);
     }
 
-    SLIST_INSERT_HEAD(&owning_zcond->ins_points, entry, next);
+    SLIST_INSERT_HEAD(&owning_zcond->ins_points, ins_p, next);
 }
 
 /*
