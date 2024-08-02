@@ -50,7 +50,7 @@ struct zcond_false {
  * A single entry describes a single ins_point.
  */
 #define ZCOND_TABLE_ENTRY                         \
-	".pushsection __zcond_table, \"aw\" \n\t" \
+	".pushsection set_zcond_ins_points_set, \"aw\" \n\t" \
 	".quad 1b \n\t"                           \
 	".quad %l[l_true] \n\t"                   \
 	".quad %c0 \n\t"                          \
