@@ -45,13 +45,13 @@ zcond_load_ins_points(linker_file_t lf)
             if(ins_p == 0) {
                 continue;
             }
+            printf("ins_p %#08lx\n",(unsigned long) *ins_p);
             owning_zcond = (*ins_p)->zcond;
             /*if (owning_zcond->ins_points.slh_first == NULL) {
                 SLIST_INIT(&owning_zcond->ins_points);
             }
 
-            SLIST_INSERT_HEAD(&owning_zcond->ins_points, *ins_p, next);
-            printf("ins_p %#08lx\n",(unsigned long) *ins_p);*/
+            SLIST_INSERT_HEAD(&owning_zcond->ins_points, *ins_p, next);*/
         }
     }
 }
