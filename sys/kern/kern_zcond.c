@@ -3,7 +3,10 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/cpuset.h>
+#include <sys/eventhandler.h>
 #include <sys/kernel.h>
+#include <sys/linker.h>
+#include <sys/linker_set.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/sbuf.h>
@@ -28,6 +31,34 @@ MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
 struct pmap zcond_patching_pmap;
 
+static void
+zcond_load_ins_point(struct ins_point *ins_p) 
+{
+	struct zcond *owning_zcond;
+    
+    owning_zcond = ins_p->zcond;
+
+    if (owning_zcond->ins_points.slh_first == NULL) {
+        SLIST_INIT(&owning_zcond->ins_points);
+    }
+
+    SLIST_INSERT_HEAD(&owning_zcond->ins_points, ins_p, next);
+}
+
+static void
+zcond_kld_load(void *arg __unused, struct linker_file *lf)
+{
+    struct ins_point **begin, **end;
+    struct ins_point **ins_p;
+
+    if(linker_file_lookup_set(lf, "__zcond_table", &begin, &end, NULL) == 0) {
+        printf("loading ins points from modules\n");
+        for(ins_p = begin; ins_p < end; ins_p++) {
+            zcond_load_ins_point(*ins_p);
+        }
+    }
+}
+
 /*
  * Collect ins_points from the __zcond_table ELF section into a list.
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
@@ -38,7 +69,6 @@ zcond_init(const void *unused)
 {
 	extern char __zcond_table_start, __zcond_table_end;
 	struct ins_point *entry;
-	struct zcond *entry_zcond;
 	char *entry_addr;
 	size_t entry_size;
 	extern char kernload, end;
@@ -49,14 +79,10 @@ zcond_init(const void *unused)
 	for (entry_addr = &__zcond_table_start; entry_addr < &__zcond_table_end;
 	     entry_addr += entry_size) {
 		entry = (struct ins_point *)entry_addr;
-		entry_zcond = entry->zcond;
-
-		if (entry_zcond->ins_points.slh_first == NULL) {
-			SLIST_INIT(&entry_zcond->ins_points);
-		}
-
-		SLIST_INSERT_HEAD(&entry_zcond->ins_points, entry, next);
+        zcond_load_ins_point(entry);
 	}
+
+    EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL, EVENTHANDLER_PRI_ANY);
 
 	memset(&zcond_patching_pmap, 0, sizeof(zcond_patching_pmap));
 	PMAP_LOCK_INIT(&zcond_patching_pmap);
@@ -68,8 +94,8 @@ zcond_init(const void *unused)
 	pmap_copy(&zcond_patching_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
 }
-SYSINIT(zcond, SI_SUB_LAST, SI_ORDER_ANY, zcond_init,
-    NULL); // do we declare a new SI_SUB? is the order important?
+SYSINIT(zcond, SI_SUB_KLD - 1, SI_ORDER_ANY, zcond_init,
+    NULL);
 
 struct rendezvous_data {
 	int patching_cpu;
@@ -120,6 +146,7 @@ rendezvous_cb(void *arg)
 void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
+    printf("zcond_set_enabled\n");
 	if (cond->enabled == new_state) {
 		return;
 	}
