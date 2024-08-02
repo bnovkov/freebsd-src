@@ -48,15 +48,27 @@ zcond_load_ins_point(struct ins_point *ins_p)
 static void
 zcond_kld_load(void *arg __unused, struct linker_file *lf)
 {
-    struct ins_point **begin, **end;
-    struct ins_point **ins_p;
+    //struct ins_point **begin, **end;
+    //struct ins_point **ins_p;
 
-    if(linker_file_lookup_set(lf, "__zcond_table", &begin, &end, NULL) == 0) {
-        printf("loading ins points from modules\n");
-        for(ins_p = begin; ins_p < end; ins_p++) {
-            zcond_load_ins_point(*ins_p);
-        }
+    caddr_t __zcond_table_start, __zcond_table_end;
+	size_t entry_size;
+    char *entry_addr;
+
+    __zcond_table_start = linker_file_lookup_symbol(lf, "__zcond_table_start");
+    __zcond_table_end = linker_file_lookup_symbol(lf, "__zcond_table_end");
+
+    if(__zcond_table_start == 0 || __zcond_table_end == 0) {
+        return;
     }
+
+    printf("loading ins points from modules\n");
+    
+	for (entry_addr = __zcond_table_start; entry_addr < __zcond_table_end;
+	     entry_addr += entry_size) {
+		entry = (struct ins_point *)entry_addr;
+        zcond_load_ins_point(entry);
+	}
 }
 
 /*
