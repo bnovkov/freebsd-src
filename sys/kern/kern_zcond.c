@@ -30,15 +30,15 @@ struct pmap zcond_patching_pmap;
 
 static void
 zcond_load_ins_point(struct ins_point *ins_p) {
-	struct zcond *ins_p_zcond;
+	struct zcond *owning_zcond;
     
-    ins_p_zcond = entry->zcond;
+    owning_zcond = entry->zcond;
 
-    if (entry_zcond->ins_points.slh_first == NULL) {
-        SLIST_INIT(&ins_p_zcond->ins_points);
+    if (owning_zcond->ins_points.slh_first == NULL) {
+        SLIST_INIT(&owning_zcond->ins_points);
     }
 
-    SLIST_INSERT_HEAD(&ins_p_zcond->ins_points, entry, next);
+    SLIST_INSERT_HEAD(&owning_zcond->ins_points, entry, next);
 }
 
 /*
