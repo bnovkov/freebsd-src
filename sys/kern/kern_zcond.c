@@ -28,6 +28,19 @@ MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
 struct pmap zcond_patching_pmap;
 
+static void
+zcond_load_ins_point(struct ins_point *ins_p) {
+	struct zcond *ins_p_zcond;
+    
+    ins_p_zcond = entry->zcond;
+
+    if (entry_zcond->ins_points.slh_first == NULL) {
+        SLIST_INIT(&ins_p_zcond->ins_points);
+    }
+
+    SLIST_INSERT_HEAD(&ins_p_zcond->ins_points, entry, next);
+}
+
 /*
  * Collect ins_points from the __zcond_table ELF section into a list.
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
@@ -38,7 +51,6 @@ zcond_init(const void *unused)
 {
 	extern char __zcond_table_start, __zcond_table_end;
 	struct ins_point *entry;
-	struct zcond *entry_zcond;
 	char *entry_addr;
 	size_t entry_size;
 	extern char kernload, end;
@@ -49,13 +61,7 @@ zcond_init(const void *unused)
 	for (entry_addr = &__zcond_table_start; entry_addr < &__zcond_table_end;
 	     entry_addr += entry_size) {
 		entry = (struct ins_point *)entry_addr;
-		entry_zcond = entry->zcond;
-
-		if (entry_zcond->ins_points.slh_first == NULL) {
-			SLIST_INIT(&entry_zcond->ins_points);
-		}
-
-		SLIST_INSERT_HEAD(&entry_zcond->ins_points, entry, next);
+        zcond_load_ins_point(entry);
 	}
 
 	memset(&zcond_patching_pmap, 0, sizeof(zcond_patching_pmap));
