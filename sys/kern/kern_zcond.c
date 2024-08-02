@@ -46,7 +46,7 @@ zcond_load_ins_point(struct ins_point *ins_p)
 }
 
 static void
-zcond_kld_load(struct linker_file *lf)
+zcond_kld_load(void *arg __unused, struct linker_file *lf)
 {
     struct ins_point **begin, **end;
     struct ins_point **ins_p;
