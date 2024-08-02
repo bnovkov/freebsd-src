@@ -48,7 +48,7 @@ zcond_load_ins_points(linker_file_t lf)
             }
 
             SLIST_INSERT_HEAD(&owning_zcond->ins_points, *ins_p, next);*/
-            printf("ins_p %#08lx\n", *ins_p);
+            printf("ins_p %#08lx\n",(unsigned long) *ins_p);
         }
     }
 }
