@@ -54,7 +54,7 @@ zcond_kld_load(struct linker_file *lf)
     if(linker_file_lookup_set(lf, "__zcond_table", &begin, &end, NULL) == 0) {
         printf("loading ins points from modules\n");
         for(ins_p = begin; ins_p < end; ins_p++) {
-            zcond_load_ins_p(*ins_p);
+            zcond_load_ins_point(*ins_p);
         }
     }
 }
