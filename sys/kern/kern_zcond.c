@@ -54,6 +54,7 @@ zcond_kld_load(void *arg __unused, struct linker_file *lf)
     caddr_t __zcond_table_start, __zcond_table_end;
 	size_t entry_size;
     char *entry_addr;
+    struct ins_point *entry;
 
     __zcond_table_start = linker_file_lookup_symbol(lf, "__zcond_table_start", 0);
     __zcond_table_end = linker_file_lookup_symbol(lf, "__zcond_table_end", 0);
