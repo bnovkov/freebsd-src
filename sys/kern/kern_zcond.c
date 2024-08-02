@@ -38,7 +38,7 @@ zcond_load_ins_points(linker_file_t lf)
 
     struct ins_point **begin, **end;
     struct ins_point **ins_p;
-	struct zcond *owning_zcond;
+	//struct zcond *owning_zcond;
 
     if(linker_file_lookup_set(lf, "zcond_ins_points_set", &begin, &end, NULL) == 0) {
         for(ins_p = begin; ins_p < end; ins_p++) {
