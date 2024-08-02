@@ -63,6 +63,7 @@ zcond_kld_load(void *arg __unused, struct linker_file *lf)
         return;
     }
 
+	entry_size = sizeof(struct ins_point);
     printf("loading ins points from modules\n");
     
 	for (entry_addr = __zcond_table_start; entry_addr < __zcond_table_end;
