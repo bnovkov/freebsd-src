@@ -146,6 +146,7 @@ rendezvous_cb(void *arg)
 void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
+    printf("zcond_set_enabled\n");
 	if (cond->enabled == new_state) {
 		return;
 	}
