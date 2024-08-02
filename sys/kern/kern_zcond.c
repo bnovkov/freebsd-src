@@ -31,46 +31,38 @@ MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
 struct pmap zcond_patching_pmap;
 
+
 static void
-zcond_load_ins_point(struct ins_point *ins_p) 
+zcond_load_ins_points(linker_file_t lf) 
 {
+
+    struct ins_point **begin, **end;
+    struct ins_point **ins_p;
 	struct zcond *owning_zcond;
-    
-    owning_zcond = ins_p->zcond;
 
-    if (owning_zcond->ins_points.slh_first == NULL) {
-        SLIST_INIT(&owning_zcond->ins_points);
+    if(linker_file_lookup_set(lf, "zcond_ins_points_set", &begin, &end, NULL) == 0) {
+        for(ins_p = begin; ins_p < end; ins_p++) {
+            owning_zcond = ins_p->zcond;
+            if (owning_zcond->ins_points.slh_first == NULL) {
+                SLIST_INIT(&owning_zcond->ins_points);
+            }
+
+            SLIST_INSERT_HEAD(&owning_zcond->ins_points, ins_p, next);
+        }
     }
-
-    SLIST_INSERT_HEAD(&owning_zcond->ins_points, ins_p, next);
 }
 
 static void
 zcond_kld_load(void *arg __unused, struct linker_file *lf)
 {
-    //struct ins_point **begin, **end;
-    //struct ins_point **ins_p;
+    zcond_load_ins_points(lf);
+}
 
-    caddr_t __zcond_table_start, __zcond_table_end;
-	size_t entry_size;
-    char *entry_addr;
-    struct ins_point *entry;
-
-    __zcond_table_start = linker_file_lookup_symbol(lf, "__zcond_table_start", 0);
-    __zcond_table_end = linker_file_lookup_symbol(lf, "__zcond_table_end", 0);
-
-    if(__zcond_table_start == 0 || __zcond_table_end == 0) {
-        return;
-    }
-
-	entry_size = sizeof(struct ins_point);
-    printf("loading ins points from modules\n");
-    
-	for (entry_addr = __zcond_table_start; entry_addr < __zcond_table_end;
-	     entry_addr += entry_size) {
-		entry = (struct ins_point *)entry_addr;
-        zcond_load_ins_point(entry);
-	}
+static int
+zcond_load_ins_points_cb(linker_file_t lf, void *arg __unused)
+{
+    zcond_load_ins_points(lf);
+    return (0);
 }
 
 /*
@@ -81,21 +73,11 @@ zcond_kld_load(void *arg __unused, struct linker_file *lf)
 static void
 zcond_init(const void *unused)
 {
-	extern char __zcond_table_start, __zcond_table_end;
-	struct ins_point *entry;
-	char *entry_addr;
-	size_t entry_size;
-	extern char kernload, end;
 	vm_offset_t kern_start, kern_end;
 
 	entry_size = sizeof(struct ins_point);
 
-	for (entry_addr = &__zcond_table_start; entry_addr < &__zcond_table_end;
-	     entry_addr += entry_size) {
-		entry = (struct ins_point *)entry_addr;
-        zcond_load_ins_point(entry);
-	}
-
+    linker_file_foreach(zcond_load_ins_points_cb, NULL);
     EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL, EVENTHANDLER_PRI_ANY);
 
 	memset(&zcond_patching_pmap, 0, sizeof(zcond_patching_pmap));
@@ -103,8 +85,8 @@ zcond_init(const void *unused)
 	pmap_pinit(&zcond_patching_pmap);
 	kern_start = vm_map_max(kernel_map);
 	kern_end = vm_map_min(kernel_map);
-	printf("kern start %#08lx | kern end %#08lx | linker end %#08lx\n",
-	    kern_start, kern_end, (vm_offset_t)&end);
+	printf("kern start %#08lx | kern end %#08lx ",
+	    kern_start, kern_end);
 	pmap_copy(&zcond_patching_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
 }
