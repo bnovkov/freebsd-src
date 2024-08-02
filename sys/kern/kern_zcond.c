@@ -32,7 +32,7 @@ static void
 zcond_load_ins_point(struct ins_point *ins_p) {
 	struct zcond *owning_zcond;
     
-    owning_zcond = entry->zcond;
+    owning_zcond = ins_p->zcond;
 
     if (owning_zcond->ins_points.slh_first == NULL) {
         SLIST_INIT(&owning_zcond->ins_points);
