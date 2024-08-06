@@ -265,7 +265,7 @@ zcond_list_inspection_points(SYSCTL_HANDLER_ARGS)
 	struct sbuf buf;
 	sbuf_new_for_sysctl(&buf, NULL, 1024, req);
 
-    printf("&cond1 = %#08lx | &cond2 = %#08lx\n", &cond1, &cond2);
+    printf("&cond1 = %#08lx | &cond2 = %#08lx\n", (unsigned long) &cond1, (unsigned long) &cond2);
 
 	sbuf_printf(&buf, "inspection points for cond1:\n");
 	struct ins_point *p;
