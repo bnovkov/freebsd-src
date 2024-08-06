@@ -166,9 +166,9 @@ SECTIONS
   .data1          : { *(.data1) }
   _edata = .; PROVIDE (edata = .);
   __zcond_table_start = .;
-  set_zcond_ins_points_set :
+  __zcond_table :
   {
-    * (set_zcond_ins_points_set)
+    * (__zcond__table)
   }
   __zcond_table_end = .;
   __bss_start = .;
