@@ -45,8 +45,10 @@ zcond_load_ins_points(linker_file_t lf)
             if(ins_p == NULL | *ins_p == NULL) {
                 continue;
             }
-            printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) *ins_p, (unsigned long) owning_zcond);
+
             owning_zcond = (*ins_p)->zcond;
+            printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) *ins_p, (unsigned long) owning_zcond);
+            
             if(owning_zcond == NULL) {
                 continue;
             }
