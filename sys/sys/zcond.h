@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/queue.h>
+#include <sys/cdefs.h>
 
 #include <machine/zcond.h>
 
@@ -50,7 +51,7 @@ struct zcond_false {
  * A single entry describes a single ins_point.
  */
 #define ZCOND_TABLE_ENTRY                         \
-	".pushsection set_zcond_ins_points_set, \"aw\" \n\t" \
+    ".pushsection set_zcond_ins_points_set, \"aw\" \n\t" \
 	".quad 1b \n\t"                           \
 	".quad %l[l_true] \n\t"                   \
 	".quad %c0 \n\t"                          \
@@ -66,6 +67,8 @@ struct zcond_false {
 static __attribute__((always_inline)) bool
 zcond_nop(struct zcond *const zcond_p)
 {
+    __WEAK(__start_set_zcond_ins_points_set);
+    __WEAK(__stop_set_zcond_ins_points_set);
 	asm goto("1: " ZCOND_NOP_ASM ZCOND_TABLE_ENTRY
 		 :
 		 : "i"(zcond_p)
@@ -85,6 +88,8 @@ l_true:
 static __attribute__((always_inline)) bool
 zcond_jmp(struct zcond *const zcond_p)
 {
+    __WEAK(__start_set_zcond_ins_points_set);
+    __WEAK(__stop_set_zcond_ins_points_set);
 	asm goto("1:" ZCOND_JMP_ASM " %[l_true] \n\t" ZCOND_TABLE_ENTRY
 		 :
 		 : "i"(zcond_p)
