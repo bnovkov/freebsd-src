@@ -44,9 +44,10 @@ zcond_load_ins_points(linker_file_t lf)
         printf("being %#08lx end %#08lx\n", (unsigned long)begin, (unsigned long)end);
         for(ins_p = begin; ins_p < end; ins_p++) {
             owning_zcond = ins_p->zcond;
-            printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) ins_p, (unsigned long) owning_zcond);
+            //printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) ins_p, (unsigned long) owning_zcond);
             
             if (owning_zcond->ins_points.slh_first == NULL) {
+                printf("init list %#08lx\n", (unsigned long)owning_zcond);
                 SLIST_INIT(&owning_zcond->ins_points);
             }
 
