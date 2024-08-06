@@ -80,8 +80,8 @@ zcond_init(const void *unused)
 {
 	vm_offset_t kern_start, kern_end;
 
-    linker_file_foreach(zcond_load_ins_points_cb, NULL);
     EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL, EVENTHANDLER_PRI_ANY);
+    linker_file_foreach(zcond_load_ins_points_cb, NULL);
 
 	memset(&zcond_patching_pmap, 0, sizeof(zcond_patching_pmap));
 	PMAP_LOCK_INIT(&zcond_patching_pmap);
