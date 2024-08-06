@@ -47,7 +47,7 @@ zcond_load_ins_points(linker_file_t lf)
             //printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) ins_p, (unsigned long) owning_zcond);
             
             if (owning_zcond->ins_points.slh_first == NULL) {
-                printf("init list %#08lx\n", (unsigned long)owning_zcond);
+                printf("init list %#08lx | inspection point at %#08lx\n", (unsigned long)owning_zcond, (unsigned long) ins_p);
                 SLIST_INIT(&owning_zcond->ins_points);
             }
 
