@@ -93,7 +93,7 @@ zcond_init(const void *unused)
 	pmap_copy(&zcond_patching_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
 }
-SYSINIT(zcond, SI_SUB_KLD + 1, SI_ORDER_FIRST, zcond_init,
+SYSINIT(zcond, SI_SUB_KLD + 1, SI_ORDER_SECOND, zcond_init,
     NULL);
 
 struct rendezvous_data {
