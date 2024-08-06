@@ -59,6 +59,7 @@ zcond_load_ins_points(linker_file_t lf)
 static void
 zcond_kld_load(void *arg __unused, struct linker_file *lf)
 {
+    printf("kldload zcond\n");
     zcond_load_ins_points(lf);
 }
 
