@@ -36,27 +36,21 @@ static void
 zcond_load_ins_points(linker_file_t lf) 
 {
 
-    struct ins_point **begin, **end;
-    struct ins_point **ins_p;
+    struct ins_point *begin, *end;
+    struct ins_point *ins_p;
 	struct zcond *owning_zcond;
 
     if(linker_file_lookup_set(lf, "zcond_ins_points_set", &begin, &end, NULL) == 0) {
+        printf("being %#08lx end %#08lx\n", begin, end);
         for(ins_p = begin; ins_p < end; ins_p++) {
-            if(ins_p == NULL | *ins_p == NULL) {
-                continue;
-            }
-
-            owning_zcond = (*ins_p)->zcond;
-            printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) *ins_p, (unsigned long) owning_zcond);
+            owning_zcond = ins_p->zcond;
+            printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) ins_p, (unsigned long) owning_zcond);
             
-            if(owning_zcond == NULL) {
-                continue;
-            }
-           /* if (owning_zcond->ins_points.slh_first == NULL) {
+            if (owning_zcond->ins_points.slh_first == NULL) {
                 SLIST_INIT(&owning_zcond->ins_points);
             }
 
-            SLIST_INSERT_HEAD(&owning_zcond->ins_points, *ins_p, next);*/
+            SLIST_INSERT_HEAD(&owning_zcond->ins_points, *ins_p, next);
         }
     }
 }
