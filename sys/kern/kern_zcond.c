@@ -41,7 +41,7 @@ zcond_load_ins_points(linker_file_t lf)
 	struct zcond *owning_zcond;
 
     if(linker_file_lookup_set(lf, "zcond_ins_points_set", &begin, &end, NULL) == 0) {
-        printf("being %#08lx end %#08lx\n", begin, end);
+        //printf("being %#08lx end %#08lx\n", begin, end);
         for(ins_p = begin; ins_p < end; ins_p++) {
             owning_zcond = ins_p->zcond;
             printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) ins_p, (unsigned long) owning_zcond);
