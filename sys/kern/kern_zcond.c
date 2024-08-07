@@ -40,7 +40,7 @@ zcond_load_ins_points(linker_file_t lf)
     struct ins_point *ins_p;
 	struct zcond *owning_zcond;
 
-    if(linker_file_lookup_set(lf, "zcond_ins_points_set", &begin, &end, NULL) == 0) {
+    if(linker_file_lookup_set(lf, __XSTRING(ZCOND_LINKER_SET), &begin, &end, NULL) == 0) {
         printf("being %#08lx end %#08lx\n", (unsigned long)begin, (unsigned long)end);
         for(ins_p = begin; ins_p < end; ins_p++) {
             owning_zcond = ins_p->zcond;
@@ -123,7 +123,7 @@ zcond_patch(struct zcond *cond, bool new_state)
 		printf("\n");
 
 		zcond_before_patch();
-		memcpy((void *)(p->mirror_address +
+		memcpy((void *)(p->mirror_addr +
 			   (p->patch_addr & PAGE_MASK)),
 		    &insn[0], insn_size);
 		zcond_after_patch();
@@ -162,14 +162,14 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	 */
 	SLIST_FOREACH(p, &cond->ins_points, next) {
         //KASSERT(INKERNEL(p->patch_addr), ("inspection point patch address outside of kernel: %#08lx", p->patch_addr));
-		p->mirror_address = kva_alloc(PAGE_SIZE);
+		p->mirror_addr = kva_alloc(PAGE_SIZE);
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 	        KASSERT(patch_page != NULL, ("patch page is NULL"));
 
-	        pmap_qenter_zcond(&zcond_patching_pmap, patch_page, p->mirror_address);
+	        pmap_qenter_zcond(&zcond_patching_pmap, patch_page, p->mirror_addr);
 	        pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK));
 			printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
-			    p->mirror_address);
+			    p->mirror_addr);
 	}
 
 	zcond_before_rendezvous();
@@ -177,8 +177,8 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	zcond_after_rendezvous();
     
 	SLIST_FOREACH(p, &cond->ins_points, next) {
-		pmap_qremove_zcond(&zcond_patching_pmap, p->mirror_address);
-		kva_free(p->mirror_address, PAGE_SIZE);
+		pmap_qremove_zcond(&zcond_patching_pmap, p->mirror_addr);
+		kva_free(p->mirror_addr, PAGE_SIZE);
 	}
 }
 

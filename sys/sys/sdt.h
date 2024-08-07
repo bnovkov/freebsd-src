@@ -414,7 +414,7 @@ struct sdt_probe {
 	id_t		id;		/* DTrace probe ID. */
 	int		n_args;		/* Number of arguments. */
 	struct linker_file *sdtp_lf;	/* Module in which we're defined. */
-    struct zcond_false enabled;
+    DECLARE_ZCOND_FALSE(enabled);
 };
 
 struct sdt_provider {
