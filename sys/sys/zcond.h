@@ -63,8 +63,8 @@ struct zcond_false {
 	".popsection \n\t"
 
 #define ZCOND_SET_START_STOP \
-    __WEAK(__CONCAT(__start_, ZCOND_LINKER_SET)); \
-    __WEAK(__CONCAT(__stop_, ZCOND_LINKER_SET)); \
+    __WEAK(__CONCAT(__start_set_, ZCOND_LINKER_SET)); \
+    __WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET)); \
 
 /*
  * Emits a __zcond_table entry, describing one ins_point.
