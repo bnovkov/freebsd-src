@@ -31,7 +31,7 @@ struct ins_point {
  */
 struct zcond {
 	bool enabled;
-    int refcount;
+    int refcnt;
 	SLIST_HEAD(, ins_point) ins_points;
 };
 
@@ -197,7 +197,7 @@ void zcond_after_rendezvous(void);
  * to be patched with. insn[] is populated with the instruction bytes and size
  * is set to the number of instruction bytes.
  */
-void zcond_get_patch_insn(struct ins_point *ins_p, unsigned char insn[],
+void zcond_get_patch_insn(struct ins_point *ins_p, uint8_t insn[],
     size_t *size);
 
 #endif

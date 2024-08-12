@@ -152,16 +152,15 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 
     printf("zcond_set_enabled\n");
     if(new_state == false) {
-        printf("release refcount %d\n", cond->refcount);
-        if(refcount_release_if_not_last(&cond->refcount)) {
+        if(refcount_release_if_not_last(&cond->refcnt)) {
             /* refcount > 1 */
             return;   
-        } else if(!refcount_release_if_last(&cond->refcount)) {
+        } else if(!refcount_release_if_last(&cond->refcnt)) {
             /* refcount == 0 */    
             return;
         } 
     } else {
-        refcount_acquire(&cond->refcount);
+        refcount_acquire(&cond->refcnt);
     }
 
     if (cond->enabled == new_state) {
@@ -177,15 +176,15 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	 * into a new virtual address range in the CPU private pmap.
 	 */
 	SLIST_FOREACH(p, &cond->ins_points, next) {
-        //KASSERT(INKERNEL(p->patch_addr), ("inspection point patch address outside of kernel: %#08lx", p->patch_addr));
-		p->mirror_addr = kva_alloc(PAGE_SIZE);
-		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-	        KASSERT(patch_page != NULL, ("patch page is NULL"));
+        KASSERT(INKERNEL(p->patch_addr), ("%s: inspection point patch address outside of kernel: %#08lx", __func__, p->patch_addr));
+        p->mirror_addr = kva_alloc(PAGE_SIZE);
+        patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
+        KASSERT(patch_page != NULL, ("patch page is NULL"));
 
-	        pmap_qenter_zcond(&zcond_patching_pmap, patch_page, p->mirror_addr);
-	        //pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK), false);
-			printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
-			    p->mirror_addr);
+        pmap_qenter_zcond(&zcond_patching_pmap, patch_page, p->mirror_addr);
+        //pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK), false);
+        printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
+            p->mirror_addr);
 	}
 
 	zcond_before_rendezvous();
