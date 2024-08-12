@@ -23,18 +23,18 @@ zcond_after_patch(void)
 void
 zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-    struct pmap zcond_pmap;
-	
-    ctxt->cr3 = rcr3();
+	struct pmap zcond_pmap;
+
+	ctxt->cr3 = rcr3();
 	pmap_zcond_get_pmap(&zcond_pmap);
-    load_cr3(zcond_pmap.pm_cr3);
+	load_cr3(zcond_pmap.pm_cr3);
 }
 
 void
 zcond_after_rendezvous(struct zcond_md_ctxt *ctxt)
 {
 	load_cr3(ctxt->cr3);
-    invltlb();
+	invltlb();
 }
 
 static void
