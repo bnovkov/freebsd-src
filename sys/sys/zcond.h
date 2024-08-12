@@ -111,7 +111,7 @@ l_true:
  */
 
 #define ZCOND_INIT(state)  { { .enabled = (state), \
-	    .refcount = (state ? 1 : 0), .ins_points = SLIST_HEAD_INITIALIZER() } }
+	    .refcnt = (state ? 1 : 0), .ins_points = SLIST_HEAD_INITIALIZER() } }
 
 #define DEFINE_ZCOND_TRUE(name)                       \
 	struct zcond_true name = ZCOND_INIT(true)
