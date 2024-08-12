@@ -30,9 +30,6 @@
 MALLOC_DECLARE(M_ZCOND);
 MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
-struct pmap zcond_patching_pmap;
-
-
 static void
 zcond_load_ins_points(linker_file_t lf) 
 {
@@ -169,7 +166,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
         patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
         KASSERT(patch_page != NULL, ("patch page is NULL"));
 
-        pmap_qenter_zcond(&zcond_patching_pmap, patch_page, p->mirror_addr);
+        pmap_qenter_zcond(patch_page, p->mirror_addr);
         //pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK), false);
         printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
             p->mirror_addr);
@@ -181,7 +178,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	zcond_after_rendezvous(&ctxt);
     
 	SLIST_FOREACH(p, &cond->ins_points, next) {
-		pmap_qremove_zcond(&zcond_patching_pmap, p->mirror_addr);
+		pmap_qremove_zcond(p->mirror_addr);
 		kva_free(p->mirror_addr, PAGE_SIZE);
 	}
 }
