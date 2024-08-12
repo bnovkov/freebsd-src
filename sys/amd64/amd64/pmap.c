@@ -12319,7 +12319,7 @@ DB_SHOW_COMMAND(ptpages, pmap_ptpages)
 struct pmap zcond_pmap;
 
 static void
-pmap_zcond_init() {
+pmap_zcond_init(const void *unused) {
     vm_offset_t kern_start, kern_end;
 
     kern_start = virtual_avail;
