@@ -145,14 +145,26 @@ rendezvous_cb(void *arg)
 void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
+    struct ins_point *p;
+	vm_page_t patch_page;
+	struct rendezvous_data arg;
+    bool released; 
+
     printf("zcond_set_enabled\n");
-	if (cond->enabled == new_state) {
+    if(new_state == false) {
+        released = refcount_release(&cond->refcount);
+        if(!released) {
+            return;   
+        } 
+    } else {
+        refcount_acquire(&cond->refcount);
+    }
+
+    if (cond->enabled == new_state) {
 		return;
 	}
 
-	struct ins_point *p;
-	vm_page_t patch_page;
-	struct rendezvous_data arg = { .patching_cpu = curcpu,
+	arg = { .patching_cpu = curcpu,
 		.cond = cond,
 		.new_state = new_state };
 
@@ -167,7 +179,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	        KASSERT(patch_page != NULL, ("patch page is NULL"));
 
 	        pmap_qenter_zcond(&zcond_patching_pmap, patch_page, p->mirror_addr);
-	        pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK));
+	        pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK), false);
 			printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
 			    p->mirror_addr);
 	}

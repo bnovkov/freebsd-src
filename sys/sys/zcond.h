@@ -31,6 +31,7 @@ struct ins_point {
  */
 struct zcond {
 	bool enabled;
+    int refcount;
 	SLIST_HEAD(, ins_point) ins_points;
 };
 
@@ -109,8 +110,8 @@ l_true:
  * These macros declare and initialize a new zcond.
  */
 
-#define ZCOND_INIT(state)  { { .enabled = (state), \
-	    .ins_points = SLIST_HEAD_INITIALIZER() } }
+#define ZCOND_INIT(cond, state)  { { .enabled = (state), \
+	    .refcount = 0, .ins_points = SLIST_HEAD_INITIALIZER() } }
 
 #define DEFINE_ZCOND_TRUE(name)                       \
 	struct zcond_true name = ZCOND_INIT(true)

@@ -174,6 +174,8 @@ extern void (*pmap_invalidate_vpipt_icache)(void);
 extern void (*pmap_stage2_invalidate_range)(uint64_t, vm_offset_t, vm_offset_t,
     bool);
 extern void (*pmap_stage2_invalidate_all)(uint64_t);
+__inline void
+pmap_invalidate_page(pmap_t pmap, vm_offset_t va, bool final_only);
 
 int pmap_vmspace_copy(pmap_t, pmap_t);
 
