@@ -58,7 +58,7 @@ insn_jmp(uint8_t insn[], vm_offset_t offset)
 }
 
 void
-zcond_get_patch_insn(struct ins_point *p, uint8_t insn[], size_t *size)
+zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 {
 	uint8_t *patch_addr;
 	vm_offset_t offset;

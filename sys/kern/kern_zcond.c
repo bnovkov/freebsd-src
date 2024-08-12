@@ -31,11 +31,11 @@ MALLOC_DECLARE(M_ZCOND);
 MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
 static void
-zcond_load_ins_points(linker_file_t lf) 
+zcond_load_patch_points(linker_file_t lf) 
 {
 
-    struct ins_point *begin, *end;
-    struct ins_point *ins_p;
+    struct patch_point *begin, *end;
+    struct patch_point *ins_p;
 	struct zcond *owning_zcond;
 
     if(linker_file_lookup_set(lf, __XSTRING(ZCOND_LINKER_SET), &begin, &end, NULL) == 0) {
@@ -44,12 +44,12 @@ zcond_load_ins_points(linker_file_t lf)
             owning_zcond = ins_p->zcond;
             //printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) ins_p, (unsigned long) owning_zcond);
             
-            if (owning_zcond->ins_points.slh_first == NULL) {
+            if (owning_zcond->patch_points.slh_first == NULL) {
                 printf("init list %#08lx | inspection point at %#08lx\n", (unsigned long)owning_zcond, (unsigned long) ins_p);
-                SLIST_INIT(&owning_zcond->ins_points);
+                SLIST_INIT(&owning_zcond->patch_points);
             }
 
-            SLIST_INSERT_HEAD(&owning_zcond->ins_points, ins_p, next);
+            SLIST_INSERT_HEAD(&owning_zcond->patch_points, ins_p, next);
         }
     }
 }
@@ -58,18 +58,18 @@ static void
 zcond_kld_load(void *arg __unused, struct linker_file *lf)
 {
     printf("kldload zcond\n");
-    zcond_load_ins_points(lf);
+    zcond_load_patch_points(lf);
 }
 
 static int
-zcond_load_ins_points_cb(linker_file_t lf, void *arg __unused)
+zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 {
-    zcond_load_ins_points(lf);
+    zcond_load_patch_points(lf);
     return (0);
 }
 
 /*
- * Collect ins_points from the __zcond_table ELF section into a list.
+ * Collect patch_points from the __zcond_table ELF section into a list.
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
  * an instruction.
  */
@@ -77,7 +77,7 @@ static void
 zcond_init(const void *unused)
 {
     EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL, EVENTHANDLER_PRI_ANY);
-    linker_file_foreach(zcond_load_ins_points_cb, NULL);
+    linker_file_foreach(zcond_load_patch_points_cb, NULL);
 }
 SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_init,
     NULL);
@@ -89,17 +89,17 @@ struct rendezvous_data {
 };
 
 /*
- * Patch all ins_points belonging to cond.
+ * Patch all patch_points belonging to cond.
  */
 static void
 zcond_patch(struct zcond *cond, bool new_state)
 {
-	struct ins_point *p;
+	struct patch_point *p;
 	unsigned char insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
 	int i;
 
-	SLIST_FOREACH(p, &cond->ins_points, next) {
+	SLIST_FOREACH(p, &cond->patch_points, next) {
 		zcond_get_patch_insn(p, insn, &insn_size);
 
 		printf("patch ins point %#08lx with: ", p->patch_addr);
@@ -131,7 +131,7 @@ rendezvous_cb(void *arg)
 void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
-    struct ins_point *p;
+    struct patch_point *p;
 	vm_page_t patch_page;
 	//struct rendezvous_data arg;
 
@@ -160,7 +160,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	 * Map the page containing the instruction to be patched
 	 * into a new virtual address range in the CPU private pmap.
 	 */
-	SLIST_FOREACH(p, &cond->ins_points, next) {
+	SLIST_FOREACH(p, &cond->patch_points, next) {
         KASSERT(INKERNEL(p->patch_addr), ("%s: inspection point patch address outside of kernel: %#08lx", __func__, p->patch_addr));
         p->mirror_addr = kva_alloc(PAGE_SIZE);
         patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
@@ -177,7 +177,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	smp_rendezvous(NULL, rendezvous_cb, NULL, &arg);
 	zcond_after_rendezvous(&ctxt);
     
-	SLIST_FOREACH(p, &cond->ins_points, next) {
+	SLIST_FOREACH(p, &cond->patch_points, next) {
 		pmap_qremove_zcond(p->mirror_addr);
 		kva_free(p->mirror_addr, PAGE_SIZE);
 	}
@@ -269,15 +269,15 @@ zcond_list_inspection_points(SYSCTL_HANDLER_ARGS)
     printf("&cond1 = %#08lx | &cond2 = %#08lx\n", (unsigned long) &cond1, (unsigned long) &cond2);
 
 	sbuf_printf(&buf, "inspection points for cond1:\n");
-	struct ins_point *p;
-	SLIST_FOREACH(p, &cond1.cond.ins_points, next) {
+	struct patch_point *p;
+	SLIST_FOREACH(p, &cond1.cond.patch_points, next) {
 		sbuf_printf(&buf,
 		    "patch_addr = %#08lx | jump_addr = %#08lx | zcond_ptr = %p\n",
 		    p->patch_addr, p->lbl_true_addr, p->zcond);
 	}
 
 	sbuf_printf(&buf, "inspection points for cond2:\n");
-	SLIST_FOREACH(p, &cond2.cond.ins_points, next) {
+	SLIST_FOREACH(p, &cond2.cond.patch_points, next) {
 		sbuf_printf(&buf,
 		    "patch_addr = %#08lx | jump_addr = %#08lx | zcond_ptr = %p\n",
 		    p->patch_addr, p->lbl_true_addr, p->zcond);
