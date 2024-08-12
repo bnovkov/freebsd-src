@@ -148,7 +148,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
     struct ins_point *p;
 	vm_page_t patch_page;
-	struct rendezvous_data arg;
+	//struct rendezvous_data arg;
     bool released; 
 
     printf("zcond_set_enabled\n");
@@ -165,7 +165,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 		return;
 	}
 
-	arg = { .patching_cpu = curcpu,
+	struct rendezvous_dat aarg = { .patching_cpu = curcpu,
 		.cond = cond,
 		.new_state = new_state };
 
