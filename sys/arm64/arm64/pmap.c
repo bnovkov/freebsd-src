@@ -1779,7 +1779,7 @@ pmap_s2_invalidate_page(pmap_t pmap, vm_offset_t va, bool final_only)
 	    final_only);
 }
 
-static __inline void
+__inline void
 pmap_invalidate_page(pmap_t pmap, vm_offset_t va, bool final_only)
 {
 	if (pmap->pm_stage == PM_STAGE1)
@@ -2367,6 +2367,59 @@ pmap_qremove(vm_offset_t sva, int count)
 
 		va += PAGE_SIZE;
 	}
+	pmap_s1_invalidate_range(kernel_pmap, sva, va, true);
+}
+
+
+void
+pmap_qenter_zcond(vm_offset_t sva, vm_page_t *m)
+{
+	pd_entry_t *pde;
+	pt_entry_t attr, old_l3e, *pte;
+	vm_offset_t va;
+	vm_page_t m;
+	int lvl;
+
+	old_l3e = 0;
+	va = sva;
+    pde = pmap_pde(kernel_pmap, va, &lvl);
+    KASSERT(pde != NULL,
+        ("pmap_qenter: Invalid page entry, va: 0x%lx", va));
+    KASSERT(lvl == 2,
+        ("pmap_qenter: Invalid level %d", lvl));
+
+    attr = ATTR_DEFAULT | ATTR_S1_AP(ATTR_S1_AP_RW) | ATTR_S1_XN |
+        ATTR_KERN_GP | ATTR_S1_IDX(m->md.pv_memattr) | L3_PAGE;
+    pte = pmap_l2_to_l3(pde, va);
+    old_l3e |= pmap_load_store(pte, VM_PAGE_TO_PTE(m) | attr);
+
+    va += L3_SIZE;
+	if ((old_l3e & ATTR_DESCR_VALID) != 0)
+		pmap_s1_invalidate_range(kernel_pmap, sva, va, true);
+	else {
+		/*
+		 * Because the old entries were invalid and the new mappings
+		 * are not executable, an isb is not required.
+		 */
+		dsb(ishst);
+	}
+}
+
+void
+pmap_qremove(vm_offset_t va)
+{
+	pt_entry_t *pte;
+
+	KASSERT(ADDR_IS_CANONICAL(sva),
+	    ("%s: Address not in canonical form: %lx", __func__, sva));
+	KASSERT(ADDR_IS_KERNEL(sva), ("usermode va %lx", sva));
+
+    pte = pmap_pte_exists(kernel_pmap, va, 3, NULL);
+    if (pte != NULL) {
+        pmap_clear(pte);
+    }
+
+    va += PAGE_SIZE;
 	pmap_s1_invalidate_range(kernel_pmap, sva, va, true);
 }
 
