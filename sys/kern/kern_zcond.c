@@ -13,6 +13,7 @@
 #include <sys/smp.h>
 #include <sys/sysctl.h>
 #include <sys/zcond.h>
+#include <sys/refcount.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -179,7 +180,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	        KASSERT(patch_page != NULL, ("patch page is NULL"));
 
 	        pmap_qenter_zcond(&zcond_patching_pmap, patch_page, p->mirror_addr);
-	        pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK), false);
+	        //pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK), false);
 			printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
 			    p->mirror_addr);
 	}
