@@ -110,7 +110,7 @@ l_true:
  * These macros declare and initialize a new zcond.
  */
 
-#define ZCOND_INIT(cond, state)  { { .enabled = (state), \
+#define ZCOND_INIT(state)  { { .enabled = (state), \
 	    .refcount = 0, .ins_points = SLIST_HEAD_INITIALIZER() } }
 
 #define DEFINE_ZCOND_TRUE(name)                       \
