@@ -12322,8 +12322,8 @@ static void
 pmap_zcond_init(const void *unused) {
     vm_offset_t kern_start, kern_end;
 
-    kern_start = virtual_avail;
-    kern_end = virtual_end;
+    kern_start = virtual_end;
+    kern_end = virtual_avail;
 
 	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
 	PMAP_LOCK_INIT(&zcond_pmap);
