@@ -8,7 +8,6 @@
 #include <machine/cpufunc.h>
 #include <machine/zcond.h>
 
-static uint64_t ttbr0;
 extern struct pmap zcond_patching_pmap;
 
 void
@@ -22,16 +21,16 @@ zcond_after_patch(void)
 }
 
 void
-zcond_before_rendezvous(void)
+zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-    ttbr0 = READ_SPECIALREG(ttbr0_el1);
+    ctxt->ttbr0 = READ_SPECIALREG(ttbr0_el1);
     set_ttbr0(pmap_to_ttbr0(&zcond_patching_pmap));
 }
 
 void
-zcond_after_rendezvous(void)
+zcond_after_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-    set_ttbr0(ttbr0);
+    set_ttbr0(ctxt->ttbr0);
 }
 
 static void

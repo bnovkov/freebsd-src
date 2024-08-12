@@ -11683,35 +11683,6 @@ pmap_pkru_clear(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 	return (error);
 }
 
-void
-pmap_qenter_zcond(pmap_t pmap, vm_page_t m, vm_offset_t sva) {
-        pt_entry_t oldpte, pa;
-        pt_entry_t *pte;
-        int cache_bits;
-
-        oldpte = 0;
-        pte = pmap_pte(pmap, sva);
-
-        cache_bits = pmap_cache_bits(pmap, m->md.pat_mode, false);
-        pa = VM_PAGE_TO_PHYS(m) | cache_bits;
-        if ((*pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
-                oldpte |= *pte;
-                pte_store(pte, pa | pg_g | pg_nx | X86_PG_A |
-                    X86_PG_M | X86_PG_RW | X86_PG_V);
-        }
-
-        if (__predict_false((oldpte & X86_PG_V) != 0))
-                pmap_invalidate_range(kernel_pmap, sva, sva + PAGE_SIZE);
-}
-
-void
-pmap_qremove_zcond(pmap_t pmap, vm_offset_t sva) {
-        pt_entry_t *pte;
-
-        pte = pmap_pte(pmap, sva);
-	pte_clear(pte);
-}
-
 #if defined(KASAN) || defined(KMSAN)
 
 /*
@@ -12341,4 +12312,61 @@ DB_SHOW_COMMAND(ptpages, pmap_ptpages)
 		    (vm_offset_t)pmap->pm_pmltop)), NUP4ML4E, PG_V);
 	}
 }
+
+/***********************
+ * zcond functionality *
+************************/
+struct pmap zcond_pmap;
+
+static void
+pmap_zcond_init() {
+    vm_offset_t kern_start, kern_end;
+
+    kern_start = virtual_avail;
+    kern_end = virtual_end;
+
+	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
+	PMAP_LOCK_INIT(&zcond_pmap);
+	pmap_pinit(&zcond_pmap);
+	printf("kern start %#08lx | kern end %#08lx ",
+	    kern_start, kern_end);
+	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
+	    kern_end - kern_start, kern_start);
+}
+SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, pmap_zcond_init, NULL);
+
+void
+pmap_qenter_zcond(vm_page_t m, vm_offset_t sva) {
+    pt_entry_t oldpte, pa;
+    pt_entry_t *pte;
+    int cache_bits;
+
+    oldpte = 0;
+    pte = pmap_pte(zcond_pmap, sva);
+
+    cache_bits = pmap_cache_bits(zcond_pmap, m->md.pat_mode, false);
+    pa = VM_PAGE_TO_PHYS(m) | cache_bits;
+    if ((*pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
+            oldpte |= *pte;
+            pte_store(pte, pa | pg_g | pg_nx | X86_PG_A |
+                X86_PG_M | X86_PG_RW | X86_PG_V);
+    }
+
+    if (__predict_false((oldpte & X86_PG_V) != 0))
+            pmap_invalidate_range(kernel_pmap, sva, sva + PAGE_SIZE);
+}
+
+void
+pmap_qremove_zcond(vm_offset_t sva) {
+    pt_entry_t *pte;
+
+    pte = pmap_pte(zcond_pmap, sva);
+    pte_clear(pte);
+}
+
+void
+pmap_zcond_get_pmap(struct pmap* pm) {
+   memcpy(pm, &zcond_pmap, sizeof(zcond_pmap)); 
+}
+
 #endif
