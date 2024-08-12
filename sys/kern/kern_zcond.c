@@ -153,7 +153,8 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 
     printf("zcond_set_enabled\n");
     if(new_state == false) {
-        released = refcount_release(&cond->refcount);
+        printf("release refcount %d\n", cond->refcount);
+        released = refcount_release(&(cond->refcount));
         if(!released) {
             return;   
         } 
