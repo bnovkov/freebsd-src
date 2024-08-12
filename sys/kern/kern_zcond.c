@@ -149,14 +149,17 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
     struct ins_point *p;
 	vm_page_t patch_page;
 	//struct rendezvous_data arg;
-    bool released; 
+    bool not_last; 
 
     printf("zcond_set_enabled\n");
     if(new_state == false) {
         printf("release refcount %d\n", cond->refcount);
-        released = refcount_release(&(cond->refcount));
-        if(!released) {
+        if(refcount_release_if_not_last(&cond->refcount)) {
+            /* refcount > 1 */
             return;   
+        } else if(!refcount_release_if_last(&cond->refcount)) {
+            /* refcount == 0 */    
+            return;
         } 
     } else {
         refcount_acquire(&cond->refcount);
