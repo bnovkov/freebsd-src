@@ -8,39 +8,37 @@
 #include <machine/zcond.h>
 
 // static bool wp;
-static uint64_t cr3;
-extern struct pmap zcond_patching_pmap;
+
 void
 zcond_before_patch(void)
 {
-	// wp = disable_wp();
-	// cr3 = rcr3();
 }
 
 void
 zcond_after_patch(void)
 {
-	// restore_wp(wp);
-	// load_cr3(cr3);
 	mfence();
 }
 
 void
-zcond_before_rendezvous(void)
+zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-	cr3 = rcr3();
-	load_cr3(zcond_patching_pmap.pm_cr3);
+	struct pmap zcond_pmap;
+
+	ctxt->cr3 = rcr3();
+	pmap_zcond_get_pmap(&zcond_pmap);
+	load_cr3(zcond_pmap.pm_cr3);
 }
 
 void
-zcond_after_rendezvous(void)
+zcond_after_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-	load_cr3(cr3);
-    invltlb();
+	load_cr3(ctxt->cr3);
+	invltlb();
 }
 
 static void
-insn_nop(unsigned char insn[], size_t size)
+insn_nop(uint8_t insn[], size_t size)
 {
 	int i;
 	if (size == ZCOND_INSN_SHORT_SIZE) {
@@ -55,7 +53,7 @@ insn_nop(unsigned char insn[], size_t size)
 }
 
 static void
-insn_jmp(unsigned char insn[], size_t size, vm_offset_t offset)
+insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
 {
 	int i;
 	if (size == 2) {
@@ -70,9 +68,9 @@ insn_jmp(unsigned char insn[], size_t size, vm_offset_t offset)
 }
 
 void
-zcond_get_patch_insn(struct ins_point *p, unsigned char insn[], size_t *size)
+zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 {
-	unsigned char *patch_addr = (unsigned char *)p->patch_addr;
+	uint8_t *patch_addr = (uint8_t *)p->patch_addr;
 	vm_offset_t offset;
 
 	if (*patch_addr == nop_short_bytes[0]) {

@@ -4,7 +4,7 @@
 
 #include <sys/types.h>
 
-static char nop_bytes[] = { 0x1f, 0x20, 0x03, 0xd5 };
+static uint8_t nop_bytes[] = { 0x1f, 0x20, 0x03, 0xd5 };
 
 #define ZCOND_NOP_ASM    \
 	".byte 0x1f\n\t" \
@@ -14,6 +14,10 @@ static char nop_bytes[] = { 0x1f, 0x20, 0x03, 0xd5 };
 #define ZCOND_JMP_ASM	    "b"
 
 #define ZCOND_MAX_INSN_SIZE 4
+
+struct zcond_md_ctxt {
+	uint64_t ttbr0;
+};
 
 #endif
 #endif

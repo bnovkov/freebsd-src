@@ -8,7 +8,6 @@
 #include <machine/cpufunc.h>
 #include <machine/zcond.h>
 
-static uint64_t ttbr0;
 extern struct pmap zcond_patching_pmap;
 
 void
@@ -22,20 +21,20 @@ zcond_after_patch(void)
 }
 
 void
-zcond_before_rendezvous(void)
+zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-    ttbr0 = READ_SPECIALREG(ttbr0_el1);
-    set_ttbr0(pmap_to_ttbr0(&zcond_patching_pmap));
+	ctxt->ttbr0 = READ_SPECIALREG(ttbr0_el1);
+	set_ttbr0(pmap_to_ttbr0(&zcond_patching_pmap));
 }
 
 void
-zcond_after_rendezvous(void)
+zcond_after_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-    set_ttbr0(ttbr0);
+	set_ttbr0(ctxt->ttbr0);
 }
 
 static void
-insn_nop(unsigned char insn[])
+insn_nop(uint8_t insn[])
 {
 	int i;
 	for (i = 0; i < ZCOND_MAX_INSN_SIZE; i++) {
@@ -44,7 +43,7 @@ insn_nop(unsigned char insn[])
 }
 
 static void
-insn_jmp(unsigned char insn[], vm_offset_t offset)
+insn_jmp(uint8_t insn[], vm_offset_t offset)
 {
 	vm_offset_t imm26;
 	uint32_t instr;
@@ -59,12 +58,12 @@ insn_jmp(unsigned char insn[], vm_offset_t offset)
 }
 
 void
-zcond_get_patch_insn(struct ins_point *p, unsigned char insn[], size_t *size)
+zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 {
-	unsigned char *patch_addr;
+	uint8_t *patch_addr;
 	vm_offset_t offset;
 
-	patch_addr = (unsigned char *)p->patch_addr;
+	patch_addr = (uint8_t *)p->patch_addr;
 	*size = ZCOND_MAX_INSN_SIZE;
 	printf("patch opcode: %02hhx at %p", *patch_addr, patch_addr);
 	if (*patch_addr == nop_bytes[0]) {
