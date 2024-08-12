@@ -40,7 +40,7 @@ zcond_after_rendezvous(void)
 }
 
 static void
-insn_nop(unsigned char insn[], size_t size)
+insn_nop(uint8_t insn[], size_t size)
 {
 	int i;
 	if (size == ZCOND_INSN_SHORT_SIZE) {
@@ -55,7 +55,7 @@ insn_nop(unsigned char insn[], size_t size)
 }
 
 static void
-insn_jmp(unsigned char insn[], size_t size, vm_offset_t offset)
+insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
 {
 	int i;
 	if (size == 2) {
@@ -70,9 +70,9 @@ insn_jmp(unsigned char insn[], size_t size, vm_offset_t offset)
 }
 
 void
-zcond_get_patch_insn(struct ins_point *p, unsigned char insn[], size_t *size)
+zcond_get_patch_insn(struct ins_point *p, uint8_t insn[], size_t *size)
 {
-	unsigned char *patch_addr = (unsigned char *)p->patch_addr;
+	uint8_t *patch_addr = (uint8_t *)p->patch_addr;
 	vm_offset_t offset;
 
 	if (*patch_addr == nop_short_bytes[0]) {
