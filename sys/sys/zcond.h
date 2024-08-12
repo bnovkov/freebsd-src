@@ -181,16 +181,20 @@ void zcond_before_patch(void);
 void zcond_after_patch(void);
 
 /*
+ * Forward declaration of a struct, defined separately for each architecture in <machine/zcond.h>
+*/
+struct zcond_md_ctxt;
+/*
  * Called before CPUs are parked. Use this hook to perform MD pmap loading
  * and other MD setup.
  */
-void zcond_before_rendezvous(void);
+void zcond_before_rendezvous(struct zcond_md_ctxt *);
 
 /*
  * Called after the whole zcond is patched and CPUs are resumed.
  *  Use this hook to perform MD pmap cleanup.
  */
-void zcond_after_rendezvous(void);
+void zcond_after_rendezvous(struct zcond_md_ctxt *);
 
 /*
  * Calculates the bytes of instruction with which the ins_p inspection point is

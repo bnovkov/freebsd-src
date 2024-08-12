@@ -94,7 +94,7 @@ zcond_init(const void *unused)
 	pmap_copy(&zcond_patching_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
 }
-SYSINIT(zcond, SI_SUB_KLD + 1, SI_ORDER_SECOND, zcond_init,
+SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_init,
     NULL);
 
 struct rendezvous_data {
@@ -187,9 +187,10 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
             p->mirror_addr);
 	}
 
-	zcond_before_rendezvous();
+    struct zcond_md_ctxt ctxt;
+	zcond_before_rendezvous(&ctxt);
 	smp_rendezvous(NULL, rendezvous_cb, NULL, &arg);
-	zcond_after_rendezvous();
+	zcond_after_rendezvous(&ctxt);
     
 	SLIST_FOREACH(p, &cond->ins_points, next) {
 		pmap_qremove_zcond(&zcond_patching_pmap, p->mirror_addr);

@@ -8,34 +8,30 @@
 #include <machine/zcond.h>
 
 // static bool wp;
-static uint64_t cr3;
 extern struct pmap zcond_patching_pmap;
+
 void
 zcond_before_patch(void)
 {
-	// wp = disable_wp();
-	// cr3 = rcr3();
 }
 
 void
 zcond_after_patch(void)
 {
-	// restore_wp(wp);
-	// load_cr3(cr3);
 	mfence();
 }
 
 void
-zcond_before_rendezvous(void)
+zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-	cr3 = rcr3();
+	ctxt->cr3 = rcr3();
 	load_cr3(zcond_patching_pmap.pm_cr3);
 }
 
 void
-zcond_after_rendezvous(void)
+zcond_after_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-	load_cr3(cr3);
+	load_cr3(ctxt->cr3);
     invltlb();
 }
 
