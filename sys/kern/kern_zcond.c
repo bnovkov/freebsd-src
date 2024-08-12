@@ -8,12 +8,13 @@
 #include <sys/linker.h>
 #include <sys/linker_set.h>
 #include <sys/lock.h>
+#include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/refcount.h>
 #include <sys/sbuf.h>
 #include <sys/smp.h>
 #include <sys/sysctl.h>
 #include <sys/zcond.h>
-#include <sys/refcount.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -25,47 +26,51 @@
 #include <machine/atomic.h>
 #include <machine/cpufunc.h>
 
-#include <sys/malloc.h>
-
 MALLOC_DECLARE(M_ZCOND);
 MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
 static void
-zcond_load_patch_points(linker_file_t lf) 
+zcond_load_patch_points(linker_file_t lf)
 {
-
-    struct patch_point *begin, *end;
-    struct patch_point *ins_p;
+	struct patch_point *begin, *end;
+	struct patch_point *ins_p;
 	struct zcond *owning_zcond;
 
-    if(linker_file_lookup_set(lf, __XSTRING(ZCOND_LINKER_SET), &begin, &end, NULL) == 0) {
-        printf("being %#08lx end %#08lx\n", (unsigned long)begin, (unsigned long)end);
-        for(ins_p = begin; ins_p < end; ins_p++) {
-            owning_zcond = ins_p->zcond;
-            //printf("ins_p %#08lx zcond %#08lx\n",(unsigned long) ins_p, (unsigned long) owning_zcond);
-            
-            if (owning_zcond->patch_points.slh_first == NULL) {
-                printf("init list %#08lx | inspection point at %#08lx\n", (unsigned long)owning_zcond, (unsigned long) ins_p);
-                SLIST_INIT(&owning_zcond->patch_points);
-            }
+	if (linker_file_lookup_set(lf, __XSTRING(ZCOND_LINKER_SET), &begin,
+		&end, NULL) == 0) {
+		printf("being %#08lx end %#08lx\n", (unsigned long)begin,
+		    (unsigned long)end);
+		for (ins_p = begin; ins_p < end; ins_p++) {
+			owning_zcond = ins_p->zcond;
+			// printf("ins_p %#08lx zcond %#08lx\n",(unsigned long)
+			// ins_p, (unsigned long) owning_zcond);
 
-            SLIST_INSERT_HEAD(&owning_zcond->patch_points, ins_p, next);
-        }
-    }
+			if (owning_zcond->patch_points.slh_first == NULL) {
+				printf(
+				    "init list %#08lx | inspection point at %#08lx\n",
+				    (unsigned long)owning_zcond,
+				    (unsigned long)ins_p);
+				SLIST_INIT(&owning_zcond->patch_points);
+			}
+
+			SLIST_INSERT_HEAD(&owning_zcond->patch_points, ins_p,
+			    next);
+		}
+	}
 }
 
 static void
 zcond_kld_load(void *arg __unused, struct linker_file *lf)
 {
-    printf("kldload zcond\n");
-    zcond_load_patch_points(lf);
+	printf("kldload zcond\n");
+	zcond_load_patch_points(lf);
 }
 
 static int
 zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 {
-    zcond_load_patch_points(lf);
-    return (0);
+	zcond_load_patch_points(lf);
+	return (0);
 }
 
 /*
@@ -76,11 +81,11 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 static void
 zcond_init(const void *unused)
 {
-    EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL, EVENTHANDLER_PRI_ANY);
-    linker_file_foreach(zcond_load_patch_points_cb, NULL);
+	EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL,
+	    EVENTHANDLER_PRI_ANY);
+	linker_file_foreach(zcond_load_patch_points_cb, NULL);
 }
-SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_init,
-    NULL);
+SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_init, NULL);
 
 struct rendezvous_data {
 	int patching_cpu;
@@ -109,8 +114,7 @@ zcond_patch(struct zcond *cond, bool new_state)
 		printf("\n");
 
 		zcond_before_patch();
-		memcpy((void *)(p->mirror_addr +
-			   (p->patch_addr & PAGE_MASK)),
+		memcpy((void *)(p->mirror_addr + (p->patch_addr & PAGE_MASK)),
 		    &insn[0], insn_size);
 		zcond_after_patch();
 	}
@@ -131,24 +135,24 @@ rendezvous_cb(void *arg)
 void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
-    struct patch_point *p;
+	struct patch_point *p;
 	vm_page_t patch_page;
-	//struct rendezvous_data arg;
+	// struct rendezvous_data arg;
 
-    printf("zcond_set_enabled\n");
-    if(new_state == false) {
-        if(refcount_release_if_not_last(&cond->refcnt)) {
-            /* refcount > 1 */
-            return;   
-        } else if(!refcount_release_if_last(&cond->refcnt)) {
-            /* refcount == 0 */    
-            return;
-        } 
-    } else {
-        refcount_acquire(&cond->refcnt);
-    }
+	printf("zcond_set_enabled\n");
+	if (new_state == false) {
+		if (refcount_release_if_not_last(&cond->refcnt)) {
+			/* refcount > 1 */
+			return;
+		} else if (!refcount_release_if_last(&cond->refcnt)) {
+			/* refcount == 0 */
+			return;
+		}
+	} else {
+		refcount_acquire(&cond->refcnt);
+	}
 
-    if (cond->enabled == new_state) {
+	if (cond->enabled == new_state) {
 		return;
 	}
 
@@ -161,22 +165,25 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	 * into a new virtual address range in the CPU private pmap.
 	 */
 	SLIST_FOREACH(p, &cond->patch_points, next) {
-        KASSERT(INKERNEL(p->patch_addr), ("%s: inspection point patch address outside of kernel: %#08lx", __func__, p->patch_addr));
-        p->mirror_addr = kva_alloc(PAGE_SIZE);
-        patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-        KASSERT(patch_page != NULL, ("patch page is NULL"));
+		KASSERT(INKERNEL(p->patch_addr),
+		    ("%s: inspection point patch address outside of kernel: %#08lx",
+			__func__, p->patch_addr));
+		p->mirror_addr = kva_alloc(PAGE_SIZE);
+		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
+		KASSERT(patch_page != NULL, ("patch page is NULL"));
 
-        pmap_qenter_zcond(patch_page, p->mirror_addr);
-        //pmap_invalidate_page(kernel_pmap, p->patch_addr & (~PAGE_MASK), false);
-        printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
-            p->mirror_addr);
+		pmap_qenter_zcond(patch_page, p->mirror_addr);
+		// pmap_invalidate_page(kernel_pmap, p->patch_addr &
+		// (~PAGE_MASK), false);
+		printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
+		    p->mirror_addr);
 	}
 
-    struct zcond_md_ctxt ctxt;
+	struct zcond_md_ctxt ctxt;
 	zcond_before_rendezvous(&ctxt);
 	smp_rendezvous(NULL, rendezvous_cb, NULL, &arg);
 	zcond_after_rendezvous(&ctxt);
-    
+
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		pmap_qremove_zcond(p->mirror_addr);
 		kva_free(p->mirror_addr, PAGE_SIZE);
@@ -266,7 +273,8 @@ zcond_list_inspection_points(SYSCTL_HANDLER_ARGS)
 	struct sbuf buf;
 	sbuf_new_for_sysctl(&buf, NULL, 1024, req);
 
-    printf("&cond1 = %#08lx | &cond2 = %#08lx\n", (unsigned long) &cond1, (unsigned long) &cond2);
+	printf("&cond1 = %#08lx | &cond2 = %#08lx\n", (unsigned long)&cond1,
+	    (unsigned long)&cond2);
 
 	sbuf_printf(&buf, "inspection points for cond1:\n");
 	struct patch_point *p;

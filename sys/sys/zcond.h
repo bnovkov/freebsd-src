@@ -2,10 +2,10 @@
 #ifndef _SYS_ZCOND_H
 #define _SYS_ZCOND_H
 
+#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/queue.h>
-#include <sys/cdefs.h>
 
 #include <machine/zcond.h>
 
@@ -31,7 +31,7 @@ struct patch_point {
  */
 struct zcond {
 	bool enabled;
-    int refcnt;
+	int refcnt;
 	SLIST_HEAD(, patch_point) patch_points;
 };
 
@@ -47,25 +47,25 @@ struct zcond_false {
 };
 
 #define ZCOND_ELF_SECTION "set_zcond_patch_points_set"
-#define ZCOND_LINKER_SET zcond_patch_points_set
+#define ZCOND_LINKER_SET  zcond_patch_points_set
 
 /*
  * __zcond_table is an ELF section which keeps
  * all the data related to the zcond mechanism.
  * A single entry describes a single patch_point.
  */
-#define ZCOND_TABLE_ENTRY                         \
-    ".pushsection " ZCOND_ELF_SECTION ", \"aw\" \n\t" \
-	".quad 1b \n\t"                           \
-	".quad %l[l_true] \n\t"                   \
-	".quad %c0 \n\t"                          \
-	".quad 0 \n\t"                            \
-	".quad 0 \n\t"                            \
+#define ZCOND_TABLE_ENTRY                                 \
+	".pushsection " ZCOND_ELF_SECTION ", \"aw\" \n\t" \
+	".quad 1b \n\t"                                   \
+	".quad %l[l_true] \n\t"                           \
+	".quad %c0 \n\t"                                  \
+	".quad 0 \n\t"                                    \
+	".quad 0 \n\t"                                    \
 	".popsection \n\t"
 
-#define ZCOND_SET_START_STOP \
-    __WEAK(__CONCAT(__start_set_, ZCOND_LINKER_SET)); \
-    __WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET)); \
+#define ZCOND_SET_START_STOP                              \
+	__WEAK(__CONCAT(__start_set_, ZCOND_LINKER_SET)); \
+	__WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET));
 
 /*
  * Emits a __zcond_table entry, describing one patch_point.
@@ -75,7 +75,7 @@ struct zcond_false {
 static __attribute__((always_inline)) bool
 zcond_nop(struct zcond *const zcond_p)
 {
-    ZCOND_SET_START_STOP
+	ZCOND_SET_START_STOP
 	asm goto("1: " ZCOND_NOP_ASM ZCOND_TABLE_ENTRY
 		 :
 		 : "i"(zcond_p)
@@ -95,7 +95,7 @@ l_true:
 static __attribute__((always_inline)) bool
 zcond_jmp(struct zcond *const zcond_p)
 {
-    ZCOND_SET_START_STOP
+	ZCOND_SET_START_STOP
 	asm goto("1:" ZCOND_JMP_ASM " %[l_true] \n\t" ZCOND_TABLE_ENTRY
 		 :
 		 : "i"(zcond_p)
@@ -110,20 +110,21 @@ l_true:
  * These macros declare and initialize a new zcond.
  */
 
-#define ZCOND_INIT(state)  { { .enabled = (state), \
-	    .refcnt = (state ? 1 : 0), .patch_points = SLIST_HEAD_INITIALIZER() } }
+#define ZCOND_INIT(state)                                              \
+	{                                                              \
+		{                                                      \
+			.enabled = (state), .refcnt = (state ? 1 : 0), \
+			.patch_points = SLIST_HEAD_INITIALIZER()       \
+		}                                                      \
+	}
 
-#define DEFINE_ZCOND_TRUE(name)                       \
-	struct zcond_true name = ZCOND_INIT(true)
+#define DEFINE_ZCOND_TRUE(name)	  struct zcond_true name = ZCOND_INIT(true)
 
-#define DEFINE_ZCOND_FALSE(name)                        \
-	struct zcond_false name = ZCOND_INIT(false)
+#define DEFINE_ZCOND_FALSE(name)  struct zcond_false name = ZCOND_INIT(false)
 
-#define DECLARE_ZCOND_TRUE(name) \
-    struct zcond_true name;
+#define DECLARE_ZCOND_TRUE(name)  struct zcond_true name;
 
-#define DECLARE_ZCOND_FALSE(name) \
-    struct zcond_false name;
+#define DECLARE_ZCOND_FALSE(name) struct zcond_false name;
 
 /*
  * These macros inspect the state of a zcond (is it true or false)
@@ -181,8 +182,9 @@ void zcond_before_patch(void);
 void zcond_after_patch(void);
 
 /*
- * Forward declaration of a struct, defined separately for each architecture in <machine/zcond.h>
-*/
+ * Forward declaration of a struct, defined separately for each architecture in
+ * <machine/zcond.h>
+ */
 struct zcond_md_ctxt;
 /*
  * Called before CPUs are parked. Use this hook to perform MD pmap loading
