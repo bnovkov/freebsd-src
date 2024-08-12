@@ -165,7 +165,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 		return;
 	}
 
-	struct rendezvous_dat aarg = { .patching_cpu = curcpu,
+	struct rendezvous_data arg = { .patching_cpu = curcpu,
 		.cond = cond,
 		.new_state = new_state };
 
