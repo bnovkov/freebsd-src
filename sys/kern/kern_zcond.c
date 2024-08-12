@@ -79,20 +79,8 @@ zcond_load_ins_points_cb(linker_file_t lf, void *arg __unused)
 static void
 zcond_init(const void *unused)
 {
-	vm_offset_t kern_start, kern_end;
-
     EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL, EVENTHANDLER_PRI_ANY);
     linker_file_foreach(zcond_load_ins_points_cb, NULL);
-
-	memset(&zcond_patching_pmap, 0, sizeof(zcond_patching_pmap));
-	PMAP_LOCK_INIT(&zcond_patching_pmap);
-	pmap_pinit(&zcond_patching_pmap);
-	kern_start = vm_map_max(kernel_map);
-	kern_end = vm_map_min(kernel_map);
-	printf("kern start %#08lx | kern end %#08lx ",
-	    kern_start, kern_end);
-	pmap_copy(&zcond_patching_pmap, kernel_pmap, kern_start,
-	    kern_end - kern_start, kern_start);
 }
 SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_init,
     NULL);

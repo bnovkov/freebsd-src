@@ -8,7 +8,6 @@
 #include <machine/zcond.h>
 
 // static bool wp;
-extern struct pmap zcond_patching_pmap;
 
 void
 zcond_before_patch(void)
@@ -24,8 +23,11 @@ zcond_after_patch(void)
 void
 zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-	ctxt->cr3 = rcr3();
-	load_cr3(zcond_patching_pmap.pm_cr3);
+    struct pmap zcond_pmap;
+	
+    ctxt->cr3 = rcr3();
+	pmap_zcond_get_pmap(&zcond_pmap);
+    load_cr3(zcond_pmap.pm_cr3);
 }
 
 void
