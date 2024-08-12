@@ -14,14 +14,14 @@
  * statement). Holds all the data neccessary to perform a safe instruction
  * patch.
  */
-struct ins_point {
+struct patch_point {
 	vm_offset_t patch_addr; /* address of the nop or jmp instruction to be
 				   patched */
 	vm_offset_t lbl_true_addr; /* address of the label to jump to when the
 				      condition is true */
 	struct zcond *
 	    zcond; /* pointer to the zcond inspected by this inspection point */
-	SLIST_ENTRY(ins_point) next;
+	SLIST_ENTRY(patch_point) next;
 	vm_offset_t
 	    mirror_addr; /* virtual address used to perform a safe patch */
 } __attribute__((packed));
@@ -32,7 +32,7 @@ struct ins_point {
 struct zcond {
 	bool enabled;
     int refcnt;
-	SLIST_HEAD(, ins_point) ins_points;
+	SLIST_HEAD(, patch_point) patch_points;
 };
 
 /*
@@ -46,13 +46,13 @@ struct zcond_false {
 	struct zcond cond;
 };
 
-#define ZCOND_ELF_SECTION "set_zcond_ins_points_set"
-#define ZCOND_LINKER_SET zcond_ins_points_set
+#define ZCOND_ELF_SECTION "set_zcond_patch_points_set"
+#define ZCOND_LINKER_SET zcond_patch_points_set
 
 /*
  * __zcond_table is an ELF section which keeps
  * all the data related to the zcond mechanism.
- * A single entry describes a single ins_point.
+ * A single entry describes a single patch_point.
  */
 #define ZCOND_TABLE_ENTRY                         \
     ".pushsection " ZCOND_ELF_SECTION ", \"aw\" \n\t" \
@@ -68,7 +68,7 @@ struct zcond_false {
     __WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET)); \
 
 /*
- * Emits a __zcond_table entry, describing one ins_point.
+ * Emits a __zcond_table entry, describing one patch_point.
  * Bakes in a nop instruction instruction, so the return value is initially
  * false.
  */
@@ -88,7 +88,7 @@ l_true:
 }
 
 /*
- * Emits a __zcond_table entry, describing one ins_point.
+ * Emits a __zcond_table entry, describing one patch_point.
  * Bakes in a jmp instruction instruction, so the return value is initially
  * true.
  */
@@ -111,7 +111,7 @@ l_true:
  */
 
 #define ZCOND_INIT(state)  { { .enabled = (state), \
-	    .refcnt = (state ? 1 : 0), .ins_points = SLIST_HEAD_INITIALIZER() } }
+	    .refcnt = (state ? 1 : 0), .patch_points = SLIST_HEAD_INITIALIZER() } }
 
 #define DEFINE_ZCOND_TRUE(name)                       \
 	struct zcond_true name = ZCOND_INIT(true)
@@ -127,7 +127,7 @@ l_true:
 
 /*
  * These macros inspect the state of a zcond (is it true or false)
- * thus instatiating an ins_point.
+ * thus instatiating an patch_point.
  */
 #define zcond_true(cond_wrapped)                                              \
 	({                                                                    \
@@ -171,12 +171,12 @@ l_true:
 void __zcond_set_enabled(struct zcond *cond, bool new_state);
 
 /*
- * Called before a single ins_point is patched.
+ * Called before a single patch_point is patched.
  */
 void zcond_before_patch(void);
 
 /*
- * Called after a single ins_point was patched.
+ * Called after a single patch_point was patched.
  */
 void zcond_after_patch(void);
 
@@ -201,7 +201,7 @@ void zcond_after_rendezvous(struct zcond_md_ctxt *);
  * to be patched with. insn[] is populated with the instruction bytes and size
  * is set to the number of instruction bytes.
  */
-void zcond_get_patch_insn(struct ins_point *ins_p, uint8_t insn[],
+void zcond_get_patch_insn(struct patch_point *ins_p, uint8_t insn[],
     size_t *size);
 
 #endif
