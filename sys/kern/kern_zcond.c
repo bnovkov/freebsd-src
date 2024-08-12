@@ -149,7 +149,6 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
     struct ins_point *p;
 	vm_page_t patch_page;
 	//struct rendezvous_data arg;
-    bool not_last; 
 
     printf("zcond_set_enabled\n");
     if(new_state == false) {
