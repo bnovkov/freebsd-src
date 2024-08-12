@@ -12342,9 +12342,9 @@ pmap_qenter_zcond(vm_page_t m, vm_offset_t sva) {
     int cache_bits;
 
     oldpte = 0;
-    pte = pmap_pte(zcond_pmap, sva);
+    pte = pmap_pte(&zcond_pmap, sva);
 
-    cache_bits = pmap_cache_bits(zcond_pmap, m->md.pat_mode, false);
+    cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
     pa = VM_PAGE_TO_PHYS(m) | cache_bits;
     if ((*pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
             oldpte |= *pte;
@@ -12360,7 +12360,7 @@ void
 pmap_qremove_zcond(vm_offset_t sva) {
     pt_entry_t *pte;
 
-    pte = pmap_pte(zcond_pmap, sva);
+    pte = pmap_pte(&zcond_pmap, sva);
     pte_clear(pte);
 }
 
