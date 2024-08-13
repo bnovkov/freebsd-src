@@ -168,8 +168,9 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 		KASSERT(INKERNEL(p->patch_addr),
 		    ("%s: inspection point patch address outside of kernel: %#08lx",
 			__func__, p->patch_addr));
-		p->mirror_addr = kva_alloc(PAGE_SIZE);
-		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
+		//p->mirror_addr = kva_alloc(PAGE_SIZE);
+		p->mirror_addr = pmap_zcond_get_va();
+        patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 		KASSERT(patch_page != NULL, ("patch page is NULL"));
 
 		pmap_qenter_zcond(patch_page, p->mirror_addr);
