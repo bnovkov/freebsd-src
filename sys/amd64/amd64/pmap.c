@@ -12350,7 +12350,7 @@ pmap_zcond_alloc_kva(void) {
         }
     }
 
-    pmap_update_pde_invalidate(&zcond_pmap, zcond_va_start, pde);
+    pmap_update_pde_invalidate(&zcond_pmap, zcond_va_start, *pde);
     pmap_invalidate_range(&zcond_pmap, zcond_va_start, zcond_va_start + ZCOND_VA_RANGE_SIZE);
     printf("zcond va range: %#08lx - %#08lx\n", zcond_va_start, zcond_va_start + ZCOND_VA_RANGE_SIZE);
 }
