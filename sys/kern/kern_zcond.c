@@ -187,7 +187,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		pmap_qremove_zcond(p->mirror_addr);
-		kva_free(p->mirror_addr, PAGE_SIZE);
+		//kva_free(p->mirror_addr, PAGE_SIZE);
 	}
 }
 
