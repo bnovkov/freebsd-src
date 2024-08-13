@@ -12408,7 +12408,7 @@ pmap_zcond_get_pmap(struct pmap* pm) {
    memcpy(pm, &zcond_pmap, sizeof(zcond_pmap)); 
 }
 
-vm_offset_t pmap_zcond_get_va() {
+vm_offset_t pmap_zcond_get_va(void) {
     vm_offset_t va;
     pt_entry_t *pte;
     uint64_t PG_V;
