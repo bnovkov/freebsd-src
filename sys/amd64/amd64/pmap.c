@@ -12366,7 +12366,7 @@ pmap_qenter_zcond(vm_page_t m) {
     }
 
     if (__predict_false((oldpte & X86_PG_V) != 0))
-            pmap_invalidate_range(kernel_pmap, zcond_patch_va, zcond_patch_va + PAGE_SIZE);
+            pmap_invalidate_range(&zcond_pmap, zcond_patch_va, zcond_patch_va + PAGE_SIZE);
 }
 
 void
