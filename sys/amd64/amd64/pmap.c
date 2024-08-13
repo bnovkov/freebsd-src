@@ -12318,28 +12318,14 @@ DB_SHOW_COMMAND(ptpages, pmap_ptpages)
  * zcond functionality *
 ************************/
 struct pmap zcond_pmap;
-vm_offset_t zcond_va_start;
+vm_offset_t zcond_patch_va;
 
 #define ZCOND_VA_RANGE_SIZE 4 * 0x200000 /* 4 MB */
-
-/*
- * Return a random, 2MB aligned address from the DMAP range
-*/
-static inline vm_offset_t
-dmap_random_va(void) {
-    return ((DMAP_MIN_ADDRESS + arc4random() % (DMAP_MAX_ADDRESS - DMAP_MIN_ADDRESS)) & ~(0x200000 - 1));    
-}
-
-static void
-pmap_zcond_alloc_kva(void) {
-    zcond_va_start = dmap_random_va();
-    vmem_alloc(kernel_arena, ZCOND_VA_RANGE_SIZE, M_WAITOK | M_FIRSTFIT, &zcond_va_start); 
-    printf("zcond va range: %#08lx - %#08lx\n", zcond_va_start, zcond_va_start + ZCOND_VA_RANGE_SIZE);
-}
 
 static void
 pmap_zcond_init(const void *unused) {
     vm_offset_t kern_start, kern_end;
+    vm_page_t dummy_page;
 
     kern_start = virtual_avail;
     kern_end = kernel_vm_end;
@@ -12351,18 +12337,24 @@ pmap_zcond_init(const void *unused) {
 	    kern_start, kern_end);
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
-    pmap_zcond_alloc_kva();
+
+    zcond_patch_va = kva_alloc(PAGE_SIZE);
+    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
+    pmap_qenter(zcond_patch_va, &dummy_page, 1);
+    pmap_copy(&zcond_pmap, kernel_pmap, zcond_patch_va, PAGE_SIZE, zcond_patch_va);
+    pmap_qremove(zcond_patch_va, 1);
+    kva_free(zcond_patch_va, PAGE_SIZE);
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, pmap_zcond_init, NULL);
 
 void
-pmap_qenter_zcond(vm_page_t m, vm_offset_t sva) {
+pmap_qenter_zcond(vm_page_t m) {
     pt_entry_t oldpte, pa;
     pt_entry_t *pte;
     int cache_bits;
 
     oldpte = 0;
-    pte = pmap_pte(&zcond_pmap, sva);
+    pte = pmap_pte(&zcond_pmap, zcond_patch_va);
 
     cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
     pa = VM_PAGE_TO_PHYS(m) | cache_bits;
@@ -12373,14 +12365,14 @@ pmap_qenter_zcond(vm_page_t m, vm_offset_t sva) {
     }
 
     if (__predict_false((oldpte & X86_PG_V) != 0))
-            pmap_invalidate_range(kernel_pmap, sva, sva + PAGE_SIZE);
+            pmap_invalidate_range(kernel_pmap, zcond_patch_va, zcond_patch_va + PAGE_SIZE);
 }
 
 void
-pmap_qremove_zcond(vm_offset_t sva) {
+pmap_qremove_zcond(void) {
     pt_entry_t *pte;
 
-    pte = pmap_pte(&zcond_pmap, sva);
+    pte = pmap_pte(&zcond_pmap, zcond_patch_va);
     pte_clear(pte);
 }
 
@@ -12390,22 +12382,7 @@ pmap_zcond_get_pmap(struct pmap* pm) {
 }
 
 vm_offset_t pmap_zcond_get_va(void) {
-    vm_offset_t va;
-    pt_entry_t *pte;
-    uint64_t PG_V;
-   
-    PG_V = pmap_valid_bit(&zcond_pmap);
-    
-    while(1) {
-        va = (zcond_va_start + arc4random() % ZCOND_VA_RANGE_SIZE) & ~PAGE_MASK;
-        pte = pmap_pte(&zcond_pmap, va);
-
-        if(pte == NULL || (*pte & PG_V) != 0) {
-            continue;
-        }
-
-        return va;
-    }
+    return zcond_patch_va;
 }
 
 #endif
