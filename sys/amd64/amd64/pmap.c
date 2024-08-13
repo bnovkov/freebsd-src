@@ -12333,7 +12333,7 @@ dmap_random_va(void) {
 static void
 pmap_zcond_alloc_kva(void) {
     zcond_va_start = dmap_random_va();
-    vmem_alloc(kernel_arena, ZCOND_VA_RANGE_SIZE, M_WAITOK, zcond_va_start); 
+    vmem_alloc(kernel_arena, ZCOND_VA_RANGE_SIZE, M_WAITOK, &zcond_va_start); 
     printf("zcond va range: %#08lx - %#08lx\n", zcond_va_start, zcond_va_start + ZCOND_VA_RANGE_SIZE);
 }
 
