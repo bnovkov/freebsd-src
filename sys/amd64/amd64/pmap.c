@@ -12333,11 +12333,9 @@ dmap_random_va(void) {
 static void
 pmap_zcond_alloc_kva(void) {
     pd_entry_t *pde;
-    struct rwlock *lock;
     uint64_t PG_V;
     bool done;
 
-    lock = NULL;
     done = false;
     PG_V = pmap_valid_bit(&zcond_pmap);
     
