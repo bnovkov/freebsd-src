@@ -12320,7 +12320,7 @@ DB_SHOW_COMMAND(ptpages, pmap_ptpages)
 struct pmap zcond_pmap;
 vm_offset_t zcond_va_start;
 
-#define ZCOND_VA_RANGE_SIZE 0x200000
+#define ZCOND_VA_RANGE_SIZE 4 * 0x200000 /* 4 MB */
 
 /*
  * Return a random, 2MB aligned address from the DMAP range
