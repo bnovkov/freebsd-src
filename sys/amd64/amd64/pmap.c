@@ -12327,7 +12327,7 @@ vm_offset_t zcond_va_start;
 */
 static inline vm_offset_t
 dmap_random_va(void) {
-    return ((DMAP_MIN_ADDRESS + arc4random() % (DMAP_MAX_ADDRESS - DMAP_MIN_ADDRESS)) & ~0x200000);    
+    return ((DMAP_MIN_ADDRESS + arc4random() % (DMAP_MAX_ADDRESS - DMAP_MIN_ADDRESS)) & ~(0x200000 - 1));    
 }
 
 static void
