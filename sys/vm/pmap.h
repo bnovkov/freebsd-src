@@ -169,6 +169,7 @@ void		 pmap_zero_page_area(vm_page_t, int off, int size);
 void 		 pmap_qenter_zcond(vm_page_t m, vm_offset_t va);
 void 		 pmap_qremove_zcond(vm_offset_t va);
 void         pmap_zcond_get_pmap(struct pmap *);
+vm_offset_t  pmap_zcond_get_va();
 
 #define	pmap_resident_count(pm)	((pm)->pm_stats.resident_count)
 #define	pmap_wired_count(pm)	((pm)->pm_stats.wired_count)
