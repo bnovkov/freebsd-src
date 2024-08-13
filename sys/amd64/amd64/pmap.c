@@ -12339,9 +12339,10 @@ pmap_zcond_init(const void *unused) {
 
     zcond_patch_va = kva_alloc(PAGE_SIZE);
     dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
-    pmap_qenter(zcond_patch_va, &dummy_page, 1);
-    pmap_copy(&zcond_pmap, kernel_pmap, zcond_patch_va, PAGE_SIZE, zcond_patch_va);
-    pmap_qremove(zcond_patch_va, 1);
+    //pmap_qenter(zcond_patch_va, &dummy_page, 1);
+    //pmap_copy(&zcond_pmap, kernel_pmap, zcond_patch_va, PAGE_SIZE, zcond_patch_va);
+    //pmap_qremove(zcond_patch_va, 1);
+    pmap_qenter_zcond(dummy_page);
     kva_free(zcond_patch_va, PAGE_SIZE);
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, pmap_zcond_init, NULL);
