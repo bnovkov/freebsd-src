@@ -132,6 +132,7 @@
 #include <sys/sched.h>
 #include <sys/sysctl.h>
 #include <sys/smp.h>
+#include <sys/libkern.h>
 #ifdef DDB
 #include <sys/kdb.h>
 #include <ddb/ddb.h>
@@ -12317,6 +12318,24 @@ DB_SHOW_COMMAND(ptpages, pmap_ptpages)
  * zcond functionality *
 ************************/
 struct pmap zcond_pmap;
+vm_offset_t zcond_va_start;
+
+#define ZCOND_VA_RANGE_SIZE 0x200000
+
+/*
+ * Return a random, 2MB aligned address from the DMAP range
+*/
+static inline vm_offset_t
+dmap_random_va(void) {
+    return ((DMAP_MIN_ADDRESS + arc4random() % (DMAP_MAX_ADDRESS - DMAP_MIN_ADDRESS)) & ~(0x200000 - 1));    
+}
+
+static void
+pmap_zcond_alloc_kva(void) {
+    zcond_va_start = dmap_random_va();
+    vmem_alloc(kernel_arena, ZCOND_VA_RANGE_SIZE, M_WAITOK | M_FIRSTFIT, &zcond_va_start); 
+    printf("zcond va range: %#08lx - %#08lx\n", zcond_va_start, zcond_va_start + ZCOND_VA_RANGE_SIZE);
+}
 
 static void
 pmap_zcond_init(const void *unused) {
@@ -12332,6 +12351,7 @@ pmap_zcond_init(const void *unused) {
 	    kern_start, kern_end);
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
+    pmap_zcond_alloc_kva();
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, pmap_zcond_init, NULL);
 
@@ -12367,6 +12387,25 @@ pmap_qremove_zcond(vm_offset_t sva) {
 void
 pmap_zcond_get_pmap(struct pmap* pm) {
    memcpy(pm, &zcond_pmap, sizeof(zcond_pmap)); 
+}
+
+vm_offset_t pmap_zcond_get_va(void) {
+    vm_offset_t va;
+    pt_entry_t *pte;
+    uint64_t PG_V;
+   
+    PG_V = pmap_valid_bit(&zcond_pmap);
+    
+    while(1) {
+        va = (zcond_va_start + arc4random() % ZCOND_VA_RANGE_SIZE) & ~PAGE_MASK;
+        pte = pmap_pte(&zcond_pmap, va);
+
+        if(pte == NULL || (*pte & PG_V) != 0) {
+            continue;
+        }
+
+        return va;
+    }
 }
 
 #endif
