@@ -127,7 +127,6 @@ zcond_patch(struct zcond *cond, bool new_state)
 		    &insn[0], insn_size);
 		zcond_after_patch();
 
-        pmap_qremove_zcond();
 	}
 	cond->enabled = new_state;
 }
@@ -195,6 +194,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	smp_rendezvous(NULL, rendezvous_cb, NULL, &arg);
 	zcond_after_rendezvous(&ctxt);
 
+    pmap_qremove_zcond();
 	/*SLIST_FOREACH(p, &cond->patch_points, next) {
 		pmap_qremove_zcond(p->mirror_addr);
 		//kva_free(p->mirror_addr, PAGE_SIZE);
