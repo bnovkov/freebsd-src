@@ -12369,7 +12369,7 @@ pmap_qenter_zcond(vm_page_t m) {
 }
 
 void
-pmap_qremove_zcond() {
+pmap_qremove_zcond(void) {
     pt_entry_t *pte;
 
     pte = pmap_pte(&zcond_pmap, zcond_patch_va);
