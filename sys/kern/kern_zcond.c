@@ -101,6 +101,7 @@ zcond_patch(struct zcond *cond, bool new_state)
 {
 	struct patch_point *p;
 	vm_offset_t mirror_addr;
+	vm_page_t patch_page;
     unsigned char insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
 	int i;
@@ -146,7 +147,6 @@ void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
 	//struct patch_point *p;
-	vm_page_t patch_page;
 	// struct rendezvous_data arg;
 
 	printf("zcond_set_enabled\n");
