@@ -100,9 +100,12 @@ static void
 zcond_patch(struct zcond *cond, bool new_state)
 {
 	struct patch_point *p;
-	unsigned char insn[ZCOND_MAX_INSN_SIZE];
+	vm_offset_t mirror_addr;
+    unsigned char insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
 	int i;
+
+    mirror_addr = pmap_zcond_get_va();
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		zcond_get_patch_insn(p, insn, &insn_size);
@@ -113,10 +116,17 @@ zcond_patch(struct zcond *cond, bool new_state)
 		}
 		printf("\n");
 
+        patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
+        pmap_qenter_zcond(patch_page);
+        printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
+		    mirror_addr);
+
 		zcond_before_patch();
-		memcpy((void *)(p->mirror_addr + (p->patch_addr & PAGE_MASK)),
+		memcpy((void *)(mirror_addr + (p->patch_addr & PAGE_MASK)),
 		    &insn[0], insn_size);
 		zcond_after_patch();
+
+        pmap_qremove_zcond();
 	}
 	cond->enabled = new_state;
 }
@@ -135,7 +145,7 @@ rendezvous_cb(void *arg)
 void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
-	struct patch_point *p;
+	//struct patch_point *p;
 	vm_page_t patch_page;
 	// struct rendezvous_data arg;
 
@@ -164,7 +174,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 	 * Map the page containing the instruction to be patched
 	 * into a new virtual address range in the CPU private pmap.
 	 */
-	SLIST_FOREACH(p, &cond->patch_points, next) {
+/*	SLIST_FOREACH(p, &cond->patch_points, next) {
 		KASSERT(INKERNEL(p->patch_addr),
 		    ("%s: inspection point patch address outside of kernel: %#08lx",
 			__func__, p->patch_addr));
@@ -178,17 +188,17 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 		// (~PAGE_MASK), false);
 		printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
 		    p->mirror_addr);
-	}
+	}*/
 
 	struct zcond_md_ctxt ctxt;
 	zcond_before_rendezvous(&ctxt);
 	smp_rendezvous(NULL, rendezvous_cb, NULL, &arg);
 	zcond_after_rendezvous(&ctxt);
 
-	SLIST_FOREACH(p, &cond->patch_points, next) {
+	/*SLIST_FOREACH(p, &cond->patch_points, next) {
 		pmap_qremove_zcond(p->mirror_addr);
 		//kva_free(p->mirror_addr, PAGE_SIZE);
-	}
+	}*/
 }
 
 /*
