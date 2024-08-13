@@ -12332,27 +12332,8 @@ dmap_random_va(void) {
 
 static void
 pmap_zcond_alloc_kva(void) {
-    pd_entry_t *pde;
-    uint64_t PG_V;
-    bool done;
-
-    done = false;
-    PG_V = pmap_valid_bit(&zcond_pmap);
-    
-    while(!done) {
-        zcond_va_start = dmap_random_va();
-        pde = pmap_pde(&zcond_pmap, zcond_va_start);
-        if(pde == NULL || (*pde & PG_V) != 0) {
-            continue;
-        }
-
-        if(pmap_demote_pde(&zcond_pmap, pde, zcond_va_start)) {
-            done = true;
-        }
-    }
-
-    pmap_update_pde_invalidate(&zcond_pmap, zcond_va_start, *pde);
-    pmap_invalidate_range(&zcond_pmap, zcond_va_start, zcond_va_start + ZCOND_VA_RANGE_SIZE);
+    zcond_va_start = dmap_random_va();
+    vmem_alloc(kernel_arena, ZCOND_VA_RANGE_SIZE, M_WAITOK, zcond_va_start); 
     printf("zcond va range: %#08lx - %#08lx\n", zcond_va_start, zcond_va_start + ZCOND_VA_RANGE_SIZE);
 }
 
