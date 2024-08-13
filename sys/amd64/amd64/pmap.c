@@ -12333,7 +12333,7 @@ pmap_zcond_init(const void *unused) {
 	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
 	PMAP_LOCK_INIT(&zcond_pmap);
 	pmap_pinit(&zcond_pmap);
-	printf("kern start %#08lx | kern end %#08lx ",
+	printf("kern start %#08lx | kern end %#08lx\n",
 	    kern_start, kern_end);
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
@@ -12343,7 +12343,8 @@ pmap_zcond_init(const void *unused) {
     //pmap_qenter(zcond_patch_va, &dummy_page, 1);
     //pmap_copy(&zcond_pmap, kernel_pmap, zcond_patch_va, PAGE_SIZE, zcond_patch_va);
     //pmap_qremove(zcond_patch_va, 1);
-    pmap_qenter_zcond(dummy_page);
+    pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
+    //pmap_qenter_zcond(dummy_page);
     kva_free(zcond_patch_va, PAGE_SIZE);
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, pmap_zcond_init, NULL);
