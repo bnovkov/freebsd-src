@@ -189,7 +189,7 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 
 	struct rendezvous_data arg = { .patching_cpu = curcpu,
 		.cond = cond,
-		.new_state = new_state 
+		.new_state = new_state, 
         .md_ctxt = &ctxt };
 	
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown, &arg);
