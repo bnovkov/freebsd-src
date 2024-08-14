@@ -82,7 +82,7 @@ struct rendezvous_data {
 	int patching_cpu;
 	struct zcond *cond;
 	bool new_state;
-    struct zcond_md_ctxt *md_ctxt;
+	struct zcond_md_ctxt *md_ctxt;
 };
 
 /*
@@ -94,22 +94,21 @@ zcond_patch(struct zcond *cond, bool new_state)
 	struct patch_point *p;
 	vm_offset_t mirror_addr;
 	vm_page_t patch_page;
-    unsigned char insn[ZCOND_MAX_INSN_SIZE];
+	unsigned char insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
 
-    mirror_addr = pmap_zcond_get_va();
+	mirror_addr = pmap_zcond_get_va();
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		zcond_get_patch_insn(p, insn, &insn_size);
 
-        patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-        pmap_qenter_zcond(patch_page);
+		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
+		pmap_qenter_zcond(patch_page);
 
 		zcond_before_patch();
 		memcpy((void *)(mirror_addr + (p->patch_addr & PAGE_MASK)),
 		    &insn[0], insn_size);
 		zcond_after_patch();
-
 	}
 	cond->enabled = new_state;
 }
@@ -120,8 +119,8 @@ rendezvous_setup(void *arg)
 	struct rendezvous_data *data;
 	data = (struct rendezvous_data *)arg;
 
-    if (data->patching_cpu == curcpu) {
-        zcond_before_rendezvous(data->md_ctxt);
+	if (data->patching_cpu == curcpu) {
+		zcond_before_rendezvous(data->md_ctxt);
 	}
 }
 
@@ -142,8 +141,8 @@ rendezvous_teardown(void *arg)
 	struct rendezvous_data *data;
 	data = (struct rendezvous_data *)arg;
 
-    if (data->patching_cpu == curcpu) {
-        zcond_after_rendezvous(data->md_ctxt);
+	if (data->patching_cpu == curcpu) {
+		zcond_after_rendezvous(data->md_ctxt);
 	}
 }
 
@@ -170,12 +169,13 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 
 	struct rendezvous_data arg = { .patching_cpu = curcpu,
 		.cond = cond,
-		.new_state = new_state, 
-        .md_ctxt = &ctxt };
-	
-	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown, &arg);
+		.new_state = new_state,
+		.md_ctxt = &ctxt };
+
+	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
+	    &arg);
 	zcond_after_rendezvous(&ctxt);
-    pmap_qremove_zcond();
+	pmap_qremove_zcond();
 }
 
 /*
