@@ -91,6 +91,7 @@ struct rendezvous_data {
 	int patching_cpu;
 	struct zcond *cond;
 	bool new_state;
+    struct zcond_md_ctxt *md_ctxt;
 };
 
 /*
@@ -132,7 +133,18 @@ zcond_patch(struct zcond *cond, bool new_state)
 }
 
 static void
-rendezvous_cb(void *arg)
+rendezvous_setup(void *arg)
+{
+	struct rendezvous_data *data;
+	data = (struct rendezvous_data *)arg;
+
+    if (data->patching_cpu == curcpu) {
+        zcond_before_rendezvous(data->md_ctxt);
+	}
+}
+
+static void
+rendezvous_action(void *arg)
 {
 	struct rendezvous_data *data;
 	data = (struct rendezvous_data *)arg;
@@ -142,11 +154,21 @@ rendezvous_cb(void *arg)
 	}
 }
 
+static void
+rendezvous_teardown(void *arg)
+{
+	struct rendezvous_data *data;
+	data = (struct rendezvous_data *)arg;
+
+    if (data->patching_cpu == curcpu) {
+        zcond_after_rendezvous(data->md_ctxt);
+	}
+}
+
 void
 __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
-	//struct patch_point *p;
-	// struct rendezvous_data arg;
+	struct zcond_md_ctxt ctxt;
 
 	printf("zcond_set_enabled\n");
 	if (new_state == false) {
@@ -167,38 +189,12 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 
 	struct rendezvous_data arg = { .patching_cpu = curcpu,
 		.cond = cond,
-		.new_state = new_state };
-
-	/*
-	 * Map the page containing the instruction to be patched
-	 * into a new virtual address range in the CPU private pmap.
-	 */
-/*	SLIST_FOREACH(p, &cond->patch_points, next) {
-		KASSERT(INKERNEL(p->patch_addr),
-		    ("%s: inspection point patch address outside of kernel: %#08lx",
-			__func__, p->patch_addr));
-		//p->mirror_addr = kva_alloc(PAGE_SIZE);
-		p->mirror_addr = pmap_zcond_get_va();
-        patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-		KASSERT(patch_page != NULL, ("patch page is NULL"));
-
-		pmap_qenter_zcond(patch_page, p->mirror_addr);
-		// pmap_invalidate_page(kernel_pmap, p->patch_addr &
-		// (~PAGE_MASK), false);
-		printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
-		    p->mirror_addr);
-	}*/
-
-	struct zcond_md_ctxt ctxt;
-	zcond_before_rendezvous(&ctxt);
-	smp_rendezvous(NULL, rendezvous_cb, NULL, &arg);
+		.new_state = new_state 
+        .md_ctxt = &ctxt };
+	
+	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown, &arg);
 	zcond_after_rendezvous(&ctxt);
-
     pmap_qremove_zcond();
-	/*SLIST_FOREACH(p, &cond->patch_points, next) {
-		pmap_qremove_zcond(p->mirror_addr);
-		//kva_free(p->mirror_addr, PAGE_SIZE);
-	}*/
 }
 
 /*
