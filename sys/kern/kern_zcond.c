@@ -38,18 +38,10 @@ zcond_load_patch_points(linker_file_t lf)
 
 	if (linker_file_lookup_set(lf, __XSTRING(ZCOND_LINKER_SET), &begin,
 		&end, NULL) == 0) {
-		printf("being %#08lx end %#08lx\n", (unsigned long)begin,
-		    (unsigned long)end);
 		for (ins_p = begin; ins_p < end; ins_p++) {
 			owning_zcond = ins_p->zcond;
-			// printf("ins_p %#08lx zcond %#08lx\n",(unsigned long)
-			// ins_p, (unsigned long) owning_zcond);
 
 			if (owning_zcond->patch_points.slh_first == NULL) {
-				printf(
-				    "init list %#08lx | inspection point at %#08lx\n",
-				    (unsigned long)owning_zcond,
-				    (unsigned long)ins_p);
 				SLIST_INIT(&owning_zcond->patch_points);
 			}
 
@@ -62,7 +54,6 @@ zcond_load_patch_points(linker_file_t lf)
 static void
 zcond_kld_load(void *arg __unused, struct linker_file *lf)
 {
-	printf("kldload zcond\n");
 	zcond_load_patch_points(lf);
 }
 
@@ -112,16 +103,8 @@ zcond_patch(struct zcond *cond, bool new_state)
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		zcond_get_patch_insn(p, insn, &insn_size);
 
-		printf("patch ins point %#08lx with: ", p->patch_addr);
-		for (i = 0; i < insn_size; i++) {
-			printf("%02hhx ", insn[i]);
-		}
-		printf("\n");
-
         patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
         pmap_qenter_zcond(patch_page);
-        printf("patch_point %#08lx mapped to %#08lx\n", p->patch_addr,
-		    mirror_addr);
 
 		zcond_before_patch();
 		memcpy((void *)(mirror_addr + (p->patch_addr & PAGE_MASK)),
@@ -170,7 +153,6 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 {
 	struct zcond_md_ctxt ctxt;
 
-	printf("zcond_set_enabled\n");
 	if (new_state == false) {
 		if (refcount_release_if_not_last(&cond->refcnt)) {
 			/* refcount > 1 */

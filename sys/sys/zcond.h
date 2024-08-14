@@ -155,7 +155,7 @@ l_true:
 
 /*
  * These macros inspect the state of a zcond (is it true or false)
- * thus instatiating an patch_point.
+ * thus instatiating a patch_point.
  */
 #define zcond_true(cond_wrapped)                                              \
 	({                                                                    \
