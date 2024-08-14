@@ -12319,8 +12319,6 @@ DB_SHOW_COMMAND(ptpages, pmap_ptpages)
 struct pmap zcond_pmap;
 vm_offset_t zcond_patch_va;
 
-#define ZCOND_VA_RANGE_SIZE 4 * 0x200000 /* 4 MB */
-
 static void
 pmap_zcond_init(const void *unused) {
     vm_offset_t kern_start, kern_end;
@@ -12332,18 +12330,12 @@ pmap_zcond_init(const void *unused) {
 	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
 	PMAP_LOCK_INIT(&zcond_pmap);
 	pmap_pinit(&zcond_pmap);
-	printf("kern start %#08lx | kern end %#08lx\n",
-	    kern_start, kern_end);
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
 	    kern_end - kern_start, kern_start);
 
     zcond_patch_va = kva_alloc(PAGE_SIZE);
     dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
-    //pmap_qenter(zcond_patch_va, &dummy_page, 1);
-    //pmap_copy(&zcond_pmap, kernel_pmap, zcond_patch_va, PAGE_SIZE, zcond_patch_va);
-    //pmap_qremove(zcond_patch_va, 1);
     pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
-    //pmap_qenter_zcond(dummy_page);
     kva_free(zcond_patch_va, PAGE_SIZE);
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, pmap_zcond_init, NULL);
