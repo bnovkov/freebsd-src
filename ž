@@ -25,16 +25,6 @@
  * a corresponding instruction (nop or jump). Keep in mind that this is an expensive operation, since all cpus except
  * the one performing the patch need to be halted.
  *
- *
- * To use a zcond, first define it with: ZCOND_DEFINE_TRUE(name) or ZCOND_DEFINE_FALSE(name)
- * Alternatively, declare it with ZCOND_DECLARE_TRUE(name) or ZCOND_DECLARE_FALSE(name).
- * Then initialize it with ZCOND_INIT(true) or ZCOND_INIT(false).
- *
- * Use zcond_false(cond) or zcond_true(cond) to inspect the state of a zcond.
- * 
- * To flip the state of a zcond, use zcond_enable(cond) and zcond_disable(cond).
- * Zconds are reference counted, so zcond_enable() increments the reference count while zcond_disable() decrements it.
- *
  * This header includes the interface intended to be used by consumers, as well as some MI code.
  * MD support can be found in sys/<arch>/include/zcond.h and sys/<arch>/<arch>/zcond_machdep.c
 */
@@ -52,6 +42,8 @@ struct patch_point {
 	struct zcond *
 	    zcond; /* pointer to the zcond inspected by this inspection point */
 	SLIST_ENTRY(patch_point) next;
+	vm_offset_t
+	    mirror_addr; /* virtual address used to perform a safe patch */
 } __attribute__((packed));
 
 /*
@@ -87,6 +79,7 @@ struct zcond_false {
 	".quad 1b \n\t"                                   \
 	".quad %l[l_true] \n\t"                           \
 	".quad %c0 \n\t"                                  \
+	".quad 0 \n\t"                                    \
 	".quad 0 \n\t"                                    \
 	".popsection \n\t"
 
