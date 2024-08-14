@@ -96,7 +96,6 @@ zcond_patch(struct zcond *cond, bool new_state)
 	vm_page_t patch_page;
     unsigned char insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
-	int i;
 
     mirror_addr = pmap_zcond_get_va();
 
