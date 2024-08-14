@@ -11,33 +11,38 @@
 
 /*
  * The zcond interface provides a low-cost mechanism for conditional execution.
- * It is applicable in situations where branch selection is performed by inspecting
- * the state of a single boolean flag i.e blocks of the following form:
- *  if(flag) {
+ * It is applicable in situations where branch selection is performed by
+ * inspecting the state of a single boolean flag i.e blocks of the following
+ * form: if(flag) {
  *      // do something
  *  }
  *
- * This kind of block is compiled into some sequence of load, test, jump assembly instructions.
- * The low cost provided by zcond is achieved by "baking in" a single branch direction at compile time.
- * This means outputting either an unconditional jump or a nop, while the memory access is avoided.
- * 
- * When the time comes to switch the branch direction, the current instruction (jump or nop) is patched at runtime to
- * a corresponding instruction (nop or jump). Keep in mind that this is an expensive operation, since all cpus except
- * the one performing the patch need to be halted.
+ * This kind of block is compiled into some sequence of load, test, jump
+ * assembly instructions. The low cost provided by zcond is achieved by "baking
+ * in" a single branch direction at compile time. This means outputting either
+ * an unconditional jump or a nop, while the memory access is avoided.
+ *
+ * When the time comes to switch the branch direction, the current instruction
+ * (jump or nop) is patched at runtime to a corresponding instruction (nop or
+ * jump). Keep in mind that this is an expensive operation, since all cpus
+ * except the one performing the patch need to be halted.
  *
  *
- * To use a zcond, first define it with: ZCOND_DEFINE_TRUE(name) or ZCOND_DEFINE_FALSE(name)
- * Alternatively, declare it with ZCOND_DECLARE_TRUE(name) or ZCOND_DECLARE_FALSE(name).
- * Then initialize it with ZCOND_INIT(true) or ZCOND_INIT(false).
+ * To use a zcond, first define it with: ZCOND_DEFINE_TRUE(name) or
+ * ZCOND_DEFINE_FALSE(name) Alternatively, declare it with
+ * ZCOND_DECLARE_TRUE(name) or ZCOND_DECLARE_FALSE(name). Then initialize it
+ * with ZCOND_INIT(true) or ZCOND_INIT(false).
  *
  * Use zcond_false(cond) or zcond_true(cond) to inspect the state of a zcond.
- * 
- * To flip the state of a zcond, use zcond_enable(cond) and zcond_disable(cond).
- * Zconds are reference counted, so zcond_enable() increments the reference count while zcond_disable() decrements it.
  *
- * This header includes the interface intended to be used by consumers, as well as some MI code.
- * MD support can be found in sys/<arch>/include/zcond.h and sys/<arch>/<arch>/zcond_machdep.c
-*/
+ * To flip the state of a zcond, use zcond_enable(cond) and zcond_disable(cond).
+ * Zconds are reference counted, so zcond_enable() increments the reference
+ * count while zcond_disable() decrements it.
+ *
+ * This header includes the interface intended to be used by consumers, as well
+ * as some MI code. MD support can be found in sys/<arch>/include/zcond.h and
+ * sys/<arch>/<arch>/zcond_machdep.c
+ */
 
 /*
  * Describes a single inspection of the zcond state (performed with an if
@@ -90,9 +95,10 @@ struct zcond_false {
 	".quad 0 \n\t"                                    \
 	".popsection \n\t"
 
-#define ZCOND_SET_START_STOP                              \
+#define ZCOND_SET_START_STOP do {                              \
 	__WEAK(__CONCAT(__start_set_, ZCOND_LINKER_SET)); \
-	__WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET));
+	__WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET)); \
+    }while(0);
 
 /*
  * Emits a __zcond_table entry, describing one patch_point.
