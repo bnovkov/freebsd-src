@@ -114,6 +114,7 @@ struct zcond_patch_arg {
 	int patching_cpu;
 	struct zcond *cond;
 	struct zcond_md_ctxt *md_ctxt;
+    bool enable;
 };
 
 /*
