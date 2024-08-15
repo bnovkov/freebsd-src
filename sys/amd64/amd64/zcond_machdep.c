@@ -81,7 +81,7 @@ zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 	uint8_t *patch_addr;
 	vm_offset_t offset;
 
-    patch_addr = (uint8_t *)p->patch_addr
+    patch_addr = (uint8_t *)p->patch_addr;
 	if (*patch_addr == nop_short_bytes[0]) {
 		/* two byte nop */
 		*size = ZCOND_INSN_SHORT_SIZE;
