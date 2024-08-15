@@ -184,8 +184,10 @@ __zcond_toggle(struct zcond *cond, bool enable)
 
     if(enable && refcount_acquire(&cond->refcnt) > 0) {
         return;
-    } else if(!enable && !refcount_release(&cond->refcnt)) {
+    } else if(!enable && (refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) == 0)) {
         return;
+    } else if(!enable && refcount_load(&cond->refcnt) == 1) {
+        refcount_release(&cond->refcnt);
     }
 
 	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
