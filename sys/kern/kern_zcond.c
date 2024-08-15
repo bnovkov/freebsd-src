@@ -95,7 +95,7 @@ zcond_patch(struct zcond *cond, bool enable)
 {
 	struct patch_point *p;
 	vm_page_t patch_page;
-	unsigned char insn[ZCOND_MAX_INSN_SIZE];
+	uint8_t insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
@@ -177,7 +177,6 @@ __zcond_toggle(struct zcond *cond, bool enable)
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
 	zcond_after_rendezvous(&ctxt);
-	pmap_qremove_zcond();
 }
 
 /*
