@@ -1,5 +1,7 @@
 #include <sys/types.h>
 #include <sys/zcond.h>
+#include <sys/param.h>
+#include <sys/lock.h>
 #include <sys/mutex.h>
 
 #include <vm/vm.h>
@@ -8,6 +10,7 @@
 
 #include <machine/cpufunc.h>
 #include <machine/zcond.h>
+#include <vm/vm_page.h>
 #include <machine/pmap.h>
 
 struct pmap zcond_pmap;
