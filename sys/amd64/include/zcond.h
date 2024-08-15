@@ -7,8 +7,8 @@
 
 /* from Intel® 64 and IA-32 Architectures Software Developer’s Manual, Volume 2B
  * 4-165 */
-static char nop_short_bytes[] = { 0x66, 0x90 };
-static char nop_long_bytes[] = { 0x0f, 0x1f, 0x44, 0x00, 0x00 };
+static uint8_t nop_short_bytes[] = { 0x66, 0x90 };
+static uint8_t nop_long_bytes[] = { 0x0f, 0x1f, 0x44, 0x00, 0x00 };
 
 #define ZCOND_NOP_ASM     \
 	".byte 0x0f \n\t" \
