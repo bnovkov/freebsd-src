@@ -182,12 +182,15 @@ __zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-    if(enable && refcount_acquire(&cond->refcnt) > 0) {
+    if(enable && refcount_acquire(&cond->refcnt) > 1) {
         return;
-    } else if(!enable && (refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) == 0)) {
+    } else if(!enable && !refcount_release_if_not_last(&cond->refcnt)) {
+        panic("attempt to disable already disabled zcond");
         return;
-    } else if(!enable && refcount_load(&cond->refcnt) == 1) {
-        refcount_release(&cond->refcnt);
+    }
+
+    if(!enable && zcond_load(&cond->refcnt) > 1) {
+        return;
     }
 
 	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
