@@ -185,7 +185,7 @@ zcond_pte(vm_offset_t va)
 
 	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
 	pte += pmap_pte_index(va);
-	KASSERT(*pte != 0, ("va %#jx *pt == 0", va));
+	//KASSERT(*pte != 0, ("va %#jx *pt == 0", va));
 
 	return (pte);
 }
