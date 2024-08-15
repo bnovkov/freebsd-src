@@ -189,7 +189,7 @@ __zcond_toggle(struct zcond *cond, bool enable)
 
 	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
 		.cond = cond,
-		.md_ctxt = &ctxt 
+		.md_ctxt = &ctxt, 
         .enable = enable };
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
