@@ -116,27 +116,7 @@ jmp:
 ***********************/
 
 static vm_offset_t zcond_patch_va;
-
-static void
-zcond_pmap_init(const void *unused) {
-    vm_offset_t kern_start, kern_end;
-    vm_page_t dummy_page;
-
-    kern_start = virtual_avail;
-    kern_end = kernel_vm_end;
-
-	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
-	PMAP_LOCK_INIT(&zcond_pmap);
-	pmap_pinit(&zcond_pmap);
-	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
-	    kern_end - kern_start, kern_start);
-
-    zcond_patch_va = kva_alloc(PAGE_SIZE);
-    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
-    pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
-    kva_free(zcond_patch_va, PAGE_SIZE);
-}
-SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_pmap_init, NULL);
+static pt_entry_t *zcond_patch_pte;
 
 static pt_entry_t *
 zcond_pte(vm_offset_t va)
@@ -185,25 +165,45 @@ zcond_pte(vm_offset_t va)
 
 	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
 	pte += pmap_pte_index(va);
-	//KASSERT(*pte != 0, ("va %#jx *pt == 0", va));
 
 	return (pte);
 }
 
+static void
+zcond_pmap_init(const void *unused) {
+    vm_offset_t kern_start, kern_end;
+    vm_page_t dummy_page;
+
+    kern_start = virtual_avail;
+    kern_end = kernel_vm_end;
+
+	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
+	PMAP_LOCK_INIT(&zcond_pmap);
+	pmap_pinit(&zcond_pmap);
+	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
+	    kern_end - kern_start, kern_start);
+
+    zcond_patch_va = kva_alloc(PAGE_SIZE);
+    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
+    pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
+    kva_free(zcond_patch_va, PAGE_SIZE);
+
+    zcond_patch_pte = zcond_pte(zcond_patch_va);
+}
+SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_pmap_init, NULL);
+
 void
 pmap_qenter_zcond(vm_page_t m) {
     pt_entry_t oldpte, pa;
-    pt_entry_t *pte;
     int cache_bits;
 
     oldpte = 0;
-    pte = zcond_pte(zcond_patch_va);
 
     cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
     pa = VM_PAGE_TO_PHYS(m) | cache_bits;
-    if ((*pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
-            oldpte |= *pte;
-            pte_store(pte, pa | pg_nx | X86_PG_A |
+    if ((*zcond_patch_pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
+            oldpte |= *zcond_patch_pte;
+            pte_store(zcond_patch_pte, pa | pg_nx | X86_PG_A |
                 X86_PG_M | X86_PG_RW | X86_PG_V);
     }
 
@@ -213,10 +213,7 @@ pmap_qenter_zcond(vm_page_t m) {
 
 void
 pmap_qremove_zcond(void) {
-    pt_entry_t *pte;
-
-    pte = zcond_pte(zcond_patch_va);
-    pte_clear(pte);
+    pte_clear(zcond_patch_pte);
 }
 
 vm_offset_t zcond_get_patch_va(void) {
