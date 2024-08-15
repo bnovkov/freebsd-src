@@ -216,7 +216,7 @@ zcond_pmap_init(const void *unused) {
 	    kern_end - kern_start, kern_start);
 
     zcond_patch_va = kva_alloc(PAGE_SIZE);
-    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
+    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
     pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
 
     zcond_patch_pte = zcond_pte(zcond_patch_va);

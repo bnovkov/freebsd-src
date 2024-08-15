@@ -189,7 +189,7 @@ __zcond_toggle(struct zcond *cond, bool enable)
         return;
     }
 
-    if(!enable && zcond_load(&cond->refcnt) > 1) {
+    if(!enable && refcount_load(&cond->refcnt) > 1) {
         return;
     }
 
