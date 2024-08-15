@@ -63,7 +63,8 @@ static void
 insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
 {
 	int i;
-	if (size == 2) {
+
+	if (size == ZCOND_INSN_SHORT_SIZE) {
 		insn[0] = ZCOND_JMP_SHORT_OPCODE;
 		insn[1] = offset;
 	} else {
@@ -77,22 +78,23 @@ insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
 void
 zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 {
-	uint8_t *patch_addr = (uint8_t *)p->patch_addr;
+	uint8_t *patch_addr;
 	vm_offset_t offset;
 
+    patch_addr = (uint8_t *)p->patch_addr
 	if (*patch_addr == nop_short_bytes[0]) {
-		// two byte nop
+		/* two byte nop */
 		*size = ZCOND_INSN_SHORT_SIZE;
 		goto nop;
 	} else if (*patch_addr == nop_long_bytes[0]) {
 		*size = ZCOND_INSN_LONG_SIZE;
 		goto nop;
 	} else if (*patch_addr == ZCOND_JMP_SHORT_OPCODE) {
-		// two byte jump
+		/* two byte jump */
 		*size = ZCOND_INSN_SHORT_SIZE;
 		goto jmp;
 	} else if (*patch_addr == ZCOND_JMP_LONG_OPCODE) {
-		// five byte jump
+		/* five byte jump */
 		*size = ZCOND_INSN_LONG_SIZE;
 		goto jmp;
 	} else {
@@ -100,13 +102,13 @@ zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 	}
 
 nop:
-	// replace nop with jmp
+	/* replace nop with jmp */
 	offset = p->lbl_true_addr - p->patch_addr - *size;
 	insn_jmp(insn, *size, offset);
 	return;
 
 jmp:
-	// replace jmp with nop
+	/* replace jmp with nop */
 	insn_nop(insn, *size);
 }
 

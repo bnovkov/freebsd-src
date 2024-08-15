@@ -80,10 +80,10 @@ zcond_init(const void *unused)
 }
 SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
 
-struct rendezvous_data {
+struct zcond_patch_arg {
 	int patching_cpu;
 	struct zcond *cond;
-	bool new_state;
+	bool enable;
 	struct zcond_md_ctxt *md_ctxt;
 };
 
@@ -91,7 +91,7 @@ struct rendezvous_data {
  * Patch all patch_points belonging to cond.
  */
 static void
-zcond_patch(struct zcond *cond, bool new_state)
+zcond_patch(struct zcond *cond, bool enable)
 {
 	struct patch_point *p;
 	vm_page_t patch_page;
@@ -109,14 +109,15 @@ zcond_patch(struct zcond *cond, bool new_state)
 		    &insn[0], insn_size);
 		zcond_after_patch();
 	}
-	cond->enabled = new_state;
+	cond->enabled = enable;
 }
 
 static void
 rendezvous_setup(void *arg)
 {
-	struct rendezvous_data *data;
-	data = (struct rendezvous_data *)arg;
+	struct zcond_patch_arg *data;
+
+	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
 		zcond_before_rendezvous(data->md_ctxt);
@@ -126,19 +127,21 @@ rendezvous_setup(void *arg)
 static void
 rendezvous_action(void *arg)
 {
-	struct rendezvous_data *data;
-	data = (struct rendezvous_data *)arg;
+	struct zcond_patch_arg *data;
+
+	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_patch(data->cond, data->new_state);
+		zcond_patch(data->cond, data->enable);
 	}
 }
 
 static void
 rendezvous_teardown(void *arg)
 {
-	struct rendezvous_data *data;
-	data = (struct rendezvous_data *)arg;
+	struct zcond_patch_arg *data;
+
+	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
 		zcond_after_rendezvous(data->md_ctxt);
@@ -146,11 +149,11 @@ rendezvous_teardown(void *arg)
 }
 
 void
-__zcond_set_enabled(struct zcond *cond, bool new_state)
+__zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-	if (new_state == false) {
+	if (enable == false) {
 		if (refcount_release_if_not_last(&cond->refcnt)) {
 			/* refcount > 1 */
 			return;
@@ -162,13 +165,13 @@ __zcond_set_enabled(struct zcond *cond, bool new_state)
 		refcount_acquire(&cond->refcnt);
 	}
 
-	if (cond->enabled == new_state) {
+	if (cond->enabled == enable) {
 		return;
 	}
 
-	struct rendezvous_data arg = { .patching_cpu = curcpu,
+	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
 		.cond = cond,
-		.new_state = new_state,
+		.enable = enable,
 		.md_ctxt = &ctxt };
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,

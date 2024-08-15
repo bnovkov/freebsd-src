@@ -194,15 +194,15 @@ l_true:
 /*
  * These macros change the state of a zcond.
  */
-#define zcond_enable(cond_wrapped) __zcond_set_enabled(&cond_wrapped.cond, true)
+#define zcond_enable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, true)
 #define zcond_disable(cond_wrapped) \
-	__zcond_set_enabled(&cond_wrapped.cond, false)
+	__zcond_toggle(&cond_wrapped.cond, false)
 
 /*
  * Change the state of a zcond by safely patching all of its
  * inspection points with appropriate instructions.
  */
-void __zcond_set_enabled(struct zcond *cond, bool new_state);
+void __zcond_toggle(struct zcond *cond, bool enable);
 
 /*
  * Called before a single patch_point is patched.
