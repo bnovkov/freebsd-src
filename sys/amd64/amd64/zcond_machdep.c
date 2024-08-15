@@ -151,7 +151,7 @@ zcond_pte(vm_offset_t va)
     extern int la57;
 
     bool is_la57 = false;
-    if(pmap->pm_type == PT_X86) {
+    if(zcond_pmap.pm_type == PT_X86) {
         is_la57 = la57;
     }
 
