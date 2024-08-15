@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 Marko Vlaić <mvlaic@freebsd.org>
  *
-* This code was developed as a Google Summer of Code 2024. project
+ * This code was developed as a Google Summer of Code 2024. project
  * under the guidance of Bojan Novković <bnovkov@freebsdorg>.
  *
  * Redistribution and use in source and binary forms, with or without

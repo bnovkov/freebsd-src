@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 Marko Vlaić <mvlaic@freebsd.org>
  *
-* This code was developed as a Google Summer of Code 2024. project
+ * This code was developed as a Google Summer of Code 2024. project
  * under the guidance of Bojan Novković <bnovkov@freebsdorg>.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,21 +29,21 @@
  */
 
 #include <sys/types.h>
-#include <sys/zcond.h>
 #include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
-#include <sys/kernel.h>
-#include <sys/systm.h>
+#include <sys/zcond.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
 #include <vm/vm_extern.h>
+#include <vm/vm_page.h>
 
 #include <machine/cpufunc.h>
-#include <machine/zcond.h>
-#include <vm/vm_page.h>
 #include <machine/pmap.h>
+#include <machine/zcond.h>
 
 struct pmap zcond_pmap;
 
@@ -111,7 +111,7 @@ zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 	uint8_t *patch_addr;
 	vm_offset_t offset;
 
-    patch_addr = (uint8_t *)p->patch_addr;
+	patch_addr = (uint8_t *)p->patch_addr;
 	if (*patch_addr == nop_short_bytes[0]) {
 		/* two byte nop */
 		*size = ZCOND_INSN_SHORT_SIZE;
@@ -142,10 +142,9 @@ jmp:
 	insn_nop(insn, *size);
 }
 
-
 /**********************
  * pmap functionality *
-***********************/
+ ***********************/
 
 static vm_offset_t zcond_patch_va;
 static pt_entry_t *zcond_patch_pte;
@@ -160,40 +159,40 @@ zcond_pte(vm_offset_t va)
 	pt_entry_t *pte;
 	vm_pindex_t pml5_idx, pml4_idx, pdp_idx, pd_idx;
 	vm_paddr_t mphys;
-    extern int la57;
+	extern int la57;
 
-    bool is_la57 = false;
-    if(zcond_pmap.pm_type == PT_X86) {
-        is_la57 = la57;
-    }
+	bool is_la57 = false;
+	if (zcond_pmap.pm_type == PT_X86) {
+		is_la57 = la57;
+	}
 
 	pml4_idx = pmap_pml4e_index(va);
 	if (is_la57) {
 		pml5_idx = pmap_pml5e_index(va);
 		pml5e = &zcond_pmap.pm_pmltopu[pml5_idx];
-		KASSERT(*pml5e != 0, ("va %#jx pml5e == 0", va)); 
-        mphys = *pml5e & PG_FRAME;
-		
+		KASSERT(*pml5e != 0, ("va %#jx pml5e == 0", va));
+		mphys = *pml5e & PG_FRAME;
+
 		pml4e = (pml4_entry_t *)PHYS_TO_DMAP(mphys);
 		pml4e = &pml4e[pml4_idx];
 	} else {
 		pml4e = &zcond_pmap.pm_pmltop[pml4_idx];
 	}
 
-	KASSERT(*pml4e != 0, ("va %#jx pml4e == 0", va)); 
-    mphys = *pml4e & PG_FRAME;
+	KASSERT(*pml4e != 0, ("va %#jx pml4e == 0", va));
+	mphys = *pml4e & PG_FRAME;
 
 	pdpe = (pdp_entry_t *)PHYS_TO_DMAP(mphys);
 	pdp_idx = pmap_pdpe_index(va);
 	pdpe += pdp_idx;
-	KASSERT(*pdpe != 0, ("va %#jx pdpe == 0", va)); 
-    mphys = *pdpe & PG_FRAME;
+	KASSERT(*pdpe != 0, ("va %#jx pdpe == 0", va));
+	mphys = *pdpe & PG_FRAME;
 
 	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
 	pd_idx = pmap_pde_index(va);
 	pde += pd_idx;
-	KASSERT(*pde != 0, ("va %#jx pde == 0", va)); 
-    mphys = *pde & PG_FRAME;
+	KASSERT(*pde != 0, ("va %#jx pde == 0", va));
+	mphys = *pde & PG_FRAME;
 
 	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
 	pte += pmap_pte_index(va);
@@ -202,52 +201,57 @@ zcond_pte(vm_offset_t va)
 }
 
 static void
-zcond_pmap_init(const void *unused) {
-    vm_offset_t kern_start, kern_end;
-    vm_page_t dummy_page;
+zcond_pmap_init(const void *unused)
+{
+	vm_offset_t kern_start, kern_end;
+	vm_page_t dummy_page;
 
-    kern_start = virtual_avail;
-    kern_end = kernel_vm_end;
+	kern_start = virtual_avail;
+	kern_end = kernel_vm_end;
 
 	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
 	PMAP_LOCK_INIT(&zcond_pmap);
 	pmap_pinit(&zcond_pmap);
-	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
-	    kern_end - kern_start, kern_start);
+	pmap_copy(&zcond_pmap, kernel_pmap, kern_start, kern_end - kern_start,
+	    kern_start);
 
-    zcond_patch_va = kva_alloc(PAGE_SIZE);
-    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
-    pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
+	zcond_patch_va = kva_alloc(PAGE_SIZE);
+	dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
+	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
+	    PMAP_ENTER_WIRED, 0);
 
-    zcond_patch_pte = zcond_pte(zcond_patch_va);
+	zcond_patch_pte = zcond_pte(zcond_patch_va);
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_pmap_init, NULL);
 
 void
-pmap_qenter_zcond(vm_page_t m) {
-    pt_entry_t oldpte, pa;
-    int cache_bits;
+pmap_qenter_zcond(vm_page_t m)
+{
+	pt_entry_t oldpte, pa;
+	int cache_bits;
 
-    oldpte = 0;
+	oldpte = 0;
 
-    cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
-    pa = VM_PAGE_TO_PHYS(m) | cache_bits;
-    if ((*zcond_patch_pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
-            oldpte |= *zcond_patch_pte;
-            pte_store(zcond_patch_pte, pa | pg_nx | X86_PG_A |
-                X86_PG_M | X86_PG_RW | X86_PG_V);
-    }
+	cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
+	pa = VM_PAGE_TO_PHYS(m) | cache_bits;
+	if ((*zcond_patch_pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
+		oldpte |= *zcond_patch_pte;
+		pte_store(zcond_patch_pte,
+		    pa | pg_nx | X86_PG_A | X86_PG_M | X86_PG_RW | X86_PG_V);
+	}
 
-    if (__predict_false((oldpte & X86_PG_V) != 0))
-           invlpg(zcond_patch_va);
+	if (__predict_false((oldpte & X86_PG_V) != 0))
+		invlpg(zcond_patch_va);
 }
 
 void
-pmap_qremove_zcond(void) {
-    pte_clear(zcond_patch_pte);
+pmap_qremove_zcond(void)
+{
+	pte_clear(zcond_patch_pte);
 }
 
-vm_offset_t zcond_get_patch_va(void) {
-    return zcond_patch_va;
+vm_offset_t
+zcond_get_patch_va(void)
+{
+	return zcond_patch_va;
 }
-

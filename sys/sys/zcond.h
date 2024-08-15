@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 Marko Vlaić <mvlaic@freebsd.org>
  *
-* This code was developed as a Google Summer of Code 2024. project
+ * This code was developed as a Google Summer of Code 2024. project
  * under the guidance of Bojan Novković <bnovkov@freebsdorg>.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -124,10 +124,11 @@ struct zcond_false {
 	".quad 0 \n\t"                                    \
 	".popsection \n\t"
 
-#define ZCOND_SET_START_STOP do {                              \
-	__WEAK(__CONCAT(__start_set_, ZCOND_LINKER_SET)); \
-	__WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET)); \
-    }while(0);
+#define ZCOND_SET_START_STOP                                      \
+	do {                                                      \
+		__WEAK(__CONCAT(__start_set_, ZCOND_LINKER_SET)); \
+		__WEAK(__CONCAT(__stop_set_, ZCOND_LINKER_SET));  \
+	} while (0);
 
 /*
  * Emits a __zcond_table entry, describing one patch_point.
@@ -172,12 +173,12 @@ l_true:
  * These macros declare and initialize a new zcond.
  */
 
-#define ZCOND_INIT(state)                                              \
-	{                                                              \
-		{                                                      \
-			.refcnt = (state ? 2 : 1), \
-			.patch_points = SLIST_HEAD_INITIALIZER()       \
-		}                                                      \
+#define ZCOND_INIT(state)                                        \
+	{                                                        \
+		{                                                \
+			.refcnt = (state ? 2 : 1),               \
+			.patch_points = SLIST_HEAD_INITIALIZER() \
+		}                                                \
 	}
 
 #define DEFINE_ZCOND_TRUE(name)	  struct zcond_true name = ZCOND_INIT(true)
@@ -223,9 +224,8 @@ l_true:
 /*
  * These macros change the state of a zcond.
  */
-#define zcond_enable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, true)
-#define zcond_disable(cond_wrapped) \
-	__zcond_toggle(&cond_wrapped.cond, false)
+#define zcond_enable(cond_wrapped)  __zcond_toggle(&cond_wrapped.cond, true)
+#define zcond_disable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, false)
 
 /*
  * Change the state of a zcond by safely patching all of its
@@ -268,10 +268,9 @@ void zcond_after_rendezvous(struct zcond_md_ctxt *);
 void zcond_get_patch_insn(struct patch_point *ins_p, uint8_t insn[],
     size_t *size);
 
-
-void 		 pmap_qenter_zcond(vm_page_t m);
-void 		 pmap_qremove_zcond(void);
-vm_offset_t  zcond_get_patch_va(void);
+void pmap_qenter_zcond(vm_page_t m);
+void pmap_qremove_zcond(void);
+vm_offset_t zcond_get_patch_va(void);
 
 #endif
 #endif

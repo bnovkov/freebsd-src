@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2024 Marko Vlaić <mvlaic@freebsd.org>
  *
-* This code was developed as a Google Summer of Code 2024. project
+ * This code was developed as a Google Summer of Code 2024. project
  * under the guidance of Bojan Novković <bnovkov@freebsdorg>.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -99,14 +99,14 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
  * an instruction.
  */
-static vm_offset_t mirror_addr; 
+static vm_offset_t mirror_addr;
 static void
 zcond_init(const void *unused)
 {
 	EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	linker_file_foreach(zcond_load_patch_points_cb, NULL);
-    mirror_addr = zcond_get_patch_va();
+	mirror_addr = zcond_get_patch_va();
 }
 SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
 
@@ -114,7 +114,7 @@ struct zcond_patch_arg {
 	int patching_cpu;
 	struct zcond *cond;
 	struct zcond_md_ctxt *md_ctxt;
-    bool enable;
+	bool enable;
 };
 
 /*
@@ -182,20 +182,20 @@ __zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-    if(enable && refcount_acquire(&cond->refcnt) > 1) {
-        return;
-    } else if(!enable && !refcount_release_if_not_last(&cond->refcnt)) {
-        return;
-    }
+	if (enable && refcount_acquire(&cond->refcnt) > 1) {
+		return;
+	} else if (!enable && !refcount_release_if_not_last(&cond->refcnt)) {
+		return;
+	}
 
-    if(!enable && refcount_load(&cond->refcnt) > 1) {
-        return;
-    }
+	if (!enable && refcount_load(&cond->refcnt) > 1) {
+		return;
+	}
 
 	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
 		.cond = cond,
-		.md_ctxt = &ctxt, 
-        .enable = enable };
+		.md_ctxt = &ctxt,
+		.enable = enable };
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
