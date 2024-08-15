@@ -63,7 +63,6 @@ struct patch_point {
  * A single optimized boolean.
  */
 struct zcond {
-	bool enabled;
 	int refcnt;
 	SLIST_HEAD(, patch_point) patch_points;
 };
@@ -146,7 +145,7 @@ l_true:
 #define ZCOND_INIT(state)                                              \
 	{                                                              \
 		{                                                      \
-			.enabled = (state), .refcnt = (state ? 1 : 0), \
+			.refcnt = (state ? 1 : 0), \
 			.patch_points = SLIST_HEAD_INITIALIZER()       \
 		}                                                      \
 	}
