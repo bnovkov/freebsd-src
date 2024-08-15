@@ -152,16 +152,16 @@ zcond_pte(vm_offset_t va)
     extern int la57;
 
 	pml4_idx = pmap_pml4e_index(va);
-	if (la57) {
+	if (pmap_is_la57(&zcond_pmap)) {
 		pml5_idx = pmap_pml5e_index(va);
-		pml5e = &zcond_pmap->pm_pmltopu[pml5_idx];
+		pml5e = &zcond_pmap.pm_pmltopu[pml5_idx];
 		KASSERT(*pml5e != 0, ("va %#jx pml5e == 0", va)); 
         mphys = *pml5e & PG_FRAME;
 		
 		pml4e = (pml4_entry_t *)PHYS_TO_DMAP(mphys);
 		pml4e = &pml4e[pml4_idx];
 	} else {
-		pml4e = &efi_pml4[pml4_idx];
+		pml4e = &zcond_pmap.pm_pmltop[pml4_idx];
 	}
 
 	KASSERT(*pml4e != 0, ("va %#jx pml4e == 0", va)); 
@@ -211,7 +211,7 @@ void
 pmap_qremove_zcond(void) {
     pt_entry_t *pte;
 
-    pte = pmap_pte(&zcond_pmap, zcond_patch_va);
+    pte = zcond_pte(&zcond_pmap, zcond_patch_va);
     pte_clear(pte);
 }
 
