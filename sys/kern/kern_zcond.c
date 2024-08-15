@@ -83,7 +83,6 @@ SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
 struct zcond_patch_arg {
 	int patching_cpu;
 	struct zcond *cond;
-	bool enable;
 	struct zcond_md_ctxt *md_ctxt;
 };
 
@@ -109,7 +108,6 @@ zcond_patch(struct zcond *cond, bool enable)
 		    &insn[0], insn_size);
 		zcond_after_patch();
 	}
-	cond->enabled = enable;
 }
 
 static void
@@ -153,25 +151,13 @@ __zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-	if (enable == false) {
-		if (refcount_release_if_not_last(&cond->refcnt)) {
-			/* refcount > 1 */
-			return;
-		} else if (!refcount_release_if_last(&cond->refcnt)) {
-			/* refcount == 0 */
-			return;
-		}
-	} else {
-		refcount_acquire(&cond->refcnt);
-	}
-
-	if (cond->enabled == enable) {
-		return;
-	}
+    if(enable && refcount_acquire(&cond->refcnt) > 0)
+        return;
+    else if(!enable && !refcount_release(&cond->refcnt))
+        return;
 
 	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
 		.cond = cond,
-		.enable = enable,
 		.md_ctxt = &ctxt };
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
