@@ -218,7 +218,6 @@ zcond_pmap_init(const void *unused) {
     zcond_patch_va = kva_alloc(PAGE_SIZE);
     dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
     pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
-    kva_free(zcond_patch_va, PAGE_SIZE);
 
     zcond_patch_pte = zcond_pte(zcond_patch_va);
 }
