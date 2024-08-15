@@ -138,6 +138,58 @@ zcond_pmap_init(const void *unused) {
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_pmap_init, NULL);
 
+static pt_entry_t *
+zcond_pte(vm_offset_t va)
+{
+	pml5_entry_t *pml5e;
+	pml4_entry_t *pml4e;
+	pdp_entry_t *pdpe;
+	pd_entry_t *pde;
+	pt_entry_t *pte;
+	vm_pindex_t pml5_idx, pml4_idx, pdp_idx, pd_idx;
+	vm_paddr_t mphys;
+    extern int la57;
+
+    bool is_la57 = false;
+    if(zcond_pmap.pm_type == PT_X86) {
+        is_la57 = la57;
+    }
+
+	pml4_idx = pmap_pml4e_index(va);
+	if (is_la57) {
+		pml5_idx = pmap_pml5e_index(va);
+		pml5e = &zcond_pmap.pm_pmltopu[pml5_idx];
+		KASSERT(*pml5e != 0, ("va %#jx pml5e == 0", va)); 
+        mphys = *pml5e & PG_FRAME;
+		
+		pml4e = (pml4_entry_t *)PHYS_TO_DMAP(mphys);
+		pml4e = &pml4e[pml4_idx];
+	} else {
+		pml4e = &zcond_pmap.pm_pmltop[pml4_idx];
+	}
+
+	KASSERT(*pml4e != 0, ("va %#jx pml4e == 0", va)); 
+    mphys = *pml4e & PG_FRAME;
+
+	pdpe = (pdp_entry_t *)PHYS_TO_DMAP(mphys);
+	pdp_idx = pmap_pdpe_index(va);
+	pdpe += pdp_idx;
+	KASSERT(*pdpe != 0, ("va %#jx pdpe == 0", va)); 
+    mphys = *pdpe & PG_FRAME;
+
+	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
+	pd_idx = pmap_pde_index(va);
+	pde += pd_idx;
+	KASSERT(*pde == 0, ("va %#jx pdpe == 0", va)); 
+    mphys = *pde & PG_FRAME;
+
+	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
+	pte += pmap_pte_index(va);
+	KASSERT(*pte != 0, ("va %#jx *pt == 0", va));
+
+	return (pte);
+}
+
 void
 pmap_qenter_zcond(vm_page_t m) {
     pt_entry_t oldpte, pa;
@@ -145,13 +197,13 @@ pmap_qenter_zcond(vm_page_t m) {
     int cache_bits;
 
     oldpte = 0;
-    pte = pmap_pte(&zcond_pmap, zcond_patch_va);
+    pte = zcond_pte(zcond_patch_va);
 
     cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
     pa = VM_PAGE_TO_PHYS(m) | cache_bits;
     if ((*pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
             oldpte |= *pte;
-            pte_store(pte, pa | pg_g | pg_nx | X86_PG_A |
+            pte_store(pte, pa | pg_nx | X86_PG_A |
                 X86_PG_M | X86_PG_RW | X86_PG_V);
     }
 
@@ -163,7 +215,7 @@ void
 pmap_qremove_zcond(void) {
     pt_entry_t *pte;
 
-    pte = pmap_pte(&zcond_pmap, zcond_patch_va);
+    pte = zcond_pte(zcond_patch_va);
     pte_clear(pte);
 }
 
