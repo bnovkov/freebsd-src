@@ -105,7 +105,7 @@ struct zcond_false {
  * Bakes in a nop instruction instruction, so the return value is initially
  * false.
  */
-static __attribute__((always_inline)) bool
+static __always_inline bool
 zcond_nop(struct zcond *const zcond_p)
 {
 	ZCOND_SET_START_STOP
@@ -125,7 +125,7 @@ l_true:
  * Bakes in a jmp instruction instruction, so the return value is initially
  * true.
  */
-static __attribute__((always_inline)) bool
+static __always_inline bool
 zcond_jmp(struct zcond *const zcond_p)
 {
 	ZCOND_SET_START_STOP

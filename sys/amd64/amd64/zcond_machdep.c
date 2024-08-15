@@ -31,7 +31,7 @@ zcond_after_patch(void)
 void
 zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-
+	pmap_qremove_zcond();
 	ctxt->cr3 = rcr3();
 	load_cr3(zcond_pmap.pm_cr3);
 }
@@ -186,7 +186,7 @@ zcond_pmap_init(const void *unused) {
 	    kern_end - kern_start, kern_start);
 
     zcond_patch_va = kva_alloc(PAGE_SIZE);
-    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
+    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
     pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
     kva_free(zcond_patch_va, PAGE_SIZE);
 
