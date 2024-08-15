@@ -1,11 +1,14 @@
 #include <sys/types.h>
 #include <sys/zcond.h>
+#include <sys/mutex.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
+#include <vm/vm_extern.h>
 
 #include <machine/cpufunc.h>
 #include <machine/zcond.h>
+#include <machine/pmap.h>
 
 struct pmap zcond_pmap;
 
