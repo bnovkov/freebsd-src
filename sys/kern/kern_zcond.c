@@ -69,14 +69,16 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
  * an instruction.
  */
+static vm_offset_t mirror_addr; 
 static void
 zcond_init(const void *unused)
 {
 	EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	linker_file_foreach(zcond_load_patch_points_cb, NULL);
+    mirror_addr = zcond_get_patch_va();
 }
-SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_init, NULL);
+SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
 
 struct rendezvous_data {
 	int patching_cpu;
@@ -92,12 +94,9 @@ static void
 zcond_patch(struct zcond *cond, bool new_state)
 {
 	struct patch_point *p;
-	vm_offset_t mirror_addr;
 	vm_page_t patch_page;
 	unsigned char insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
-
-	mirror_addr = zcond_get_patch_va();
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		zcond_get_patch_insn(p, insn, &insn_size);

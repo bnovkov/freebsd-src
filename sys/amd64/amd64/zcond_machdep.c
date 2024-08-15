@@ -190,7 +190,7 @@ zcond_pmap_init(const void *unused) {
 
     zcond_patch_pte = zcond_pte(zcond_patch_va);
 }
-SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_pmap_init, NULL);
+SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_pmap_init, NULL);
 
 void
 pmap_qenter_zcond(vm_page_t m) {
@@ -208,7 +208,6 @@ pmap_qenter_zcond(vm_page_t m) {
     }
 
     if (__predict_false((oldpte & X86_PG_V) != 0))
-           // pmap_invalidate_range(&zcond_pmap, zcond_patch_va, zcond_patch_va + PAGE_SIZE);
            invlpg(zcond_patch_va);
 }
 
