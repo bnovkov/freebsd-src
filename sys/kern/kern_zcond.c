@@ -97,10 +97,10 @@ zcond_patch(struct zcond *cond, bool new_state)
 	unsigned char insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
 
-	mirror_addr = pmap_zcond_get_va();
+	mirror_addr = zcond_get_patch_va();
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
-		zcond_get_patch_insn(p, insn, &insn_size);
+		zcond_get_patch_insn(p, insn, &insn_size)
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 		pmap_qenter_zcond(patch_page);

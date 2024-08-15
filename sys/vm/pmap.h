@@ -166,10 +166,6 @@ int		 pmap_ts_referenced(vm_page_t m);
 void		 pmap_unwire(pmap_t pmap, vm_offset_t start, vm_offset_t end);
 void		 pmap_zero_page(vm_page_t);
 void		 pmap_zero_page_area(vm_page_t, int off, int size);
-void 		 pmap_qenter_zcond(vm_page_t m);
-void 		 pmap_qremove_zcond(void);
-void         pmap_zcond_get_pmap(struct pmap *);
-vm_offset_t  pmap_zcond_get_va(void);
 
 #define	pmap_resident_count(pm)	((pm)->pm_stats.resident_count)
 #define	pmap_wired_count(pm)	((pm)->pm_stats.wired_count)

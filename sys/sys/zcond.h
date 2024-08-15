@@ -239,5 +239,10 @@ void zcond_after_rendezvous(struct zcond_md_ctxt *);
 void zcond_get_patch_insn(struct patch_point *ins_p, uint8_t insn[],
     size_t *size);
 
+
+void 		 pmap_qenter_zcond(vm_page_t m);
+void 		 pmap_qremove_zcond(void);
+vm_offset_t  zcond_get_patch_va(void);
+
 #endif
 #endif

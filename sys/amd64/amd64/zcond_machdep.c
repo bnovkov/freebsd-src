@@ -7,7 +7,7 @@
 #include <machine/cpufunc.h>
 #include <machine/zcond.h>
 
-// static bool wp;
+struct pmap zcond_pmap;
 
 void
 zcond_before_patch(void)
@@ -23,10 +23,8 @@ zcond_after_patch(void)
 void
 zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
 {
-	struct pmap zcond_pmap;
 
 	ctxt->cr3 = rcr3();
-	pmap_zcond_get_pmap(&zcond_pmap);
 	load_cr3(zcond_pmap.pm_cr3);
 }
 
@@ -41,6 +39,7 @@ static void
 insn_nop(uint8_t insn[], size_t size)
 {
 	int i;
+
 	if (size == ZCOND_INSN_SHORT_SIZE) {
 		for (i = 0; i < ZCOND_INSN_SHORT_SIZE; i++) {
 			insn[i] = nop_short_bytes[i];
@@ -102,3 +101,65 @@ jmp:
 	// replace jmp with nop
 	insn_nop(insn, *size);
 }
+
+
+/**********************
+ * pmap functionality *
+***********************/
+
+static vm_offset_t zcond_patch_va;
+
+static void
+zcond_pmap_init(const void *unused) {
+    vm_offset_t kern_start, kern_end;
+    vm_page_t dummy_page;
+
+    kern_start = virtual_avail;
+    kern_end = kernel_vm_end;
+
+	memset(&zcond_pmap, 0, sizeof(zcond_pmap));
+	PMAP_LOCK_INIT(&zcond_pmap);
+	pmap_pinit(&zcond_pmap);
+	pmap_copy(&zcond_pmap, kernel_pmap, kern_start,
+	    kern_end - kern_start, kern_start);
+
+    zcond_patch_va = kva_alloc(PAGE_SIZE);
+    dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED);
+    pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE, PMAP_ENTER_WIRED, 0);
+    kva_free(zcond_patch_va, PAGE_SIZE);
+}
+SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_pmap_init, NULL);
+
+void
+pmap_qenter_zcond(vm_page_t m) {
+    pt_entry_t oldpte, pa;
+    pt_entry_t *pte;
+    int cache_bits;
+
+    oldpte = 0;
+    pte = pmap_pte(&zcond_pmap, zcond_patch_va);
+
+    cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
+    pa = VM_PAGE_TO_PHYS(m) | cache_bits;
+    if ((*pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
+            oldpte |= *pte;
+            pte_store(pte, pa | pg_g | pg_nx | X86_PG_A |
+                X86_PG_M | X86_PG_RW | X86_PG_V);
+    }
+
+    if (__predict_false((oldpte & X86_PG_V) != 0))
+            pmap_invalidate_range(&zcond_pmap, zcond_patch_va, zcond_patch_va + PAGE_SIZE);
+}
+
+void
+pmap_qremove_zcond(void) {
+    pt_entry_t *pte;
+
+    pte = pmap_pte(&zcond_pmap, zcond_patch_va);
+    pte_clear(pte);
+}
+
+vm_offset_t zcond_get_patch_va(void) {
+    return zcond_patch_va;
+}
+
