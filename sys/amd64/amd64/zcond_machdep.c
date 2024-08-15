@@ -180,7 +180,7 @@ zcond_pte(vm_offset_t va)
 	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
 	pd_idx = pmap_pde_index(va);
 	pde += pd_idx;
-	KASSERT(*pde == 0, ("va %#jx pdpe == 0", va)); 
+	KASSERT(*pde == 0, ("va %#jx pde == 0", va)); 
     mphys = *pde & PG_FRAME;
 
 	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
