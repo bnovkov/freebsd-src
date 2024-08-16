@@ -35,6 +35,7 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/zcond.h>
+#include <sys/sys/vmem.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -213,7 +214,7 @@ zcond_pmap_init(const void *unused)
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start, kern_end - kern_start,
 	    kern_start);
 
-	zcond_patch_va = kmem_alloc(&VM_DOMAIN(domain)->kernel_nofree_arena, PAGE_SIZE, M_BESTFIT | M_NOWAIT, &zcond_patch_va);
+	zcond_patch_va = vmem_alloc(&VM_DOMAIN(domain)->kernel_nofree_arena, PAGE_SIZE, M_BESTFIT | M_NOWAIT, &zcond_patch_va);
 	dummy_page = vm_page_alloc_noobj_domain(domain,
 	    VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
 	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
