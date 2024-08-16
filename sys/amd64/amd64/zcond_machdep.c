@@ -39,8 +39,9 @@
 #include <sys/domain.h>
 #include <sys/malloc.h>
 #include <sys/domainset.h>
-#include <vm/vm_domainset.h>
 
+#include <vm/uma.h>
+#include <vm/vm_domainset.h>
 #include <vm/vm.h>
 #include <vm/pmap.h>
 #include <vm/vm_extern.h>
