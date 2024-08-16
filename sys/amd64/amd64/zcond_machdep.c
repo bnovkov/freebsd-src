@@ -214,7 +214,8 @@ zcond_pmap_init(const void *unused)
 	    kern_start);
 
 	zcond_patch_va = kva_alloc(PAGE_SIZE);
-	dummy_page = vm_page_alloc_noobj_domain(domain, VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
+	dummy_page = vm_page_alloc_noobj_domain(domain,
+	    VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
 	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
 	    PMAP_ENTER_WIRED, 0);
 
@@ -251,5 +252,5 @@ pmap_qremove_zcond(void)
 vm_offset_t
 zcond_get_patch_va(void)
 {
-	return zcond_patch_va;
+	return (zcond_patch_va);
 }

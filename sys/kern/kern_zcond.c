@@ -106,7 +106,9 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
  * an instruction.
  */
-static vm_offset_t patch_addr; /* When performing a patch on a zcond, each page containing a patch_point is patched to this address. */
+static vm_offset_t
+    patch_addr; /* When performing a patch on a zcond, each page containing a
+		   patch_point is patched to this address. */
 static void
 zcond_init(const void *unused)
 {
@@ -188,12 +190,10 @@ __zcond_toggle(struct zcond *cond, bool enable)
 		return;
 	}
 
-	struct zcond_patch_arg arg = {
-        .patching_cpu = curcpu,
+	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
 		.cond = cond,
 		.md_ctxt = &ctxt,
-		.enable = enable 
-    };
+		.enable = enable };
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
