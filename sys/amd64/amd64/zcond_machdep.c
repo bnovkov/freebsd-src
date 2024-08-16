@@ -37,6 +37,8 @@
 #include <sys/zcond.h>
 #include <sys/vmem.h>
 #include <sys/domain.h>
+#include <sys/malloc.h>
+#include <vm/vm_pagequeue.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
