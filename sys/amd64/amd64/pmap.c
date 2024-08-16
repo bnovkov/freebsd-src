@@ -132,6 +132,7 @@
 #include <sys/sched.h>
 #include <sys/sysctl.h>
 #include <sys/smp.h>
+#include <sys/libkern.h>
 #ifdef DDB
 #include <sys/kdb.h>
 #include <ddb/ddb.h>
@@ -12312,4 +12313,6 @@ DB_SHOW_COMMAND(ptpages, pmap_ptpages)
 		    (vm_offset_t)pmap->pm_pmltop)), NUP4ML4E, PG_V);
 	}
 }
+
+
 #endif
