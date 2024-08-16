@@ -36,6 +36,7 @@
 #include <sys/mutex.h>
 #include <sys/zcond.h>
 #include <sys/vmem.h>
+#include <sys/domain.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
