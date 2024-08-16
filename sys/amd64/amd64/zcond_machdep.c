@@ -45,7 +45,9 @@
 #include <machine/pmap.h>
 #include <machine/zcond.h>
 
-struct pmap zcond_pmap;
+static struct pmap zcond_pmap;
+static vm_offset_t zcond_patch_va;
+static pt_entry_t *zcond_patch_pte;
 
 void
 zcond_before_patch(void)
@@ -145,10 +147,6 @@ jmp:
 /**********************
  * pmap functionality *
  ***********************/
-
-static vm_offset_t zcond_patch_va;
-static pt_entry_t *zcond_patch_pte;
-
 static pt_entry_t *
 zcond_pte(vm_offset_t va)
 {
@@ -170,7 +168,7 @@ zcond_pte(vm_offset_t va)
 	if (is_la57) {
 		pml5_idx = pmap_pml5e_index(va);
 		pml5e = &zcond_pmap.pm_pmltopu[pml5_idx];
-		KASSERT(*pml5e != 0, ("va %#jx pml5e == 0", va));
+		KASSERT(*pml5e != 0, ("%s: va %#jx pml5e == 0", __func__, va));
 		mphys = *pml5e & PG_FRAME;
 
 		pml4e = (pml4_entry_t *)PHYS_TO_DMAP(mphys);
@@ -179,19 +177,19 @@ zcond_pte(vm_offset_t va)
 		pml4e = &zcond_pmap.pm_pmltop[pml4_idx];
 	}
 
-	KASSERT(*pml4e != 0, ("va %#jx pml4e == 0", va));
+	KASSERT(*pml4e != 0, ("%s: va %#jx pml4e == 0", __func__, va));
 	mphys = *pml4e & PG_FRAME;
 
 	pdpe = (pdp_entry_t *)PHYS_TO_DMAP(mphys);
 	pdp_idx = pmap_pdpe_index(va);
 	pdpe += pdp_idx;
-	KASSERT(*pdpe != 0, ("va %#jx pdpe == 0", va));
+	KASSERT(*pdpe != 0, ("%s: va %#jx pdpe == 0", __func__, va));
 	mphys = *pdpe & PG_FRAME;
 
 	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
 	pd_idx = pmap_pde_index(va);
 	pde += pd_idx;
-	KASSERT(*pde != 0, ("va %#jx pde == 0", va));
+	KASSERT(*pde != 0, ("%s: va %#jx pde == 0", __func__, va));
 	mphys = *pde & PG_FRAME;
 
 	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
@@ -216,7 +214,7 @@ zcond_pmap_init(const void *unused)
 	    kern_start);
 
 	zcond_patch_va = kva_alloc(PAGE_SIZE);
-	dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
+	dummy_page = vm_page_alloc_noobj_domain(domain, VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
 	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
 	    PMAP_ENTER_WIRED, 0);
 

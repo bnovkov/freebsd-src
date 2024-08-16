@@ -56,6 +56,13 @@
 #include <machine/atomic.h>
 #include <machine/cpufunc.h>
 
+struct zcond_patch_arg {
+	int patching_cpu;
+	struct zcond *cond;
+	struct zcond_md_ctxt *md_ctxt;
+	bool enable;
+};
+
 MALLOC_DECLARE(M_ZCOND);
 MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
@@ -99,23 +106,16 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
  * an instruction.
  */
-static vm_offset_t mirror_addr;
+static vm_offset_t patch_addr; /* When performing a patch on a zcond, each page containing a patch_point is patched to this address. */
 static void
 zcond_init(const void *unused)
 {
 	EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	linker_file_foreach(zcond_load_patch_points_cb, NULL);
-	mirror_addr = zcond_get_patch_va();
+	patch_addr = zcond_get_patch_va();
 }
 SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
-
-struct zcond_patch_arg {
-	int patching_cpu;
-	struct zcond *cond;
-	struct zcond_md_ctxt *md_ctxt;
-	bool enable;
-};
 
 /*
  * Patch all patch_points belonging to cond.
@@ -135,7 +135,7 @@ zcond_patch(struct zcond *cond, bool enable)
 		pmap_qenter_zcond(patch_page);
 
 		zcond_before_patch();
-		memcpy((void *)(mirror_addr + (p->patch_addr & PAGE_MASK)),
+		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)),
 		    &insn[0], insn_size);
 		zcond_after_patch();
 	}
@@ -182,20 +182,18 @@ __zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-	if (enable && refcount_acquire(&cond->refcnt) > 1) {
+	if (enable && refcount_acquire(&cond->refcnt) > 0) {
 		return;
 	} else if (!enable && !refcount_release_if_not_last(&cond->refcnt)) {
 		return;
 	}
 
-	if (!enable && refcount_load(&cond->refcnt) > 1) {
-		return;
-	}
-
-	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
+	struct zcond_patch_arg arg = {
+        .patching_cpu = curcpu,
 		.cond = cond,
 		.md_ctxt = &ctxt,
-		.enable = enable };
+		.enable = enable 
+    };
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
