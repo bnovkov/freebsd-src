@@ -40,6 +40,7 @@
 #include <sys/malloc.h>
 #include <sys/domainset.h>
 
+#include <vm/pagequeue.h>
 #include <vm/uma.h>
 #include <vm/vm_domainset.h>
 #include <vm/vm.h>
