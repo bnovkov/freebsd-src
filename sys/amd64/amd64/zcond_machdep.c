@@ -35,7 +35,7 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/zcond.h>
-#include <sys/sys/vmem.h>
+#include <sys/vmem.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
