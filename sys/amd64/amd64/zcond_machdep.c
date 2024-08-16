@@ -39,6 +39,8 @@
 #include <sys/domain.h>
 #include <sys/malloc.h>
 #include <vm/vm_pagequeue.h>
+#include <sys/queue.h>
+#include <vm/vm_page.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
