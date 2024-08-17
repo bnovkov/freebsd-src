@@ -39,6 +39,7 @@
 #include <sys/domain.h>
 #include <sys/malloc.h>
 #include <sys/domainset.h>
+#include <sys/queue.h>
 
 #include <vm/vm_pagequeue.h>
 #include <vm/uma.h>
@@ -210,6 +211,9 @@ zcond_pmap_init(const void *unused)
 {
 	vm_offset_t kern_start, kern_end;
 	vm_page_t dummy_page;
+    int domain;
+
+    domain = PCPU_GET(domain);
 
 	kern_start = virtual_avail;
 	kern_end = kernel_vm_end;
