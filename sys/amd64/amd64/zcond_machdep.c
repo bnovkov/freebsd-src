@@ -41,13 +41,13 @@
 #include <sys/domainset.h>
 #include <sys/queue.h>
 
+#include <vm/vm_page.h>
 #include <vm/vm_pagequeue.h>
 #include <vm/uma.h>
 #include <vm/vm_domainset.h>
 #include <vm/vm.h>
 #include <vm/pmap.h>
 #include <vm/vm_extern.h>
-#include <vm/vm_page.h>
 
 #include <machine/cpufunc.h>
 #include <machine/pmap.h>
