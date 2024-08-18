@@ -231,7 +231,7 @@ l_true:
  * Change the state of a zcond by safely patching all of its
  * inspection points with appropriate instructions.
  */
-void __zcond_toggle(struct zcond *cond, bool enable);
+void __zcond_toggle(struct zcond *cond, bool enable, bool initial);
 
 /*
  * Called before a single patch_point is patched.
