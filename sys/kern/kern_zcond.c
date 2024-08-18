@@ -183,9 +183,9 @@ __zcond_toggle(struct zcond *cond, bool enable, bool initial)
 {
 	struct zcond_md_ctxt ctxt;
 
-    if((initial && enable || !initial && !enable) && !refcount_release_if_not_last(&cond->refcnt)) {
+    if(((initial && enable) || (!initial && !enable)) && !refcount_release_if_not_last(&cond->refcnt)) {
        return; 
-    } else if((initial && !enable || !initial && enable) && refcount_acquire(&cond->refcnt) > 1) {
+    } else if(((initial && !enable) || (!initial && enable)) && refcount_acquire(&cond->refcnt) > 1) {
         return;
     }    
 	struct zcond_patch_arg arg = { 
