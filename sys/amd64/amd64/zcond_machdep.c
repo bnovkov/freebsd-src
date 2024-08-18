@@ -57,30 +57,28 @@ static struct pmap zcond_pmap;
 static vm_offset_t zcond_patch_va;
 static pt_entry_t *zcond_patch_pte;
 
-void
-zcond_before_patch(void)
-{
-}
-
-void
-zcond_after_patch(void)
-{
-	mfence();
-}
-
-void
-zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
-{
-	pmap_qremove_zcond();
+void zcond_before_patch(vm_page_t patch_page, struct zcond_md_ctxt *ctxt) {
+	pmap_qenter_zcond(patch_page);
 	ctxt->cr3 = rcr3();
 	load_cr3(zcond_pmap.pm_cr3);
 }
 
 void
-zcond_after_rendezvous(struct zcond_md_ctxt *ctxt)
+zcond_after_patch(struct zcond_md_ctxt *ctxt)
 {
+	mfence();
 	load_cr3(ctxt->cr3);
+	pmap_qremove_zcond();
 	invltlb();
+}
+
+void
+zcond_before_rendezvous(void){
+}
+
+void
+zcond_after_rendezvous(void)
+{
 }
 
 static void
@@ -224,7 +222,7 @@ zcond_pmap_init(const void *unused)
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start, kern_end - kern_start,
 	    kern_start);
 
-	vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE, M_BESTFIT | M_NOWAIT, &zcond_patch_va);
+	vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE, M_BESTFIT | M_WAITOK, &zcond_patch_va);
 	dummy_page = vm_page_alloc_noobj_domain(domain,
 	    VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
 	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,

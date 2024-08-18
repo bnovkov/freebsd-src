@@ -77,7 +77,8 @@ zcond_load_patch_points(linker_file_t lf)
 		&end, NULL) == 0) {
 		for (ins_p = begin; ins_p < end; ins_p++) {
 			owning_zcond = ins_p->zcond;
-
+			owning_zcond->refcnt = 1;
+			
 			if (owning_zcond->patch_points.slh_first == NULL) {
 				SLIST_INIT(&owning_zcond->patch_points);
 			}
@@ -123,23 +124,23 @@ SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
  * Patch all patch_points belonging to cond.
  */
 static void
-zcond_patch(struct zcond *cond, bool enable)
+zcond_patch(struct zcond *cond, bool enable, struct zcond_md_ctxt *ctx)
 {
 	struct patch_point *p;
 	vm_page_t patch_page;
 	uint8_t insn[ZCOND_MAX_INSN_SIZE];
 	size_t insn_size;
 
+
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		zcond_get_patch_insn(p, insn, &insn_size);
-
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 		pmap_qenter_zcond(patch_page);
 
-		zcond_before_patch();
+		zcond_before_patch(patch_page, ctx);
 		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)),
 		    &insn[0], insn_size);
-		zcond_after_patch();
+		zcond_after_patch(ctx);
 	}
 }
 
@@ -151,7 +152,7 @@ rendezvous_setup(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_before_rendezvous(data->md_ctxt);
+		zcond_before_rendezvous();
 	}
 }
 
@@ -163,7 +164,7 @@ rendezvous_action(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_patch(data->cond, data->enable);
+		zcond_patch(data->cond, data->enable, data->md_ctxt);
 	}
 }
 
@@ -175,7 +176,7 @@ rendezvous_teardown(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_after_rendezvous(data->md_ctxt);
+		zcond_after_rendezvous();
 	}
 }
 
@@ -184,20 +185,22 @@ __zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-	if (enable && refcount_acquire(&cond->refcnt) > 0) {
+	if (enable && refcount_acquire(&cond->refcnt) > 1) {
 		return;
-	} else if (!enable && !refcount_release_if_not_last(&cond->refcnt)) {
-		return;
+	} else if (!enable) {
+		if (!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1)
+			return;
 	}
-
-	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
+	
+	struct zcond_patch_arg arg = { 
+		.patching_cpu = curcpu,
 		.cond = cond,
 		.md_ctxt = &ctxt,
-		.enable = enable };
+		.enable = enable 
+	};
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
-	zcond_after_rendezvous(&ctxt);
 }
 
 /*
