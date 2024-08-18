@@ -178,7 +178,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 		    .mod = #_mod,					\
 		    .func = #_func,					\
 		    .name = #_name,					\
-            .enabled = ZCOND_INIT(false)    \
+            .enabled = ZCOND_INIT()    \
 		},							\
 	};								\
 	DATA_SET(sdt_probes_set, _SDT_PROBE_NAME(_prov, _mod, _func, _name))
