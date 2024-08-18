@@ -173,17 +173,17 @@ l_true:
  * These macros declare and initialize a new zcond.
  */
 
-#define ZCOND_INIT(state)                                        \
+#define ZCOND_INIT()                                        \
 	{                                                        \
 		{                                                \
-			.refcnt = (state ? 1 : 0),               \
+			.refcnt = 1,               \
 			.patch_points = SLIST_HEAD_INITIALIZER() \
 		}                                                \
 	}
 
-#define DEFINE_ZCOND_TRUE(name)	  struct zcond_true name = ZCOND_INIT(true)
+#define DEFINE_ZCOND_TRUE(name)	  struct zcond_true name = ZCOND_INIT()
 
-#define DEFINE_ZCOND_FALSE(name)  struct zcond_false name = ZCOND_INIT(false)
+#define DEFINE_ZCOND_FALSE(name)  struct zcond_false name = ZCOND_INIT()
 
 #define DECLARE_ZCOND_TRUE(name)  struct zcond_true name;
 
@@ -224,8 +224,8 @@ l_true:
 /*
  * These macros change the state of a zcond.
  */
-#define zcond_enable(cond_wrapped)  __zcond_toggle(&cond_wrapped.cond, true)
-#define zcond_disable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, false)
+#define zcond_enable(cond_wrapped)  __zcond_toggle(&cond_wrapped.cond, true, __builtin_types_compatible_p(typeof(cond_wrapped), struct zcond_true))
+#define zcond_disable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, false, __builtin_types_compatible_p(typeof(cond_wrapped), struct zcond_true))
 
 /*
  * Change the state of a zcond by safely patching all of its

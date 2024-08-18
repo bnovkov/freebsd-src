@@ -60,7 +60,6 @@ struct zcond_patch_arg {
 	int patching_cpu;
 	struct zcond *cond;
 	struct zcond_md_ctxt *md_ctxt;
-	bool enable;
 };
 
 MALLOC_DECLARE(M_ZCOND);
@@ -123,7 +122,7 @@ SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
  * Patch all patch_points belonging to cond.
  */
 static void
-zcond_patch(struct zcond *cond, bool enable)
+zcond_patch(struct zcond *cond)
 {
 	struct patch_point *p;
 	vm_page_t patch_page;
@@ -163,7 +162,7 @@ rendezvous_action(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_patch(data->cond, data->enable);
+		zcond_patch(data->cond);
 	}
 }
 
@@ -180,20 +179,20 @@ rendezvous_teardown(void *arg)
 }
 
 void
-__zcond_toggle(struct zcond *cond, bool enable)
+__zcond_toggle(struct zcond *cond, bool enable, bool initial)
 {
 	struct zcond_md_ctxt ctxt;
 
-	if (enable && refcount_acquire(&cond->refcnt) > 0) {
-		return;
-	} else if (!enable && !refcount_release_if_not_last(&cond->refcnt)) {
-		return;
-	}
-
-	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
+    if((initial && enable || !initial && !enable) && !refcount_release_if_not_last(&cond->refcnt)) {
+       return; 
+    } else if((initial && !enable || !initial && enable) && refcount_acquire(&cond->refcnt) > 1) {
+        return;
+    
+	struct zcond_patch_arg arg = { 
+        .patching_cpu = curcpu,
 		.cond = cond,
 		.md_ctxt = &ctxt,
-		.enable = enable };
+	};
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
