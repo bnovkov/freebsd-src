@@ -266,7 +266,7 @@ void zcond_after_rendezvous(void);
  * to be patched with. insn[] is populated with the instruction bytes and size
  * is set to the number of instruction bytes.
  */
-void zcond_get_patch_insn(struct patch_point *ins_p, uint8_t insn[],
+uint8_t * zcond_get_patch_insn(struct patch_point *ins_p,
     size_t *size);
 
 void pmap_qenter_zcond(vm_page_t m);

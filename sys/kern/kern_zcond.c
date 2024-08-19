@@ -127,17 +127,17 @@ zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 {
 	struct patch_point *p;
 	vm_page_t patch_page;
-	uint8_t insn[ZCOND_MAX_INSN_SIZE];
+	uint8_t *insn;
 	size_t insn_size;
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
-		zcond_get_patch_insn(p, insn, &insn_size);
+		insn = zcond_get_patch_insn(p, &insn_size);
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 		zcond_before_patch(patch_page, ctxt);
 
 		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)),
-		    &insn[0], insn_size);
+		    insn, insn_size);
 		zcond_after_patch(ctxt);
 	}
 }
@@ -185,14 +185,10 @@ __zcond_toggle(struct zcond *cond, bool enable, bool initial)
 
     if(((initial && enable) || (!initial && !enable))) {
        if(!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1) {
-           int rc = refcount_load(&cond->refcnt);
-           printf("early exit release, refcnt = %d\n", rc);
            return; 
        }
     } else if(((initial && !enable) || (!initial && enable))) {
         if(refcount_acquire(&cond->refcnt) > 1) {
-            int rc = refcount_load(&cond->refcnt);
-            printf("early exit acquire, refcount = %d\n", rc);
             return;
         }
     }    

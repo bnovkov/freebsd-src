@@ -84,8 +84,10 @@ zcond_after_rendezvous(void)
 {
 }
 
+static uint8_t insn[ZCOND_MAX_INSN_SIZE];
+
 static void
-insn_nop(uint8_t insn[], size_t size)
+insn_nop(size_t size)
 {
 	int i;
 
@@ -101,7 +103,7 @@ insn_nop(uint8_t insn[], size_t size)
 }
 
 static void
-insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
+insn_jmp(size_t size, vm_offset_t offset)
 {
 	int i;
 
@@ -116,8 +118,8 @@ insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
 	}
 }
 
-void
-zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
+uint8_t *
+zcond_get_patch_insn(struct patch_point *p, size_t *size)
 {
 	uint8_t *patch_addr;
 	vm_offset_t offset;
@@ -145,12 +147,13 @@ zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 nop:
 	/* replace nop with jmp */
 	offset = p->lbl_true_addr - p->patch_addr - *size;
-	insn_jmp(insn, *size, offset);
-	return;
+	insn_jmp(*size, offset);
+	return &insn[0];
 
 jmp:
 	/* replace jmp with nop */
-	insn_nop(insn, *size);
+	insn_nop(*size);
+    return &insn[0];
 }
 
 /**********************
