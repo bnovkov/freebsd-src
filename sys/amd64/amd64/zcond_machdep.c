@@ -103,9 +103,12 @@ insn_nop(size_t size)
 }
 
 static void
-insn_jmp(size_t size, vm_offset_t offset)
+insn_jmp(size_t size, struct patch_point *p)
 {
 	int i;
+    vm_offset_t offset;
+
+	offset = p->lbl_true_addr - p->patch_addr - *size;
 
 	if (size == ZCOND_INSN_SHORT_SIZE) {
 		insn[0] = ZCOND_JMP_SHORT_OPCODE;
@@ -128,31 +131,22 @@ zcond_get_patch_insn(struct patch_point *p, size_t *size)
 	if (*patch_addr == nop_short_bytes[0]) {
 		/* two byte nop */
 		*size = ZCOND_INSN_SHORT_SIZE;
-		goto nop;
+        insn_jmp(size, *p);
 	} else if (*patch_addr == nop_long_bytes[0]) {
 		*size = ZCOND_INSN_LONG_SIZE;
-		goto nop;
+        insn_jmp(size, *p);
 	} else if (*patch_addr == ZCOND_JMP_SHORT_OPCODE) {
 		/* two byte jump */
 		*size = ZCOND_INSN_SHORT_SIZE;
-		goto jmp;
+		insn_nop(*size);
 	} else if (*patch_addr == ZCOND_JMP_LONG_OPCODE) {
 		/* five byte jump */
 		*size = ZCOND_INSN_LONG_SIZE;
-		goto jmp;
+		insn_nop(*size);
 	} else {
 		panic("unexpected opcode: %02hhx", *patch_addr);
 	}
 
-nop:
-	/* replace nop with jmp */
-	offset = p->lbl_true_addr - p->patch_addr - *size;
-	insn_jmp(*size, offset);
-	return &insn[0];
-
-jmp:
-	/* replace jmp with nop */
-	insn_nop(*size);
 	return &insn[0];
 }
 
