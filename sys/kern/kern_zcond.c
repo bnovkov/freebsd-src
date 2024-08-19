@@ -196,7 +196,6 @@ __zcond_toggle(struct zcond *cond, bool enable, bool initial)
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
-	zcond_after_rendezvous(&ctxt);
 }
 
 /*
