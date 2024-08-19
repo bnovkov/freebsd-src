@@ -63,9 +63,9 @@ static uint8_t *
 insn_nop(size_t size)
 {
 	if (size == ZCOND_INSN_SHORT_SIZE) {
-        return &nop_short_bytes[0];
-	} 
-    return &nop_long_bytes[0];
+		return &nop_short_bytes[0];
+	}
+	return &nop_long_bytes[0];
 }
 
 static uint8_t *
@@ -86,7 +86,7 @@ insn_jmp(size_t size, struct patch_point *p)
 		}
 	}
 
-    return &insn[0];
+	return &insn[0];
 }
 
 /**********************
@@ -105,7 +105,7 @@ zcond_init_pte(void)
 	vm_pindex_t pml5_idx, pml4_idx, pdp_idx, pd_idx;
 	vm_paddr_t mphys;
 	extern int la57;
-    bool is_la57;
+	bool is_la57;
 
 	domain = PCPU_GET(domain);
 	vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE,
@@ -115,7 +115,7 @@ zcond_init_pte(void)
 	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
 	    PMAP_ENTER_WIRED, 0);
 
-    is_la57 = false;
+	is_la57 = false;
 	if (zcond_pmap.pm_type == PT_X86) {
 		is_la57 = la57;
 	}
@@ -124,7 +124,8 @@ zcond_init_pte(void)
 	if (is_la57) {
 		pml5_idx = pmap_pml5e_index(zcond_patch_va);
 		pml5e = &zcond_pmap.pm_pmltopu[pml5_idx];
-		KASSERT(*pml5e != 0, ("%s: va %#jx pml5e == 0", __func__, zcond_patch_va));
+		KASSERT(*pml5e != 0,
+		    ("%s: va %#jx pml5e == 0", __func__, zcond_patch_va));
 		mphys = *pml5e & PG_FRAME;
 
 		pml4e = (pml4_entry_t *)PHYS_TO_DMAP(mphys);
@@ -133,13 +134,15 @@ zcond_init_pte(void)
 		pml4e = &zcond_pmap.pm_pmltop[pml4_idx];
 	}
 
-	KASSERT(*pml4e != 0, ("%s: va %#jx pml4e == 0", __func__, zcond_patch_va));
+	KASSERT(*pml4e != 0,
+	    ("%s: va %#jx pml4e == 0", __func__, zcond_patch_va));
 	mphys = *pml4e & PG_FRAME;
 
 	pdpe = (pdp_entry_t *)PHYS_TO_DMAP(mphys);
 	pdp_idx = pmap_pdpe_index(zcond_patch_va);
 	pdpe += pdp_idx;
-	KASSERT(*pdpe != 0, ("%s: va %#jx pdpe == 0", __func__, zcond_patch_va));
+	KASSERT(*pdpe != 0,
+	    ("%s: va %#jx pdpe == 0", __func__, zcond_patch_va));
 	mphys = *pdpe & PG_FRAME;
 
 	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
@@ -185,12 +188,12 @@ zcond_qenter(vm_page_t m)
 		    pa | pg_nx | X86_PG_A | X86_PG_M | X86_PG_RW | X86_PG_V);
 	}
 
-    invlpg(zcond_patch_va);
+	invlpg(zcond_patch_va);
 }
 
 /*************************
  * public interface impl *
-*************************/
+ *************************/
 vm_offset_t
 zcond_get_patch_va(void)
 {

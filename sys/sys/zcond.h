@@ -78,9 +78,9 @@
  * patch.
  */
 struct patch_point {
-	vm_offset_t patch_addr; 
+	vm_offset_t patch_addr;
 	vm_offset_t lbl_true_addr;
-    struct zcond *zcond;
+	struct zcond *zcond;
 	SLIST_ENTRY(patch_point) next;
 } __attribute__((packed));
 
