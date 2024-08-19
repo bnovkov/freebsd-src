@@ -223,8 +223,8 @@ l_true:
 /*
  * These macros change the state of a zcond.
  */
-#define zcond_enable(cond_wrapped)  __zcond_toggle(&cond_wrapped.cond, true, __builtin_types_compatible_p(typeof(cond_wrapped), struct zcond_true))
-#define zcond_disable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, false, __builtin_types_compatible_p(typeof(cond_wrapped), struct zcond_true))
+#define zcond_enable(cond_wrapped)  __zcond_toggle(&cond_wrapped.cond, true)
+#define zcond_disable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, false)
 
 /*
  * Forward declaration of a struct, defined separately for each architecture in
@@ -236,7 +236,7 @@ struct zcond_md_ctxt;
  * Change the state of a zcond by safely patching all of its
  * inspection points with appropriate instructions.
  */
-void __zcond_toggle(struct zcond *cond, bool enable, bool initial);
+void __zcond_toggle(struct zcond *cond, bool enable);
 
 /*
  * Called before a single patch_point is patched.

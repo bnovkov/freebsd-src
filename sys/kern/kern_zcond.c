@@ -179,19 +179,18 @@ rendezvous_teardown(void *arg)
 }
 
 void
-__zcond_toggle(struct zcond *cond, bool enable, bool initial)
+__zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-    if(((initial && enable) || (!initial && !enable))) {
-       if(!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1) {
-           return; 
-       }
-    } else if(((initial && !enable) || (!initial && enable))) {
-        if(refcount_acquire(&cond->refcnt) > 1) {
+    if(enable && refcount_acquire(&cond->refcnt) > 1) {
+        return;
+    } else if(!enable) {
+        if(refcnt_load(&cond->refcnt) != 1 || !refcount_release_if_not_last(&cond->refcnt)) {
             return;
         }
-    }    
+    }
+
 	struct zcond_patch_arg arg = { 
         .patching_cpu = curcpu,
 		.cond = cond,
