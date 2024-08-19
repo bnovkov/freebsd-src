@@ -77,12 +77,7 @@
  * statement). Holds all the data neccessary to perform a safe instruction
  * patch.
  */
-struct patch_point {
-	vm_offset_t patch_addr;
-	vm_offset_t lbl_true_addr;
-	struct zcond *zcond;
-	SLIST_ENTRY(patch_point) next;
-} __attribute__((packed));
+struct patch_point; 
 
 /*
  * A single optimized boolean.
@@ -248,7 +243,7 @@ void zcond_after_patch(struct zcond_md_ctxt *);
  * to be patched with. insn[] is populated with the instruction bytes and size
  * is set to the number of instruction bytes.
  */
-uint8_t *zcond_get_patch_insn(struct patch_point *ins_p, size_t *size);
+uint8_t *zcond_get_patch_insn(vm_offset_t patch_addr, vm_offset_t lbl_true_addr, size_t *size);
 
 vm_offset_t zcond_get_patch_va(void);
 
