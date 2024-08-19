@@ -186,7 +186,7 @@ __zcond_toggle(struct zcond *cond, bool enable)
     if(enable && refcount_acquire(&cond->refcnt) > 1) {
         return;
     } else if(!enable) {
-        if(refcount_load(&cond->refcnt) != 1 || !refcount_release_if_not_last(&cond->refcnt)) {
+        if(!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1) {
             return;
         }
     }
