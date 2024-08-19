@@ -96,6 +96,8 @@ insn_jmp(size_t size, struct patch_point *p)
 static pt_entry_t *
 zcond_init_pte(vm_offset_t va)
 {
+	vm_page_t dummy_page;
+	int domain;
 	pml5_entry_t *pml5e;
 	pml4_entry_t *pml4e;
 	pdp_entry_t *pdpe;
@@ -106,6 +108,7 @@ zcond_init_pte(vm_offset_t va)
 	extern int la57;
     bool is_la57;
 
+	domain = PCPU_GET(domain);
 	vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE,
 	    M_BESTFIT | M_WAITOK, &zcond_patch_va);
 	dummy_page = vm_page_alloc_noobj_domain(domain,
@@ -156,10 +159,6 @@ static void
 zcond_pmap_init(const void *unused)
 {
 	vm_offset_t kern_start, kern_end;
-	vm_page_t dummy_page;
-	int domain;
-
-	domain = PCPU_GET(domain);
 
 	kern_start = virtual_avail;
 	kern_end = kernel_vm_end;
@@ -177,15 +176,12 @@ SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_pmap_init, NULL);
 static void
 zcond_qenter(vm_page_t m)
 {
-	pt_entry_t oldpte, pa;
+	pt_entry_t pa;
 	int cache_bits;
-
-	oldpte = 0;
 
 	cache_bits = pmap_cache_bits(&zcond_pmap, m->md.pat_mode, false);
 	pa = VM_PAGE_TO_PHYS(m) | cache_bits;
 	if ((*zcond_patch_pte & (PG_FRAME | X86_PG_PTE_CACHE)) != pa) {
-		oldpte |= *zcond_patch_pte;
 		pte_store(zcond_patch_pte,
 		    pa | pg_nx | X86_PG_A | X86_PG_M | X86_PG_RW | X86_PG_V);
 	}
