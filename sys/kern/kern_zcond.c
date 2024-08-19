@@ -143,18 +143,6 @@ zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 }
 
 static void
-rendezvous_setup(void *arg)
-{
-	struct zcond_patch_arg *data;
-
-	data = (struct zcond_patch_arg *)arg;
-
-	if (data->patching_cpu == curcpu) {
-		zcond_before_rendezvous();
-	}
-}
-
-static void
 rendezvous_action(void *arg)
 {
 	struct zcond_patch_arg *data;
@@ -163,18 +151,6 @@ rendezvous_action(void *arg)
 
 	if (data->patching_cpu == curcpu) {
 		zcond_patch(data->cond, data->md_ctxt);
-	}
-}
-
-static void
-rendezvous_teardown(void *arg)
-{
-	struct zcond_patch_arg *data;
-
-	data = (struct zcond_patch_arg *)arg;
-
-	if (data->patching_cpu == curcpu) {
-		zcond_after_rendezvous();
 	}
 }
 
@@ -187,8 +163,6 @@ __zcond_toggle(struct zcond *cond, bool enable)
         return;
     } else if(!enable) {
         if(!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1) {
-            int rc = refcount_load(&cond->refcnt);
-            printf("early exit, refcount=%d\n", rc);
             return;
         }
     }
@@ -199,7 +173,7 @@ __zcond_toggle(struct zcond *cond, bool enable)
 		.md_ctxt = &ctxt,
 	};
 
-	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
+	smp_rendezvous(NULL, rendezvous_action, NULL,
 	    &arg);
 }
 

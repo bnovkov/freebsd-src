@@ -57,56 +57,23 @@ static struct pmap zcond_pmap;
 static vm_offset_t zcond_patch_va;
 static pt_entry_t *zcond_patch_pte;
 
-void
-zcond_before_patch(vm_page_t patch_page, struct zcond_md_ctxt *ctxt)
-{
-	pmap_qenter_zcond(patch_page);
-	ctxt->cr3 = rcr3();
-	load_cr3(zcond_pmap.pm_cr3);
-}
-
-void
-zcond_after_patch(struct zcond_md_ctxt *ctxt)
-{
-	mfence();
-	load_cr3(ctxt->cr3);
-	pmap_qremove_zcond();
-	invltlb();
-}
-
-void
-zcond_before_rendezvous(void)
-{
-}
-
-void
-zcond_after_rendezvous(void)
-{
-}
 
 static uint8_t insn[ZCOND_MAX_INSN_SIZE];
 
-static void
+static uint8_t *
 insn_nop(size_t size)
 {
-	int i;
-
 	if (size == ZCOND_INSN_SHORT_SIZE) {
-		for (i = 0; i < ZCOND_INSN_SHORT_SIZE; i++) {
-			insn[i] = nop_short_bytes[i];
-		}
-	} else {
-		for (i = 0; i < ZCOND_INSN_LONG_SIZE; i++) {
-			insn[i] = nop_long_bytes[i];
-		}
-	}
+        return &nop_short_bytes[0];
+	} 
+    return &nop_long_bytes[0];
 }
 
-static void
+static uint8_t *
 insn_jmp(size_t size, struct patch_point *p)
 {
 	int i;
-    vm_offset_t offset;
+	vm_offset_t offset;
 
 	offset = p->lbl_true_addr - p->patch_addr - size;
 
@@ -119,41 +86,15 @@ insn_jmp(size_t size, struct patch_point *p)
 			insn[i + 1] = (offset >> (i * 8)) & 0xFF;
 		}
 	}
-}
 
-uint8_t *
-zcond_get_patch_insn(struct patch_point *p, size_t *size)
-{
-	uint8_t *patch_addr;
-
-	patch_addr = (uint8_t *)p->patch_addr;
-	if (*patch_addr == nop_short_bytes[0]) {
-		/* two byte nop */
-		*size = ZCOND_INSN_SHORT_SIZE;
-        insn_jmp(*size, p);
-	} else if (*patch_addr == nop_long_bytes[0]) {
-		*size = ZCOND_INSN_LONG_SIZE;
-        insn_jmp(*size, p);
-	} else if (*patch_addr == ZCOND_JMP_SHORT_OPCODE) {
-		/* two byte jump */
-		*size = ZCOND_INSN_SHORT_SIZE;
-		insn_nop(*size);
-	} else if (*patch_addr == ZCOND_JMP_LONG_OPCODE) {
-		/* five byte jump */
-		*size = ZCOND_INSN_LONG_SIZE;
-		insn_nop(*size);
-	} else {
-		panic("unexpected opcode: %02hhx", *patch_addr);
-	}
-
-	return &insn[0];
+    return &insn[0];
 }
 
 /**********************
  * pmap functionality *
  ***********************/
 static pt_entry_t *
-zcond_pte(vm_offset_t va)
+zcond_init_pte(vm_offset_t va)
 {
 	pml5_entry_t *pml5e;
 	pml4_entry_t *pml4e;
@@ -163,8 +104,16 @@ zcond_pte(vm_offset_t va)
 	vm_pindex_t pml5_idx, pml4_idx, pdp_idx, pd_idx;
 	vm_paddr_t mphys;
 	extern int la57;
+    bool is_la57;
 
-	bool is_la57 = false;
+	vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE,
+	    M_BESTFIT | M_WAITOK, &zcond_patch_va);
+	dummy_page = vm_page_alloc_noobj_domain(domain,
+	    VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
+	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
+	    PMAP_ENTER_WIRED, 0);
+
+    is_la57 = false;
 	if (zcond_pmap.pm_type == PT_X86) {
 		is_la57 = la57;
 	}
@@ -221,19 +170,12 @@ zcond_pmap_init(const void *unused)
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start, kern_end - kern_start,
 	    kern_start);
 
-	vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE,
-	    M_BESTFIT | M_WAITOK, &zcond_patch_va);
-	dummy_page = vm_page_alloc_noobj_domain(domain,
-	    VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
-	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
-	    PMAP_ENTER_WIRED, 0);
-
-	zcond_patch_pte = zcond_pte(zcond_patch_va);
+	zcond_patch_pte = zcond_init_pte(zcond_patch_va);
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_pmap_init, NULL);
 
-void
-pmap_qenter_zcond(vm_page_t m)
+static void
+zcond_qenter(vm_page_t m)
 {
 	pt_entry_t oldpte, pa;
 	int cache_bits;
@@ -248,18 +190,57 @@ pmap_qenter_zcond(vm_page_t m)
 		    pa | pg_nx | X86_PG_A | X86_PG_M | X86_PG_RW | X86_PG_V);
 	}
 
-	if (__predict_false((oldpte & X86_PG_V) != 0))
-		invlpg(zcond_patch_va);
+    invlpg(zcond_patch_va);
 }
 
-void
-pmap_qremove_zcond(void)
-{
-	pte_clear(zcond_patch_pte);
-}
-
+/*************************
+ * public interface impl *
+*************************/
 vm_offset_t
 zcond_get_patch_va(void)
 {
 	return (zcond_patch_va);
+}
+
+void
+zcond_before_patch(vm_page_t patch_page, struct zcond_md_ctxt *ctxt)
+{
+	zcond_qenter(patch_page);
+	ctxt->cr3 = rcr3();
+	load_cr3(zcond_pmap.pm_cr3);
+}
+
+void
+zcond_after_patch(struct zcond_md_ctxt *ctxt)
+{
+	mfence();
+	load_cr3(ctxt->cr3);
+	pte_clear(zcond_patch_pte);
+	invltlb();
+}
+
+uint8_t *
+zcond_get_patch_insn(struct patch_point *p, size_t *size)
+{
+	uint8_t *patch_addr;
+
+	patch_addr = (uint8_t *)p->patch_addr;
+	if (*patch_addr == nop_short_bytes[0]) {
+		/* two byte nop */
+		*size = ZCOND_INSN_SHORT_SIZE;
+		return insn_jmp(*size, p);
+	} else if (*patch_addr == nop_long_bytes[0]) {
+		*size = ZCOND_INSN_LONG_SIZE;
+		return insn_jmp(*size, p);
+	} else if (*patch_addr == ZCOND_JMP_SHORT_OPCODE) {
+		/* two byte jump */
+		*size = ZCOND_INSN_SHORT_SIZE;
+		return insn_nop(*size);
+	} else if (*patch_addr == ZCOND_JMP_LONG_OPCODE) {
+		/* five byte jump */
+		*size = ZCOND_INSN_LONG_SIZE;
+		return insn_nop(*size);
+	} else {
+		panic("unexpected opcode: %02hhx", *patch_addr);
+	}
 }
