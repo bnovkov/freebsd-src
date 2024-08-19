@@ -93,7 +93,7 @@ insn_jmp(size_t size, struct patch_point *p)
  * pmap functionality *
  ***********************/
 static pt_entry_t *
-zcond_init_pte()
+zcond_init_pte(void)
 {
 	vm_page_t dummy_page;
 	int domain;
