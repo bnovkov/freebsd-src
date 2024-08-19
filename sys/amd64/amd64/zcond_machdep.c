@@ -31,23 +31,23 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/domain.h>
+#include <sys/domainset.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
-#include <sys/mutex.h>
-#include <sys/zcond.h>
-#include <sys/vmem.h>
-#include <sys/domain.h>
 #include <sys/malloc.h>
-#include <sys/domainset.h>
+#include <sys/mutex.h>
 #include <sys/queue.h>
+#include <sys/vmem.h>
+#include <sys/zcond.h>
 
 #include <vm/vm.h>
-#include <vm/vm_page.h>
-#include <vm/vm_pagequeue.h>
+#include <vm/pmap.h>
 #include <vm/uma.h>
 #include <vm/vm_domainset.h>
-#include <vm/pmap.h>
 #include <vm/vm_extern.h>
+#include <vm/vm_page.h>
+#include <vm/vm_pagequeue.h>
 
 #include <machine/cpufunc.h>
 #include <machine/pmap.h>
@@ -60,7 +60,7 @@ static pt_entry_t *zcond_patch_pte;
 void
 zcond_before_patch(vm_page_t patch_page, struct zcond_md_ctxt *ctxt)
 {
-    pmap_qenter_zcond(patch_page);
+	pmap_qenter_zcond(patch_page);
 	ctxt->cr3 = rcr3();
 	load_cr3(zcond_pmap.pm_cr3);
 }
@@ -68,9 +68,9 @@ zcond_before_patch(vm_page_t patch_page, struct zcond_md_ctxt *ctxt)
 void
 zcond_after_patch(struct zcond_md_ctxt *ctxt)
 {
-    mfence();
+	mfence();
 	load_cr3(ctxt->cr3);
-    pmap_qremove_zcond();
+	pmap_qremove_zcond();
 	invltlb();
 }
 
@@ -153,7 +153,7 @@ nop:
 jmp:
 	/* replace jmp with nop */
 	insn_nop(*size);
-    return &insn[0];
+	return &insn[0];
 }
 
 /**********************
@@ -215,9 +215,9 @@ zcond_pmap_init(const void *unused)
 {
 	vm_offset_t kern_start, kern_end;
 	vm_page_t dummy_page;
-    int domain;
+	int domain;
 
-    domain = PCPU_GET(domain);
+	domain = PCPU_GET(domain);
 
 	kern_start = virtual_avail;
 	kern_end = kernel_vm_end;
@@ -228,8 +228,10 @@ zcond_pmap_init(const void *unused)
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start, kern_end - kern_start,
 	    kern_start);
 
-    vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE, M_BESTFIT | M_WAITOK, &zcond_patch_va);
-    dummy_page = vm_page_alloc_noobj_domain(domain, VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
+	vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE,
+	    M_BESTFIT | M_WAITOK, &zcond_patch_va);
+	dummy_page = vm_page_alloc_noobj_domain(domain,
+	    VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
 	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
 	    PMAP_ENTER_WIRED, 0);
 

@@ -173,7 +173,7 @@ l_true:
  * These macros declare and initialize a new zcond.
  */
 
-#define ZCOND_INIT()                                        \
+#define ZCOND_INIT()                                             \
 	{                                                        \
 		{                                                \
 			.patch_points = SLIST_HEAD_INITIALIZER() \
@@ -248,7 +248,6 @@ void zcond_before_patch(vm_page_t, struct zcond_md_ctxt *);
  */
 void zcond_after_patch(struct zcond_md_ctxt *);
 
-
 /*
  * Called before CPUs are parked. Use this hook to perform MD pmap loading
  * and other MD setup.
@@ -266,8 +265,7 @@ void zcond_after_rendezvous(void);
  * to be patched with. insn[] is populated with the instruction bytes and size
  * is set to the number of instruction bytes.
  */
-uint8_t * zcond_get_patch_insn(struct patch_point *ins_p,
-    size_t *size);
+uint8_t *zcond_get_patch_insn(struct patch_point *ins_p, size_t *size);
 
 void pmap_qenter_zcond(vm_page_t m);
 void pmap_qremove_zcond(void);
