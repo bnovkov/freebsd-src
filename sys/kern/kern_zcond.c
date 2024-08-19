@@ -184,14 +184,14 @@ __zcond_toggle(struct zcond *cond, bool enable, bool initial)
 
     if(((initial && enable) || (!initial && !enable))) {
        if(!refcount_release_if_last(&cond->refcnt)) {
-           int rc = recount_load(&cond->refcnt);
+           int rc = refcount_load(&cond->refcnt);
            printf("early exit release, refcnt = %d\n", rc);
            refcount_release(&cond->refcnt);
            return; 
        }
     } else if(((initial && !enable) || (!initial && enable))) {
         if(refcount_acquire(&cond->refcnt) > 0) {
-            int rc = recount_load(&cond->refcnt);
+            int rc = refcount_load(&cond->refcnt);
             printf("early exit acquire, refcount = %d\n", rc);
             return;
         }
