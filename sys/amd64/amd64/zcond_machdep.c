@@ -219,7 +219,7 @@ zcond_get_patch_insn(vm_offset_t patch_addr, vm_offset_t lbl_true_addr, size_t *
 {
 	uint8_t *pa;
 
-	pa = (uint8_t *)p->patch_addr;
+	pa = (uint8_t *)patch_addr;
 	if (*pa == nop_short_bytes[0]) {
 		/* two byte nop */
 		*size = ZCOND_INSN_SHORT_SIZE;
@@ -227,15 +227,15 @@ zcond_get_patch_insn(vm_offset_t patch_addr, vm_offset_t lbl_true_addr, size_t *
 	} else if (*pa == nop_long_bytes[0]) {
 		*size = ZCOND_INSN_LONG_SIZE;
 		return insn_jmp(*size, patch_addr, lbl_true_addr);
-	} else if (*patch_addr == ZCOND_JMP_SHORT_OPCODE) {
+	} else if (*pa == ZCOND_JMP_SHORT_OPCODE) {
 		/* two byte jump */
 		*size = ZCOND_INSN_SHORT_SIZE;
 		return insn_nop(*size);
-	} else if (*patch_addr == ZCOND_JMP_LONG_OPCODE) {
+	} else if (*pa == ZCOND_JMP_LONG_OPCODE) {
 		/* five byte jump */
 		*size = ZCOND_INSN_LONG_SIZE;
 		return insn_nop(*size);
 	} else {
-		panic("%s: unexpected opcode: %02hhx", __func__, *patch_addr);
+		panic("%s: unexpected opcode: %02hhx", __func__, *pa);
 	}
 }
