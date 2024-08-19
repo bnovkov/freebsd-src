@@ -57,7 +57,6 @@ static struct pmap zcond_pmap;
 static vm_offset_t zcond_patch_va;
 static pt_entry_t *zcond_patch_pte;
 
-
 static uint8_t insn[ZCOND_MAX_INSN_SIZE];
 
 static uint8_t *
@@ -94,7 +93,7 @@ insn_jmp(size_t size, struct patch_point *p)
  * pmap functionality *
  ***********************/
 static pt_entry_t *
-zcond_init_pte(vm_offset_t va)
+zcond_init_pte()
 {
 	vm_page_t dummy_page;
 	int domain;
@@ -169,7 +168,7 @@ zcond_pmap_init(const void *unused)
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start, kern_end - kern_start,
 	    kern_start);
 
-	zcond_patch_pte = zcond_init_pte(zcond_patch_va);
+	zcond_patch_pte = zcond_init_pte();
 }
 SYSINIT(zcond_pmap, SI_SUB_ZCOND, SI_ORDER_FIRST, zcond_pmap_init, NULL);
 
