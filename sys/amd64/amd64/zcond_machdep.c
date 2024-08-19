@@ -69,12 +69,12 @@ insn_nop(size_t size)
 }
 
 static uint8_t *
-insn_jmp(size_t size, struct patch_point *p)
+insn_jmp(size_t size, vm_offset_t patch_addr, vm_offset_t lbl_true_addr)
 {
 	int i;
 	vm_offset_t offset;
 
-	offset = p->lbl_true_addr - p->patch_addr - size;
+	offset = lbl_true_addr - patch_addr - size;
 
 	if (size == ZCOND_INSN_SHORT_SIZE) {
 		insn[0] = ZCOND_JMP_SHORT_OPCODE;
@@ -191,9 +191,6 @@ zcond_qenter(vm_page_t m)
 	invlpg(zcond_patch_va);
 }
 
-/*************************
- * public interface impl *
- *************************/
 vm_offset_t
 zcond_get_patch_va(void)
 {
@@ -218,27 +215,28 @@ zcond_after_patch(struct zcond_md_ctxt *ctxt)
 }
 
 uint8_t *
-zcond_get_patch_insn(struct patch_point *p, size_t *size)
+zcond_get_patch_insn(vm_offset_t patch_addr, vm_offset_t lbl_true_addr,
+    size_t *size)
 {
-	uint8_t *patch_addr;
+	uint8_t *pa;
 
-	patch_addr = (uint8_t *)p->patch_addr;
-	if (*patch_addr == nop_short_bytes[0]) {
+	pa = (uint8_t *)patch_addr;
+	if (*pa == nop_short_bytes[0]) {
 		/* two byte nop */
 		*size = ZCOND_INSN_SHORT_SIZE;
-		return insn_jmp(*size, p);
-	} else if (*patch_addr == nop_long_bytes[0]) {
+		return insn_jmp(*size, patch_addr, lbl_true_addr);
+	} else if (*pa == nop_long_bytes[0]) {
 		*size = ZCOND_INSN_LONG_SIZE;
-		return insn_jmp(*size, p);
-	} else if (*patch_addr == ZCOND_JMP_SHORT_OPCODE) {
+		return insn_jmp(*size, patch_addr, lbl_true_addr);
+	} else if (*pa == ZCOND_JMP_SHORT_OPCODE) {
 		/* two byte jump */
 		*size = ZCOND_INSN_SHORT_SIZE;
 		return insn_nop(*size);
-	} else if (*patch_addr == ZCOND_JMP_LONG_OPCODE) {
+	} else if (*pa == ZCOND_JMP_LONG_OPCODE) {
 		/* five byte jump */
 		*size = ZCOND_INSN_LONG_SIZE;
 		return insn_nop(*size);
 	} else {
-		panic("unexpected opcode: %02hhx", *patch_addr);
+		panic("%s: unexpected opcode: %02hhx", __func__, *pa);
 	}
 }

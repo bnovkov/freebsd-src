@@ -56,6 +56,13 @@
 #include <machine/atomic.h>
 #include <machine/cpufunc.h>
 
+struct patch_point {
+	vm_offset_t patch_addr;
+	vm_offset_t lbl_true_addr;
+	struct zcond *zcond;
+	SLIST_ENTRY(patch_point) next;
+} __attribute__((packed));
+
 struct zcond_patch_arg {
 	int patching_cpu;
 	struct zcond *cond;
@@ -101,14 +108,15 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 	return (0);
 }
 
+/* When performing a patch on a zcond, each page containing a
+		   patch_point is patched to this address. */
+static vm_offset_t patch_addr;
+
 /*
  * Collect patch_points from the __zcond_table ELF section into a list.
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
  * an instruction.
  */
-static vm_offset_t
-    patch_addr; /* When performing a patch on a zcond, each page containing a
-		   patch_point is patched to this address. */
 static void
 zcond_init(const void *unused)
 {
@@ -131,7 +139,8 @@ zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 	size_t insn_size;
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
-		insn = zcond_get_patch_insn(p, &insn_size);
+		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr,
+		    &insn_size);
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 		zcond_before_patch(patch_page, ctxt);
