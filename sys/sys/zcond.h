@@ -176,7 +176,6 @@ l_true:
 #define ZCOND_INIT()                                        \
 	{                                                        \
 		{                                                \
-			.refcnt = 0,               \
 			.patch_points = SLIST_HEAD_INITIALIZER() \
 		}                                                \
 	}
