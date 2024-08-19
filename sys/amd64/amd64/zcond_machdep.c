@@ -108,7 +108,7 @@ insn_jmp(size_t size, struct patch_point *p)
 	int i;
     vm_offset_t offset;
 
-	offset = p->lbl_true_addr - p->patch_addr - *size;
+	offset = p->lbl_true_addr - p->patch_addr - size;
 
 	if (size == ZCOND_INSN_SHORT_SIZE) {
 		insn[0] = ZCOND_JMP_SHORT_OPCODE;
@@ -125,7 +125,6 @@ uint8_t *
 zcond_get_patch_insn(struct patch_point *p, size_t *size)
 {
 	uint8_t *patch_addr;
-	vm_offset_t offset;
 
 	patch_addr = (uint8_t *)p->patch_addr;
 	if (*patch_addr == nop_short_bytes[0]) {
