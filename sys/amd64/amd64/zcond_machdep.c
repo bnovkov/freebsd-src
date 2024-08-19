@@ -35,46 +35,59 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/zcond.h>
+#include <sys/vmem.h>
+#include <sys/domain.h>
+#include <sys/malloc.h>
+#include <sys/domainset.h>
+#include <sys/queue.h>
 
 #include <vm/vm.h>
+#include <vm/vm_page.h>
+#include <vm/vm_pagequeue.h>
+#include <vm/uma.h>
+#include <vm/vm_domainset.h>
 #include <vm/pmap.h>
 #include <vm/vm_extern.h>
-#include <vm/vm_page.h>
 
 #include <machine/cpufunc.h>
 #include <machine/pmap.h>
 #include <machine/zcond.h>
 
-struct pmap zcond_pmap;
+static struct pmap zcond_pmap;
+static vm_offset_t zcond_patch_va;
+static pt_entry_t *zcond_patch_pte;
 
 void
-zcond_before_patch(void)
+zcond_before_patch(vm_page_t patch_page, struct zcond_md_ctxt *ctxt)
 {
-}
-
-void
-zcond_after_patch(void)
-{
-	mfence();
-}
-
-void
-zcond_before_rendezvous(struct zcond_md_ctxt *ctxt)
-{
-	pmap_qremove_zcond();
+    pmap_qenter_zcond(patch_page);
 	ctxt->cr3 = rcr3();
 	load_cr3(zcond_pmap.pm_cr3);
 }
 
 void
-zcond_after_rendezvous(struct zcond_md_ctxt *ctxt)
+zcond_after_patch(struct zcond_md_ctxt *ctxt)
 {
+    mfence();
 	load_cr3(ctxt->cr3);
+    pmap_qremove_zcond();
 	invltlb();
 }
 
+void
+zcond_before_rendezvous(void)
+{
+}
+
+void
+zcond_after_rendezvous(void)
+{
+}
+
+static uint8_t insn[ZCOND_MAX_INSN_SIZE];
+
 static void
-insn_nop(uint8_t insn[], size_t size)
+insn_nop(size_t size)
 {
 	int i;
 
@@ -90,7 +103,7 @@ insn_nop(uint8_t insn[], size_t size)
 }
 
 static void
-insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
+insn_jmp(size_t size, vm_offset_t offset)
 {
 	int i;
 
@@ -105,8 +118,8 @@ insn_jmp(uint8_t insn[], size_t size, vm_offset_t offset)
 	}
 }
 
-void
-zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
+uint8_t *
+zcond_get_patch_insn(struct patch_point *p, size_t *size)
 {
 	uint8_t *patch_addr;
 	vm_offset_t offset;
@@ -134,21 +147,18 @@ zcond_get_patch_insn(struct patch_point *p, uint8_t insn[], size_t *size)
 nop:
 	/* replace nop with jmp */
 	offset = p->lbl_true_addr - p->patch_addr - *size;
-	insn_jmp(insn, *size, offset);
-	return;
+	insn_jmp(*size, offset);
+	return &insn[0];
 
 jmp:
 	/* replace jmp with nop */
-	insn_nop(insn, *size);
+	insn_nop(*size);
+    return &insn[0];
 }
 
 /**********************
  * pmap functionality *
  ***********************/
-
-static vm_offset_t zcond_patch_va;
-static pt_entry_t *zcond_patch_pte;
-
 static pt_entry_t *
 zcond_pte(vm_offset_t va)
 {
@@ -170,7 +180,7 @@ zcond_pte(vm_offset_t va)
 	if (is_la57) {
 		pml5_idx = pmap_pml5e_index(va);
 		pml5e = &zcond_pmap.pm_pmltopu[pml5_idx];
-		KASSERT(*pml5e != 0, ("va %#jx pml5e == 0", va));
+		KASSERT(*pml5e != 0, ("%s: va %#jx pml5e == 0", __func__, va));
 		mphys = *pml5e & PG_FRAME;
 
 		pml4e = (pml4_entry_t *)PHYS_TO_DMAP(mphys);
@@ -179,19 +189,19 @@ zcond_pte(vm_offset_t va)
 		pml4e = &zcond_pmap.pm_pmltop[pml4_idx];
 	}
 
-	KASSERT(*pml4e != 0, ("va %#jx pml4e == 0", va));
+	KASSERT(*pml4e != 0, ("%s: va %#jx pml4e == 0", __func__, va));
 	mphys = *pml4e & PG_FRAME;
 
 	pdpe = (pdp_entry_t *)PHYS_TO_DMAP(mphys);
 	pdp_idx = pmap_pdpe_index(va);
 	pdpe += pdp_idx;
-	KASSERT(*pdpe != 0, ("va %#jx pdpe == 0", va));
+	KASSERT(*pdpe != 0, ("%s: va %#jx pdpe == 0", __func__, va));
 	mphys = *pdpe & PG_FRAME;
 
 	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
 	pd_idx = pmap_pde_index(va);
 	pde += pd_idx;
-	KASSERT(*pde != 0, ("va %#jx pde == 0", va));
+	KASSERT(*pde != 0, ("%s: va %#jx pde == 0", __func__, va));
 	mphys = *pde & PG_FRAME;
 
 	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
@@ -205,6 +215,9 @@ zcond_pmap_init(const void *unused)
 {
 	vm_offset_t kern_start, kern_end;
 	vm_page_t dummy_page;
+    int domain;
+
+    domain = PCPU_GET(domain);
 
 	kern_start = virtual_avail;
 	kern_end = kernel_vm_end;
@@ -215,8 +228,8 @@ zcond_pmap_init(const void *unused)
 	pmap_copy(&zcond_pmap, kernel_pmap, kern_start, kern_end - kern_start,
 	    kern_start);
 
-	zcond_patch_va = kva_alloc(PAGE_SIZE);
-	dummy_page = vm_page_alloc_noobj(VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
+    vmem_alloc(VM_DOMAIN(domain)->vmd_kernel_nofree_arena, PAGE_SIZE, M_BESTFIT | M_WAITOK, &zcond_patch_va);
+    dummy_page = vm_page_alloc_noobj_domain(domain, VM_ALLOC_WIRED | VM_ALLOC_NOFREE);
 	pmap_enter(&zcond_pmap, zcond_patch_va, dummy_page, VM_PROT_WRITE,
 	    PMAP_ENTER_WIRED, 0);
 
@@ -253,5 +266,5 @@ pmap_qremove_zcond(void)
 vm_offset_t
 zcond_get_patch_va(void)
 {
-	return zcond_patch_va;
+	return (zcond_patch_va);
 }
