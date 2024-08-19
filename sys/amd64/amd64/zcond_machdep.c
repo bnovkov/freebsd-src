@@ -131,10 +131,10 @@ zcond_get_patch_insn(struct patch_point *p, size_t *size)
 	if (*patch_addr == nop_short_bytes[0]) {
 		/* two byte nop */
 		*size = ZCOND_INSN_SHORT_SIZE;
-        insn_jmp(size, *p);
+        insn_jmp(*size, p);
 	} else if (*patch_addr == nop_long_bytes[0]) {
 		*size = ZCOND_INSN_LONG_SIZE;
-        insn_jmp(size, *p);
+        insn_jmp(*size, p);
 	} else if (*patch_addr == ZCOND_JMP_SHORT_OPCODE) {
 		/* two byte jump */
 		*size = ZCOND_INSN_SHORT_SIZE;
