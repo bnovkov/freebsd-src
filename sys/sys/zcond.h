@@ -77,7 +77,6 @@
  * statement). Holds all the data neccessary to perform a safe instruction
  * patch.
  */
-struct patch_point; 
 
 /*
  * A single optimized boolean.
