@@ -173,17 +173,16 @@ l_true:
  * These macros declare and initialize a new zcond.
  */
 
-#define ZCOND_INIT(state)                                        \
+#define ZCOND_INIT()                                             \
 	{                                                        \
 		{                                                \
-			.refcnt = (state ? 2 : 1),               \
 			.patch_points = SLIST_HEAD_INITIALIZER() \
 		}                                                \
 	}
 
-#define DEFINE_ZCOND_TRUE(name)	  struct zcond_true name = ZCOND_INIT(true)
+#define DEFINE_ZCOND_TRUE(name)	  struct zcond_true name = ZCOND_INIT()
 
-#define DEFINE_ZCOND_FALSE(name)  struct zcond_false name = ZCOND_INIT(false)
+#define DEFINE_ZCOND_FALSE(name)  struct zcond_false name = ZCOND_INIT()
 
 #define DECLARE_ZCOND_TRUE(name)  struct zcond_true name;
 
@@ -228,6 +227,12 @@ l_true:
 #define zcond_disable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, false)
 
 /*
+ * Forward declaration of a struct, defined separately for each architecture in
+ * <machine/zcond.h>
+ */
+struct zcond_md_ctxt;
+
+/*
  * Change the state of a zcond by safely patching all of its
  * inspection points with appropriate instructions.
  */
@@ -236,37 +241,31 @@ void __zcond_toggle(struct zcond *cond, bool enable);
 /*
  * Called before a single patch_point is patched.
  */
-void zcond_before_patch(void);
+void zcond_before_patch(vm_page_t, struct zcond_md_ctxt *);
 
 /*
  * Called after a single patch_point was patched.
  */
-void zcond_after_patch(void);
+void zcond_after_patch(struct zcond_md_ctxt *);
 
-/*
- * Forward declaration of a struct, defined separately for each architecture in
- * <machine/zcond.h>
- */
-struct zcond_md_ctxt;
 /*
  * Called before CPUs are parked. Use this hook to perform MD pmap loading
  * and other MD setup.
  */
-void zcond_before_rendezvous(struct zcond_md_ctxt *);
+void zcond_before_rendezvous(void);
 
 /*
  * Called after the whole zcond is patched and CPUs are resumed.
  *  Use this hook to perform MD pmap cleanup.
  */
-void zcond_after_rendezvous(struct zcond_md_ctxt *);
+void zcond_after_rendezvous(void);
 
 /*
  * Calculates the bytes of instruction with which the ins_p inspection point is
  * to be patched with. insn[] is populated with the instruction bytes and size
  * is set to the number of instruction bytes.
  */
-void zcond_get_patch_insn(struct patch_point *ins_p, uint8_t insn[],
-    size_t *size);
+uint8_t *zcond_get_patch_insn(struct patch_point *ins_p, size_t *size);
 
 void pmap_qenter_zcond(vm_page_t m);
 void pmap_qremove_zcond(void);

@@ -56,6 +56,12 @@
 #include <machine/atomic.h>
 #include <machine/cpufunc.h>
 
+struct zcond_patch_arg {
+	int patching_cpu;
+	struct zcond *cond;
+	struct zcond_md_ctxt *md_ctxt;
+};
+
 MALLOC_DECLARE(M_ZCOND);
 MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
 
@@ -70,6 +76,7 @@ zcond_load_patch_points(linker_file_t lf)
 		&end, NULL) == 0) {
 		for (ins_p = begin; ins_p < end; ins_p++) {
 			owning_zcond = ins_p->zcond;
+            owning_zcond->refcnt = 1;
 
 			if (owning_zcond->patch_points.slh_first == NULL) {
 				SLIST_INIT(&owning_zcond->patch_points);
@@ -99,45 +106,39 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
  * an instruction.
  */
-static vm_offset_t mirror_addr;
+static vm_offset_t
+    patch_addr; /* When performing a patch on a zcond, each page containing a
+		   patch_point is patched to this address. */
 static void
 zcond_init(const void *unused)
 {
 	EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	linker_file_foreach(zcond_load_patch_points_cb, NULL);
-	mirror_addr = zcond_get_patch_va();
+	patch_addr = zcond_get_patch_va();
 }
 SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
-
-struct zcond_patch_arg {
-	int patching_cpu;
-	struct zcond *cond;
-	struct zcond_md_ctxt *md_ctxt;
-	bool enable;
-};
 
 /*
  * Patch all patch_points belonging to cond.
  */
 static void
-zcond_patch(struct zcond *cond, bool enable)
+zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 {
 	struct patch_point *p;
 	vm_page_t patch_page;
-	uint8_t insn[ZCOND_MAX_INSN_SIZE];
+	uint8_t *insn;
 	size_t insn_size;
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
-		zcond_get_patch_insn(p, insn, &insn_size);
+		insn = zcond_get_patch_insn(p, &insn_size);
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-		pmap_qenter_zcond(patch_page);
+		zcond_before_patch(patch_page, ctxt);
 
-		zcond_before_patch();
-		memcpy((void *)(mirror_addr + (p->patch_addr & PAGE_MASK)),
-		    &insn[0], insn_size);
-		zcond_after_patch();
+		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)),
+		    insn, insn_size);
+		zcond_after_patch(ctxt);
 	}
 }
 
@@ -149,7 +150,7 @@ rendezvous_setup(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_before_rendezvous(data->md_ctxt);
+		zcond_before_rendezvous();
 	}
 }
 
@@ -161,7 +162,7 @@ rendezvous_action(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_patch(data->cond, data->enable);
+		zcond_patch(data->cond, data->md_ctxt);
 	}
 }
 
@@ -173,7 +174,7 @@ rendezvous_teardown(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_after_rendezvous(data->md_ctxt);
+		zcond_after_rendezvous();
 	}
 }
 
@@ -182,24 +183,24 @@ __zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-	if (enable && refcount_acquire(&cond->refcnt) > 1) {
-		return;
-	} else if (!enable && !refcount_release_if_not_last(&cond->refcnt)) {
-		return;
-	}
+    if(enable && refcount_acquire(&cond->refcnt) > 1) {
+        return;
+    } else if(!enable) {
+        if(!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1) {
+            int rc = refcount_load(&cond->refcnt);
+            printf("early exit, refcount=%d\n", rc);
+            return;
+        }
+    }
 
-	if (!enable && refcount_load(&cond->refcnt) > 1) {
-		return;
-	}
-
-	struct zcond_patch_arg arg = { .patching_cpu = curcpu,
+	struct zcond_patch_arg arg = { 
+        .patching_cpu = curcpu,
 		.cond = cond,
 		.md_ctxt = &ctxt,
-		.enable = enable };
+	};
 
 	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
 	    &arg);
-	zcond_after_rendezvous(&ctxt);
 }
 
 /*
