@@ -120,11 +120,11 @@ zcond_init_pte()
 		is_la57 = la57;
 	}
 
-	pml4_idx = pmap_pml4e_index(va);
+	pml4_idx = pmap_pml4e_index(zcond_patch_va);
 	if (is_la57) {
-		pml5_idx = pmap_pml5e_index(va);
+		pml5_idx = pmap_pml5e_index(zcond_patch_va);
 		pml5e = &zcond_pmap.pm_pmltopu[pml5_idx];
-		KASSERT(*pml5e != 0, ("%s: va %#jx pml5e == 0", __func__, va));
+		KASSERT(*pml5e != 0, ("%s: va %#jx pml5e == 0", __func__, zcond_patch_va));
 		mphys = *pml5e & PG_FRAME;
 
 		pml4e = (pml4_entry_t *)PHYS_TO_DMAP(mphys);
@@ -133,23 +133,23 @@ zcond_init_pte()
 		pml4e = &zcond_pmap.pm_pmltop[pml4_idx];
 	}
 
-	KASSERT(*pml4e != 0, ("%s: va %#jx pml4e == 0", __func__, va));
+	KASSERT(*pml4e != 0, ("%s: va %#jx pml4e == 0", __func__, zcond_patch_va));
 	mphys = *pml4e & PG_FRAME;
 
 	pdpe = (pdp_entry_t *)PHYS_TO_DMAP(mphys);
-	pdp_idx = pmap_pdpe_index(va);
+	pdp_idx = pmap_pdpe_index(zcond_patch_va);
 	pdpe += pdp_idx;
-	KASSERT(*pdpe != 0, ("%s: va %#jx pdpe == 0", __func__, va));
+	KASSERT(*pdpe != 0, ("%s: va %#jx pdpe == 0", __func__, zcond_patch_va));
 	mphys = *pdpe & PG_FRAME;
 
 	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
-	pd_idx = pmap_pde_index(va);
+	pd_idx = pmap_pde_index(zcond_patch_va);
 	pde += pd_idx;
-	KASSERT(*pde != 0, ("%s: va %#jx pde == 0", __func__, va));
+	KASSERT(*pde != 0, ("%s: va %#jx pde == 0", __func__, zcond_patch_va));
 	mphys = *pde & PG_FRAME;
 
 	pte = (pt_entry_t *)PHYS_TO_DMAP(mphys);
-	pte += pmap_pte_index(va);
+	pte += pmap_pte_index(zcond_patch_va);
 
 	return (pte);
 }
