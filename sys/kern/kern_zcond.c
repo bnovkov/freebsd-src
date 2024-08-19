@@ -122,7 +122,7 @@ SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
  * Patch all patch_points belonging to cond.
  */
 static void
-zcond_patch(struct zcond *cond)
+zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 {
 	struct patch_point *p;
 	vm_page_t patch_page;
@@ -133,12 +133,11 @@ zcond_patch(struct zcond *cond)
 		zcond_get_patch_insn(p, insn, &insn_size);
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-		pmap_qenter_zcond(patch_page);
+		zcond_before_patch(patch_page, ctxt);
 
-		zcond_before_patch();
 		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)),
 		    &insn[0], insn_size);
-		zcond_after_patch();
+		zcond_after_patch(ctxt);
 	}
 }
 
@@ -150,7 +149,7 @@ rendezvous_setup(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_before_rendezvous(data->md_ctxt);
+		zcond_before_rendezvous();
 	}
 }
 
@@ -162,7 +161,7 @@ rendezvous_action(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_patch(data->cond);
+		zcond_patch(data->cond, data->md_ctxt);
 	}
 }
 
@@ -174,7 +173,7 @@ rendezvous_teardown(void *arg)
 	data = (struct zcond_patch_arg *)arg;
 
 	if (data->patching_cpu == curcpu) {
-		zcond_after_rendezvous(data->md_ctxt);
+		zcond_after_rendezvous();
 	}
 }
 
@@ -183,7 +182,8 @@ __zcond_toggle(struct zcond *cond, bool enable, bool initial)
 {
 	struct zcond_md_ctxt ctxt;
 
-    if(((initial && enable) || (!initial && !enable)) && !refcount_release_if_not_last(&cond->refcnt)) {
+    if(((initial && enable) || (!initial && !enable)) && !refcount_release_if_last(&cond->refcnt)) {
+       refcount_release(&cond->refcnt);
        return; 
     } else if(((initial && !enable) || (!initial && enable)) && refcount_acquire(&cond->refcnt) > 1) {
         return;
