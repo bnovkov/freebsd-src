@@ -215,7 +215,8 @@ zcond_after_patch(struct zcond_md_ctxt *ctxt)
 }
 
 uint8_t *
-zcond_get_patch_insn(vm_offset_t patch_addr, vm_offset_t lbl_true_addr, size_t *size)
+zcond_get_patch_insn(vm_offset_t patch_addr, vm_offset_t lbl_true_addr,
+    size_t *size)
 {
 	uint8_t *pa;
 

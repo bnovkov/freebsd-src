@@ -110,7 +110,7 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 
 /* When performing a patch on a zcond, each page containing a
 		   patch_point is patched to this address. */
-static vm_offset_t patch_addr; 
+static vm_offset_t patch_addr;
 
 /*
  * Collect patch_points from the __zcond_table ELF section into a list.
@@ -139,7 +139,8 @@ zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 	size_t insn_size;
 
 	SLIST_FOREACH(p, &cond->patch_points, next) {
-		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr, &insn_size);
+		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr,
+		    &insn_size);
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 		zcond_before_patch(patch_page, ctxt);
