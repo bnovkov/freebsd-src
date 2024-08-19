@@ -183,9 +183,11 @@ __zcond_toggle(struct zcond *cond, bool enable, bool initial)
 	struct zcond_md_ctxt ctxt;
 
     if(((initial && enable) || (!initial && !enable)) && !refcount_release_if_last(&cond->refcnt)) {
+       printf("early exit release");
        refcount_release(&cond->refcnt);
        return; 
-    } else if(((initial && !enable) || (!initial && enable)) && refcount_acquire(&cond->refcnt) > 1) {
+    } else if(((initial && !enable) || (!initial && enable)) && refcount_acquire(&cond->refcnt) > 0) {
+        printf("early exit acquire\n");
         return;
     }    
 	struct zcond_patch_arg arg = { 
