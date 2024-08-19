@@ -66,8 +66,6 @@
  * Use zcond_false(cond) or zcond_true(cond) to inspect the state of a zcond.
  *
  * To flip the state of a zcond, use zcond_enable(cond) and zcond_disable(cond).
- * Zconds are reference counted, so zcond_enable() increments the reference
- * count while zcond_disable() decrements it.
  *
  * This header includes the interface intended to be used by consumers, as well
  * as some MI code. MD support can be found in sys/<arch>/include/zcond.h and
@@ -80,12 +78,9 @@
  * patch.
  */
 struct patch_point {
-	vm_offset_t patch_addr; /* address of the nop or jmp instruction to be
-				   patched */
-	vm_offset_t lbl_true_addr; /* address of the label to jump to when the
-				      condition is true */
-	struct zcond *
-	    zcond; /* pointer to the zcond inspected by this inspection point */
+	vm_offset_t patch_addr;
+	vm_offset_t lbl_true_addr;
+	struct zcond *zcond;
 	SLIST_ENTRY(patch_point) next;
 } __attribute__((packed));
 
@@ -249,26 +244,12 @@ void zcond_before_patch(vm_page_t, struct zcond_md_ctxt *);
 void zcond_after_patch(struct zcond_md_ctxt *);
 
 /*
- * Called before CPUs are parked. Use this hook to perform MD pmap loading
- * and other MD setup.
- */
-void zcond_before_rendezvous(void);
-
-/*
- * Called after the whole zcond is patched and CPUs are resumed.
- *  Use this hook to perform MD pmap cleanup.
- */
-void zcond_after_rendezvous(void);
-
-/*
  * Calculates the bytes of instruction with which the ins_p inspection point is
  * to be patched with. insn[] is populated with the instruction bytes and size
  * is set to the number of instruction bytes.
  */
 uint8_t *zcond_get_patch_insn(struct patch_point *ins_p, size_t *size);
 
-void pmap_qenter_zcond(vm_page_t m);
-void pmap_qremove_zcond(void);
 vm_offset_t zcond_get_patch_va(void);
 
 #endif

@@ -76,7 +76,7 @@ zcond_load_patch_points(linker_file_t lf)
 		&end, NULL) == 0) {
 		for (ins_p = begin; ins_p < end; ins_p++) {
 			owning_zcond = ins_p->zcond;
-            owning_zcond->refcnt = 1;
+			owning_zcond->refcnt = 1;
 
 			if (owning_zcond->patch_points.slh_first == NULL) {
 				SLIST_INIT(&owning_zcond->patch_points);
@@ -136,21 +136,9 @@ zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
 		zcond_before_patch(patch_page, ctxt);
 
-		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)),
-		    insn, insn_size);
+		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)), insn,
+		    insn_size);
 		zcond_after_patch(ctxt);
-	}
-}
-
-static void
-rendezvous_setup(void *arg)
-{
-	struct zcond_patch_arg *data;
-
-	data = (struct zcond_patch_arg *)arg;
-
-	if (data->patching_cpu == curcpu) {
-		zcond_before_rendezvous();
 	}
 }
 
@@ -166,41 +154,27 @@ rendezvous_action(void *arg)
 	}
 }
 
-static void
-rendezvous_teardown(void *arg)
-{
-	struct zcond_patch_arg *data;
-
-	data = (struct zcond_patch_arg *)arg;
-
-	if (data->patching_cpu == curcpu) {
-		zcond_after_rendezvous();
-	}
-}
-
 void
 __zcond_toggle(struct zcond *cond, bool enable)
 {
 	struct zcond_md_ctxt ctxt;
 
-    if(enable && refcount_acquire(&cond->refcnt) > 1) {
-        return;
-    } else if(!enable) {
-        if(!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1) {
-            int rc = refcount_load(&cond->refcnt);
-            printf("early exit, refcount=%d\n", rc);
-            return;
-        }
-    }
+	if (enable && refcount_acquire(&cond->refcnt) > 1) {
+		return;
+	} else if (!enable) {
+		if (!refcount_release_if_not_last(&cond->refcnt) ||
+		    refcount_load(&cond->refcnt) != 1) {
+			return;
+		}
+	}
 
-	struct zcond_patch_arg arg = { 
-        .patching_cpu = curcpu,
+	struct zcond_patch_arg arg = {
+		.patching_cpu = curcpu,
 		.cond = cond,
 		.md_ctxt = &ctxt,
 	};
 
-	smp_rendezvous(rendezvous_setup, rendezvous_action, rendezvous_teardown,
-	    &arg);
+	smp_rendezvous(NULL, rendezvous_action, NULL, &arg);
 }
 
 /*
