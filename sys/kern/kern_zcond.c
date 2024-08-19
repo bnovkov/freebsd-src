@@ -187,6 +187,8 @@ __zcond_toggle(struct zcond *cond, bool enable)
         return;
     } else if(!enable) {
         if(!refcount_release_if_not_last(&cond->refcnt) || refcount_load(&cond->refcnt) != 1) {
+            int rc = refcount_load(&cond->refcnt);
+            printf("early exit, refcount=%d\n", rc);
             return;
         }
     }
