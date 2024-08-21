@@ -1,3 +1,4 @@
+#include <sys/types.h>
 #include <sys/cpuset.h>
 #include <sys/patch.h>
 #include <sys/types.h>
@@ -45,14 +46,14 @@ void __patch(void *arg) {
 
 	data = (struct patch_arg *)arg;
 	for(i = 0; i < data->cnt; i++) {
-		va = arg->vas[i];
-		insn = arg->insns[i];
-		size = arg->sizes[i];
+		va = data->vas[i];
+		insn = data->insns[i];
+		size = data->sizes[i];
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(va));
 		before_patch(patch_page, data->md_ctxt);
-		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)), insn,
-		    insn_size);
+		memcpy((void *)(patch_addr + (patch_addr & PAGE_MASK)), insn,
+		    size);
 		after_patch(arg->md_ctxt);
 	}
 }
