@@ -155,12 +155,6 @@ __zcond_toggle(struct zcond *cond, bool enable)
 		memcpy(insns[i], insn, insn_size);
 		sizes[i] = insn_size;
 		i++;
-		
-		printf("insn for va %lx: ", p->patch_addr);
-		for(int j=0;j<insn_size;j++) {
-			printf("%hhx ", insn[j]);
-		}
-		printf("\n");
 	}
 
 	patch_many(vas, insns, sizes, cnt);

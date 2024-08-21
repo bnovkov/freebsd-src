@@ -50,11 +50,6 @@ __patch(void *arg) {
 		va = data->vas[i];
 		insn = data->insns[i];
 		size = data->sizes[i];
-		printf("patch %lx with insn (%zu bytes): ", va, size);
-		for(int j=0;j<size;j++) {
-			printf("%hhx ", insn[j]);
-		}
-		printf("\n");
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(va));
 		before_patch(patch_page, data->md_ctxt);
