@@ -106,10 +106,6 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 	return (0);
 }
 
-/* When performing a patch on a zcond, each page containing a
-		   patch_point is patched to this address. */
-static vm_offset_t patch_addr;
-
 /*
  * Collect patch_points from the __zcond_table ELF section into a list.
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
