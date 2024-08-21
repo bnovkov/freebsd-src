@@ -124,27 +124,6 @@ zcond_init(const void *unused)
 }
 SYSINIT(zcond, SI_SUB_PATCH, SI_ORDER_THIRD, zcond_init, NULL);
 
-/*
- * Patch all patch_points belonging to cond.
- */
-static void
-zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
-{
-	struct patch_point *p;
-	vm_page_t patch_page;
-	uint8_t *insn;
-	size_t insn_size;
-
-	SLIST_FOREACH(p, &cond->patch_points, next) {
-		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr,
-		    &insn_size);
-
-		zcond_before_patch(patch_page, ctxt);
-
-
-		zcond_after_patch(ctxt);
-	}
-}
 
 void
 __zcond_toggle(struct zcond *cond, bool enable)
