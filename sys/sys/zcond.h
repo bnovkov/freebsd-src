@@ -83,6 +83,7 @@
  */
 struct zcond {
 	int refcnt;
+	size_t num_patch_points;
 	SLIST_HEAD(, patch_point) patch_points;
 };
 
@@ -215,27 +216,12 @@ l_true:
 #define zcond_enable(cond_wrapped)  __zcond_toggle(&cond_wrapped.cond, true)
 #define zcond_disable(cond_wrapped) __zcond_toggle(&cond_wrapped.cond, false)
 
-/*
- * Forward declaration of a struct, defined separately for each architecture in
- * <machine/zcond.h>
- */
-struct zcond_md_ctxt;
 
 /*
  * Change the state of a zcond by safely patching all of its
  * inspection points with appropriate instructions.
  */
 void __zcond_toggle(struct zcond *cond, bool enable);
-
-/*
- * Called before a single patch_point is patched.
- */
-void zcond_before_patch(vm_page_t, struct zcond_md_ctxt *);
-
-/*
- * Called after a single patch_point was patched.
- */
-void zcond_after_patch(struct zcond_md_ctxt *);
 
 /*
  * Calculates the bytes of instruction with which the ins_p inspection point is
@@ -245,7 +231,6 @@ void zcond_after_patch(struct zcond_md_ctxt *);
 uint8_t *zcond_get_patch_insn(vm_offset_t patch_addr, vm_offset_t lbl_true_addr,
     size_t *size);
 
-vm_offset_t zcond_get_patch_va(void);
 
 #endif
 #endif
