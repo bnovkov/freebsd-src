@@ -37,7 +37,7 @@ SYSINIT(patch, SI_SUB_PATCH, SI_ORDER_SECOND, patch_init, NULL);
 
 static void
 __patch(void *arg) {
-	printf("patch start");
+	printf("patch start\n");
 	struct patch_arg *data;
 	vm_offset_t va;
 	vm_page_t patch_page;
