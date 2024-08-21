@@ -35,7 +35,8 @@ patch_init(void *arg)
 
 SYSINIT(patch, SI_SUB_PATCH, SI_ORDER_SECOND, patch_init, NULL);
 
-void __patch(void *arg) {
+static void
+__patch(void *arg) {
 
 	struct patch_arg *data;
 	vm_offset_t va;
@@ -54,7 +55,7 @@ void __patch(void *arg) {
 		before_patch(patch_page, data->md_ctxt);
 		memcpy((void *)(patch_addr + (patch_addr & PAGE_MASK)), insn,
 		    size);
-		after_patch(arg->md_ctxt);
+		after_patch(data->md_ctxt);
 	}
 }
 
@@ -75,12 +76,12 @@ patch_many(vm_offset_t *vas, uint8_t **insns, size_t *sizes, size_t cnt)
 {
 	struct patch_md_ctxt ctxt;
 	struct patch_arg arg = {
-		.patching_cpu = curcpu;
-		.vas = vas;
-		.insns = insns;
-		.sizes = sizes;
-		.cnt = cnt;
-		.md_ctxt = &ctxt;
+		.patching_cpu = curcpu,
+		.vas = vas,
+		.insns = insns,
+		.sizes = sizes,
+		.cnt = cnt,
+		.md_ctxt = &ctxt
 	};
 	smp_rendezvous(NULL, rendezvous_action, NULL, &arg);
 }
