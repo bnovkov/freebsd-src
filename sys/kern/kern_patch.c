@@ -37,7 +37,7 @@ SYSINIT(patch, SI_SUB_PATCH, SI_ORDER_SECOND, patch_init, NULL);
 
 static void
 __patch(void *arg) {
-
+	printf("patch start");
 	struct patch_arg *data;
 	vm_offset_t va;
 	vm_page_t patch_page;
@@ -50,6 +50,11 @@ __patch(void *arg) {
 		va = data->vas[i];
 		insn = data->insns[i];
 		size = data->sizes[i];
+		printf("patch %lx with insn (%dytes): ", va, size);
+		for(int j=0;j<size;j++) {
+			printf("%hhx ", insn[i]);
+		}
+		printf("\n");
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(va));
 		before_patch(patch_page, data->md_ctxt);
