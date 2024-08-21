@@ -53,8 +53,6 @@
 #include <machine/pmap.h>
 #include <machine/zcond.h>
 
-
-
 static uint8_t insn[ZCOND_MAX_INSN_SIZE];
 
 static uint8_t *

@@ -52,7 +52,7 @@ __patch(void *arg) {
 		size = data->sizes[i];
 		printf("patch %lx with insn (%zu bytes): ", va, size);
 		for(int j=0;j<size;j++) {
-			printf("%hhx ", insn[i]);
+			printf("%hhx ", insn[j]);
 		}
 		printf("\n");
 
