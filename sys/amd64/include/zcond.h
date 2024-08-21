@@ -56,9 +56,5 @@ static uint8_t nop_long_bytes[] = { 0x0f, 0x1f, 0x44, 0x00, 0x00 };
 #define ZCOND_INSN_LONG_SIZE   5
 #define ZCOND_MAX_INSN_SIZE    5
 
-struct zcond_md_ctxt {
-	uint64_t cr3;
-};
-
 #endif /*_MACHINE_ZCOND_H*/
 #endif /* _KERNEL */

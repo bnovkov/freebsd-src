@@ -38,13 +38,14 @@
 #include <sys/linker.h>
 #include <sys/linker_set.h>
 #include <sys/lock.h>
-#include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/refcount.h>
 #include <sys/sbuf.h>
 #include <sys/smp.h>
 #include <sys/sysctl.h>
+#include <sys/malloc.h>
 #include <sys/zcond.h>
+#include <sys/patch.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -63,11 +64,6 @@ struct patch_point {
 	SLIST_ENTRY(patch_point) next;
 } __attribute__((packed));
 
-struct zcond_patch_arg {
-	int patching_cpu;
-	struct zcond *cond;
-	struct zcond_md_ctxt *md_ctxt;
-};
 
 MALLOC_DECLARE(M_ZCOND);
 MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
@@ -83,14 +79,16 @@ zcond_load_patch_points(linker_file_t lf)
 		&end, NULL) == 0) {
 		for (ins_p = begin; ins_p < end; ins_p++) {
 			owning_zcond = ins_p->zcond;
-			owning_zcond->refcnt = 1;
 
 			if (owning_zcond->patch_points.slh_first == NULL) {
 				SLIST_INIT(&owning_zcond->patch_points);
+				owning_zcond->refcnt = 1;
+				owning_zcond->num_patch_points = 0;
 			}
 
 			SLIST_INSERT_HEAD(&owning_zcond->patch_points, ins_p,
 			    next);
+			owning_zcond->num_patch_points++;
 		}
 	}
 }
@@ -108,10 +106,6 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 	return (0);
 }
 
-/* When performing a patch on a zcond, each page containing a
-		   patch_point is patched to this address. */
-static vm_offset_t patch_addr;
-
 /*
  * Collect patch_points from the __zcond_table ELF section into a list.
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
@@ -123,50 +117,21 @@ zcond_init(const void *unused)
 	EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	linker_file_foreach(zcond_load_patch_points_cb, NULL);
-	patch_addr = zcond_get_patch_va();
 }
-SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
+SYSINIT(zcond, SI_SUB_PATCH, SI_ORDER_THIRD, zcond_init, NULL);
 
-/*
- * Patch all patch_points belonging to cond.
- */
-static void
-zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
-{
-	struct patch_point *p;
-	vm_page_t patch_page;
-	uint8_t *insn;
-	size_t insn_size;
-
-	SLIST_FOREACH(p, &cond->patch_points, next) {
-		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr,
-		    &insn_size);
-
-		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-		zcond_before_patch(patch_page, ctxt);
-
-		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)), insn,
-		    insn_size);
-		zcond_after_patch(ctxt);
-	}
-}
-
-static void
-rendezvous_action(void *arg)
-{
-	struct zcond_patch_arg *data;
-
-	data = (struct zcond_patch_arg *)arg;
-
-	if (data->patching_cpu == curcpu) {
-		zcond_patch(data->cond, data->md_ctxt);
-	}
-}
 
 void
 __zcond_toggle(struct zcond *cond, bool enable)
 {
-	struct zcond_md_ctxt ctxt;
+	vm_offset_t *vas;
+	uint8_t **insns;
+	uint8_t *insn;
+	size_t *sizes;
+	size_t insn_size;
+	size_t cnt;
+	struct patch_point *p;
+	int i;
 
 	if (enable && refcount_acquire(&cond->refcnt) > 1) {
 		return;
@@ -176,14 +141,33 @@ __zcond_toggle(struct zcond *cond, bool enable)
 			return;
 		}
 	}
+	
+	cnt = cond->num_patch_points;
+	vas = malloc(cnt * sizeof(vm_offset_t), M_ZCOND, M_WAITOK);
+	insns = malloc(cnt * sizeof(uint8_t *), M_ZCOND, M_WAITOK);	
+	sizes = malloc(cnt * sizeof(size_t), M_ZCOND, M_WAITOK);
 
-	struct zcond_patch_arg arg = {
-		.patching_cpu = curcpu,
-		.cond = cond,
-		.md_ctxt = &ctxt,
-	};
+	i = 0;
+	SLIST_FOREACH(p, &cond->patch_points, next) {
+		vas[i] = p->patch_addr;
+		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr, &insn_size);
+		insns[i] = malloc(sizeof(uint8_t) * insn_size, M_ZCOND, M_WAITOK);
+		memcpy(insns[i], insn, insn_size);
+		sizes[i] = insn_size;
+		i++;
+	}
 
-	smp_rendezvous(NULL, rendezvous_action, NULL, &arg);
+	patch_many(vas, insns, sizes, cnt);
+
+	i = 0;
+	SLIST_FOREACH(p, &cond->patch_points, next) {
+		free(insns[i], M_ZCOND);
+		i++;	
+	}	
+
+	free(vas, M_ZCOND);
+	free(insns, M_ZCOND);
+	free(sizes, M_ZCOND);
 }
 
 /*
