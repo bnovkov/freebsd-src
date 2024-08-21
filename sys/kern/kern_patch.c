@@ -58,7 +58,7 @@ __patch(void *arg) {
 
 		patch_page = PHYS_TO_VM_PAGE(vtophys(va));
 		before_patch(patch_page, data->md_ctxt);
-		memcpy((void *)(patch_addr + (patch_addr & PAGE_MASK)), insn,
+		memcpy((void *)(patch_addr + (va & PAGE_MASK)), insn,
 		    size);
 		after_patch(data->md_ctxt);
 	}
