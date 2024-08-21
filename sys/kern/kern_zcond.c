@@ -155,7 +155,7 @@ __zcond_toggle(struct zcond *cond, bool enable)
 	SLIST_FOREACH(p, &cond->patch_points, next) {
 		vas[i] = p->patch_addr;
 		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr, &insn_size);
-		insns[i] = malloc(sizeof(uint8_t) * insn_sizee, M_ZCOND, M_WAITOK);
+		insns[i] = malloc(sizeof(uint8_t) * insn_size, M_ZCOND, M_WAITOK);
 		memcpy(insns[i], insn, insn_size);
 		sizes[i] = insn_size;
 		i++;
@@ -165,7 +165,7 @@ __zcond_toggle(struct zcond *cond, bool enable)
 
 	i = 0;
 	SLIST_FOREACH(p, &cond->patch_points, next) {
-		free(insns[i]);
+		free(insns[i], M_ZCOND);
 		i++;	
 	}	
 
