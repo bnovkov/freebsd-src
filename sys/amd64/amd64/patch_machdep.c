@@ -10,6 +10,7 @@
 #include <sys/queue.h>
 #include <sys/vmem.h>
 #include <sys/zcond.h>
+#include <sys/linker.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -95,16 +96,19 @@ patch_init_pte(void)
 static void
 patch_pmap_init(const void *unused)
 {
-	vm_offset_t kern_start, kern_end;
+	extern char stext;
+	vm_offset_t text_start;
+	size_t copy_size;
 
-	kern_start = virtual_avail;
-	kern_end = kernel_vm_end;
+	text_start = (vm_offset_t) &stext;
+	copy_size = linker_kernel_file->size - (text_start - (vm_offset_t) linker_kernel_file->address);
 
+	printf("kernel addr offset = %lx | text start = %lx | kernel size = %zu | copy size = %zu\n", (vm_offset_t) linker_kernel_file->address, text_start, linker_kernel_file->size, copy_size);
 	memset(&patch_pmap, 0, sizeof(patch_pmap));
 	PMAP_LOCK_INIT(&patch_pmap);
 	pmap_pinit(&patch_pmap);
-	pmap_copy(&patch_pmap, kernel_pmap, kern_start, kern_end - kern_start,
-	    kern_start);
+	pmap_copy(&patch_pmap, kernel_pmap, text_start, PAGE_SIZE,
+	    text_start);
 
 	patch_pte = patch_init_pte();
 }
@@ -127,13 +131,13 @@ patch_qenter(vm_page_t m)
 }
 
 vm_offset_t
-patch_get_va(void)
+kpatch_get_va(void)
 {
 	return (patch_va);
 }
 
 void
-before_patch(vm_page_t patch_page, struct patch_md_ctxt *ctxt)
+kpatch_setup(vm_page_t patch_page, struct kpatch_md_ctxt *ctxt)
 {
 	patch_qenter(patch_page);
 	ctxt->cr3 = rcr3();
@@ -141,10 +145,22 @@ before_patch(vm_page_t patch_page, struct patch_md_ctxt *ctxt)
 }
 
 void
-after_patch(struct patch_md_ctxt *ctxt)
+kpatch_teardown(struct kpatch_md_ctxt *ctxt)
 {
 	mfence();
 	load_cr3(ctxt->cr3);
 	pte_clear(patch_pte);
 	invltlb();
+}
+
+bool
+kpatch_va_valid(vm_offset_t va)
+{
+	extern char stext, etext;
+	vm_offset_t start, end;
+
+	start = (vm_offset_t) &stext;
+	end = (vm_offset_t) &etext;
+
+	return (va >= start && va <= end);
 }
