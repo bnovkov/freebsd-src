@@ -1049,7 +1049,6 @@ core_intr(struct trapframe *tf)
 		counter_u64_add(pmc_stats.pm_intr_processed, 1);
 	else
 		counter_u64_add(pmc_stats.pm_intr_ignored, 1);
-
 	if (found_interrupt)
 		lapic_reenable_pcint();
 
@@ -1148,7 +1147,6 @@ core2_intr(struct trapframe *tf)
 		counter_u64_add(pmc_stats.pm_intr_processed, 1);
 	else
 		counter_u64_add(pmc_stats.pm_intr_ignored, 1);
-
 	if (found_interrupt)
 		lapic_reenable_pcint();
 

@@ -1,6 +1,7 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
- * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -103,7 +104,7 @@
 #include <dev/hwt/hwt_intr.h>
 #include <dev/hwt/hwt_record.h>
 
-#include "pt.h"
+#include <amd64/pt/pt.h>
 
 #ifdef PT_DEBUG
 #define dprintf(fmt, ...) printf(fmt, ##__VA_ARGS__)
@@ -112,6 +113,7 @@
 #endif
 
 #define PT_XSAVE_MASK (XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
+#define PT_MAX_IP_RANGES 2
 
 MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
@@ -122,12 +124,6 @@ TASKQUEUE_FAST_DEFINE_THREAD(pt);
 
 static void pt_send_buffer_record(void *arg, int pending __unused);
 static int pt_topa_intr(struct trapframe *tf);
-
-struct pt_save_area {
-	uint8_t legacy_state[512];
-	struct xsave_header header;
-	struct pt_ext_area pt_ext_area;
-} __aligned(64);
 
 struct pt_buffer {
 	uint64_t *topa_hw; /* ToPA table entries. */
@@ -145,14 +141,12 @@ struct pt_ctx {
 	struct pt_save_area save_area; /* PT XSAVE area */
 	int id;
 };
-
 /* PT tracing contexts used for CPU mode. */
 static struct pt_ctx *pt_pcpu_ctx;
 
 enum pt_cpu_state {
 	PT_DISABLED = 0,
 	PT_STOPPED,
-	PT_TERMINATING,
 	PT_ACTIVE
 };
 
@@ -174,41 +168,22 @@ static struct pt_cpu_info {
 
 static bool initialized = false;
 
-static __inline void
-xrstors(char *addr, uint64_t mask)
-{
-	uint32_t low, hi;
-
-	low = mask;
-	hi = mask >> 32;
-	__asm __volatile("xrstors %0" : : "m"(*addr), "a"(low), "d"(hi));
-}
-
-static __inline void
-xsaves(char *addr, uint64_t mask)
-{
-	uint32_t low, hi;
-
-	low = mask;
-	hi = mask >> 32;
-	__asm __volatile("xsaves %0"
-			 : "=m"(*addr)
-			 : "a"(low), "d"(hi)
-			 : "memory");
-}
-
 static __inline enum pt_cpu_state
 pt_cpu_get_state(int cpu_id)
 {
-	return (pt_pcpu[cpu_id].state);
+	return (atomic_load_int(&pt_pcpu[cpu_id].state));
 }
 
 static __inline void
 pt_cpu_set_state(int cpu_id, enum pt_cpu_state state)
 {
-	pt_pcpu[cpu_id].state = state;
+	atomic_store_int(&pt_pcpu[cpu_id].state, state);
 }
 
+/*
+ * Updates current trace buffer offset from the
+ * ToPA MSRs. Records if the trace buffer wrapped.
+ */
 static __inline void
 pt_update_buffer(struct pt_buffer *buf)
 {
@@ -241,16 +216,14 @@ pt_fill_buffer_record(int id, struct pt_buffer *buf,
 }
 
 /*
- * Enables or disables tracing on curcpu.
+ * Enables or disables tracing on curcpu
+ * using the XSAVE/XRSTOR PT extensions.
  */
 static void
 pt_cpu_toggle_local(struct pt_save_area *save_area, bool enable)
 {
 	u_long xcr0, cr0;
 	u_long xss;
-
-	KASSERT((curthread)->td_critnest >= 1,
-	    ("%s: not in critical section", __func__));
 
 	cr0 = rcr0();
 	if (cr0 & CR0_TS)
@@ -264,11 +237,11 @@ pt_cpu_toggle_local(struct pt_save_area *save_area, bool enable)
 	if (!enable) {
 		KASSERT((rdmsr(MSR_IA32_RTIT_CTL) & RTIT_CTL_TRACEEN) != 0,
 		    ("%s: PT is disabled", __func__));
-		xsaves((char *)save_area, XFEATURE_ENABLED_PT);
+		xsaves((uint8_t *)save_area, XFEATURE_ENABLED_PT);
 	} else {
 		KASSERT((rdmsr(MSR_IA32_RTIT_CTL) & RTIT_CTL_TRACEEN) == 0,
 		    ("%s: PT is enabled", __func__));
-		xrstors((char *)save_area, XFEATURE_ENABLED_PT);
+		xrstors((uint8_t *)save_area, XFEATURE_ENABLED_PT);
 	}
 	wrmsr(MSR_IA32_XSS, xss);
 	if ((xcr0 & PT_XSAVE_MASK) != PT_XSAVE_MASK)
@@ -278,37 +251,7 @@ pt_cpu_toggle_local(struct pt_save_area *save_area, bool enable)
 }
 
 /*
- * Dumps contents of PT-related registers.
- */
-static void
-pt_cpu_dump(int cpu_id)
-{
-#ifdef PT_DEBUG
-	struct pt_save_area *area = &pt_pcpu[cpu_id].ctx->save_area;
-
-	printf("dumping PT info for cpu %d\n", cpu_id);
-
-	printf("rtit_ctl: 0x%zx\n", area->pt_ext_area.rtit_ctl);
-	printf("rtit_addr0_a: 0x%zx\n", area->pt_ext_area.rtit_addr0_a);
-	printf("rtit_addr0_b: 0x%zx\n", area->pt_ext_area.rtit_addr0_b);
-
-	printf("xsave_bv: 0x%zx\n", area->header.xsave_bv);
-	printf("xcomp_bv: 0x%zx\n", area->header.xcomp_bv);
-
-	printf("rtit_status MSR: 0x%zx\n", rdmsr(MSR_IA32_RTIT_STATUS));
-	printf("rtit_ctl MSR: 0x%zx\n", rdmsr(MSR_IA32_RTIT_CTL));
-	printf("rtit output base MSR: 0x%zx\n",
-	    rdmsr(MSR_IA32_RTIT_OUTPUT_BASE));
-	printf("rtit mask_ptrs MSR: 0x%zx\n",
-	    rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS));
-	printf("rtit_addr0_a MSR: 0x%zx\n", rdmsr(MSR_IA32_RTIT_ADDR0_A));
-
-	lapic_dump("");
-#endif
-}
-
-/*
- * CPU mode helper routines.
+ * Starts PT tracing on 'curcpu'.
  */
 static void
 pt_cpu_start(void *dummy)
@@ -316,26 +259,27 @@ pt_cpu_start(void *dummy)
 	struct pt_cpu *cpu = &pt_pcpu[curcpu];
 
 	MPASS(cpu->ctx != NULL);
+
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
-
-	/* Enable XSAVE. */
 	load_cr4(rcr4() | CR4_XSAVE);
-	/* Clear PMI status. */
 	wrmsr(MSR_IA32_RTIT_STATUS, 0);
-	/* Start tracing. */
-	pt_cpu_toggle_local(&cpu->ctx->save_area, true);
 	pt_cpu_set_state(curcpu, PT_ACTIVE);
-
-	pt_cpu_dump(curcpu);
+	pt_cpu_toggle_local(&cpu->ctx->save_area, true);
 }
 
+/*
+ * Stops PT tracing on 'curcpu'.
+ * Updates trace buffer offset to ensure
+ * any data generated between the last interrupt
+ * and the trace stop gets picked up by userspace.
+ */
 static void
 pt_cpu_stop(void *dummy)
 {
 	struct pt_cpu *cpu;
 	struct pt_ctx *ctx;
 
-	/* Shutdown may occur before PT gets properly configured on curcpu. */
+	/* Shutdown may occur before PT gets properly configured. */
 	if (pt_cpu_get_state(curcpu) == PT_DISABLED)
 		return;
 
@@ -344,15 +288,18 @@ pt_cpu_stop(void *dummy)
 	MPASS(ctx != NULL);
 	dprintf("%s: curcpu %d\n", __func__, curcpu);
 
-	/* Stop tracing. */
-	pt_cpu_toggle_local(&cpu->ctx->save_area, false);
 	pt_cpu_set_state(curcpu, PT_STOPPED);
-	/* Update buffer offset. */
+	pt_cpu_toggle_local(&cpu->ctx->save_area, false);
 	pt_update_buffer(&ctx->buf);
-
-	pt_cpu_dump(curcpu);
 }
 
+/*
+ * Prepares the Table of Physical Addresses (ToPA) metadata for 'pt_ctx'.
+ * The HWT trace buffer is split into 4K ToPA table entries and used
+ * as a circular buffer, meaning that the last ToPA entry points to
+ * the first ToPA entry. Each entry is configured to raise an
+ * interrupt after being filled.
+ */
 static int
 pt_topa_prepare(struct pt_ctx *ctx, struct hwt_vm *vm)
 {
@@ -360,15 +307,13 @@ pt_topa_prepare(struct pt_ctx *ctx, struct hwt_vm *vm)
 	size_t topa_size;
 	int i;
 
-	topa_size = TOPA_SIZE_4K; /* 4K only for now */
+	topa_size = TOPA_SIZE_4K;
 	buf = &ctx->buf;
 
 	KASSERT(buf->topa_hw == NULL,
 	    ("%s: ToPA info already exists", __func__));
-
-	/* Allocate array of TOPA entries. */
-	buf->topa_hw = malloc((vm->npages + 1) * sizeof(uint64_t), M_PT,
-	    M_NOWAIT | M_ZERO);
+	buf->topa_hw = mallocarray(vm->npages + 1, sizeof(uint64_t), M_PT,
+	    M_ZERO | M_WAITOK);
 	if (buf->topa_hw == NULL)
 		return (ENOMEM);
 
@@ -382,15 +327,18 @@ pt_topa_prepare(struct pt_ctx *ctx, struct hwt_vm *vm)
 		 * entries will not trigger interrupts often enough when tracing
 		 * smaller functions.
 		 */
-		/* Raise interrupt when entry is filled. */
 		buf->topa_hw[i] |= TOPA_INT;
 	}
-	/* Circular buffer - point last entry to first */
 	buf->topa_hw[vm->npages] = (uint64_t)vtophys(buf->topa_hw) | TOPA_END;
 
 	return (0);
 }
 
+/*
+ * Configures IP filtering for trace generation.
+ * A maximum of 2 ranges can be specified due to
+ * limitations imposed by the XSAVE/XRSTOR PT extensions.
+ */
 static int
 pt_configure_ranges(struct pt_ctx *ctx, struct pt_cpu_config *cfg)
 {
@@ -402,13 +350,11 @@ pt_configure_ranges(struct pt_ctx *ctx, struct pt_cpu_config *cfg)
 	pt_ext = &save_area->pt_ext_area;
 
 	if (pt_info.l0_ebx & CPUPT_IPF) {
-		/* How many IP ranges does the CPU support? */
 		nranges_supp = (pt_info.l1_eax & CPUPT_NADDR_M) >>
 		    CPUPT_NADDR_S;
 
-		/* xsave/xrstor supports two ranges only. */
-		if (nranges_supp > 2)
-			nranges_supp = 2;
+		if (nranges_supp > PT_IP_FILTER_MAX_RANGES)
+			nranges_supp = PT_IP_FILTER_MAX_RANGES;
 		n = cfg->nranges;
 		if (n > nranges_supp) {
 			printf("%s: %d IP filtering ranges requested, CPU "
@@ -470,6 +416,13 @@ pt_deinit_ctx(struct pt_ctx *pt_ctx)
 	pt_ctx->buf.topa_hw = NULL;
 }
 
+/*
+ * HWT backend configuration method.
+ *
+ * Checks and translates the user-defined configuration to a
+ * set of PT tracing features. Uses the feature set to initialize
+ * the tracing context for the target CPU or thread.
+ */
 static int
 pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 {
@@ -478,7 +431,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	struct pt_ctx *pt_ctx;
 	struct pt_cpu_config *cfg;
 	struct pt_ext_area *pt_ext;
-	struct xsave_header *hdr;
+	struct xstate_hdr *hdr;
 	int error;
 
 	dprintf("%s\n", __func__);
@@ -486,10 +439,8 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	cfg = (struct pt_cpu_config *)ctx->config;
 	pt_ctx = NULL;
 
-	/* Sanitize input. */
-	// cfg->rtit_ctl &= PT_SUPPORTED_FLAGS;
-
-	/* Validate user configuration */
+	/* Clear any flags we don't support yet. */
+	cfg->rtit_ctl &= PT_SUPPORTED_FLAGS;
 	if (cfg->rtit_ctl & RTIT_CTL_MTCEN) {
 		if ((pt_info.l0_ebx & CPUPT_MTC) == 0) {
 			printf("%s: CPU does not support generating MTC "
@@ -546,21 +497,15 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 		if ((error = pt_configure_ranges(pt_ctx, cfg)) != 0)
 			return (error);
 	}
-	/* Save hwt context for buffer records. */
 	pt_ctx->hwt_ctx = ctx;
-	/* Prepare ToPA MSR values. */
 	pt_ext->rtit_ctl |= RTIT_CTL_TOPA;
 	pt_ext->rtit_output_base = (uint64_t)vtophys(pt_ctx->buf.topa_hw);
 	pt_ext->rtit_output_mask_ptrs = 0x7f;
-	/* Init header and enable compaction. */
-	hdr->xsave_bv = XFEATURE_ENABLED_PT;
-	hdr->xcomp_bv = XFEATURE_ENABLED_PT |
+	hdr->xstate_bv = XFEATURE_ENABLED_PT;
+	hdr->xstate_xcomp_bv = XFEATURE_ENABLED_PT |
 		(1ULL << 63);
-	/* Enable tracing. */
 	pt_ext->rtit_ctl |= RTIT_CTL_TRACEEN;
-
 	pt_pcpu[cpu_id].ctx = pt_ctx;
-	/* Mark CPU as initialized. */
 	pt_cpu_set_state(cpu_id, PT_STOPPED);
 
 	return (0);
@@ -592,7 +537,6 @@ pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 	pt_cpu_stop(NULL);
 	CPU_CLR(cpu_id, &ctx->cpu_map);
 	cpu = &pt_pcpu[cpu_id];
-	/* Disable current context. */
 	cpu->ctx = NULL;
 }
 
@@ -605,7 +549,7 @@ pt_backend_enable_smp(struct hwt_context *ctx)
 
 	dprintf("%s\n", __func__);
 	KASSERT(ctx->mode == HWT_MODE_CPU,
-	    ("%s: this should only be used for CPU mode", __func__));
+	    ("%s: should only be used for CPU mode", __func__));
 	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_start, NULL, NULL);
 }
 
@@ -624,6 +568,12 @@ pt_backend_disable_smp(struct hwt_context *ctx)
 	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_stop, NULL, NULL);
 }
 
+/*
+ * HWT backend initialization method.
+ *
+ * Installs the ToPA interrupt handler and initializes
+ * the tracing contexts used for HWT_MODE_CPU.
+ */
 static int
 pt_backend_init(struct hwt_context *ctx)
 {
@@ -631,16 +581,6 @@ pt_backend_init(struct hwt_context *ctx)
 	int error;
 
 	dprintf("%s\n", __func__);
-	/* Install ToPA PMI handler. */
-	KASSERT(hwt_intr == NULL,
-	    ("%s: ToPA PMI handler already present", __func__));
-	hwt_intr = pt_topa_intr;
-	wmb();
-
-	/*
-	 * Initialize per-cpu MODE_CPU contexts.
-	 * MODE_THREAD contexts get initialized during thread creation.
-	 */
 	if (ctx->mode == HWT_MODE_CPU) {
 		TAILQ_FOREACH(hwt_cpu, &ctx->cpus, next) {
 			error = pt_init_ctx(&pt_pcpu_ctx[hwt_cpu->cpu_id],
@@ -653,6 +593,12 @@ pt_backend_init(struct hwt_context *ctx)
 	return (0);
 }
 
+/*
+ * HWT backend teardown method.
+ *
+ * Removes the ToPA interrupt handler, stops tracing on all active CPUs,
+ * and releases all previously allocated ToPA metadata.
+ */
 static void
 pt_backend_deinit(struct hwt_context *ctx)
 {
@@ -662,18 +608,12 @@ pt_backend_deinit(struct hwt_context *ctx)
 
 	dprintf("%s\n", __func__);
 
-	/* Remove ToPA PMI handler. */
-	hwt_intr = NULL;
-	wmb();
-
-	/* Stop tracing on all active CPUs */
 	pt_backend_disable_smp(ctx);
 	if (ctx->mode == HWT_MODE_THREAD) {
 		TAILQ_FOREACH(thr, &ctx->threads, next) {
 			KASSERT(thr->private != NULL,
 			    ("%s: thr->private not set", __func__));
 			pt_ctx = (struct pt_ctx *)thr->private;
-			/* Free ToPA table. */
 			pt_deinit_ctx(pt_ctx);
 		}
 	} else {
@@ -689,9 +629,7 @@ pt_backend_deinit(struct hwt_context *ctx)
 				pt_pcpu[cpu_id].ctx = NULL;
 			}
 			pt_ctx = &pt_pcpu_ctx[cpu_id];
-			/* Free ToPA table. */
 			pt_deinit_ctx(pt_ctx);
-			/* Reset pcpu entry. */
 			memset(&pt_pcpu[cpu_id], 0, sizeof(struct pt_cpu));
 		}
 	}
@@ -718,6 +656,10 @@ pt_backend_read(struct hwt_vm *vm, int *curpage, vm_offset_t *curpage_offset,
 	return (0);
 }
 
+/*
+ * HWT thread creation hook.
+ * Allocates and associates a 'struct pt_ctx' for a given hwt thread.
+ */
 static int
 pt_backend_alloc_thread(struct hwt_thread *thr)
 {
@@ -736,7 +678,9 @@ pt_backend_alloc_thread(struct hwt_thread *thr)
 	thr->private = pt_ctx;
 	return (0);
 }
-
+/*
+ * HWT thread teardown hook.
+ */
 static void
 pt_backend_free_thread(struct hwt_thread *thr)
 {
@@ -780,6 +724,11 @@ static struct hwt_backend backend = {
 	.kva_req = 1,
 };
 
+/*
+ * Reads the latest valid trace buffer offset and enqueues
+ * a HWT_RECORD_BUFFER record.
+ * Used as a taskqueue routine from the ToPA interrupt handler.
+ */
 static void
 pt_send_buffer_record(void *arg, int pending __unused)
 {
@@ -792,9 +741,23 @@ pt_send_buffer_record(void *arg, int pending __unused)
 	mtx_unlock_spin(&ctx->buf.lock);
 	hwt_record_ctx(ctx->hwt_ctx, &record, M_ZERO | M_NOWAIT);
 }
+static void
+pt_topa_status_clear(void)
+{
+	uint64_t reg;
+
+	reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
+	reg &= ~GLOBAL_STATUS_FLAG_TRACETOPAPMI;
+	reg |= GLOBAL_STATUS_FLAG_TRACETOPAPMI;
+	wrmsr(MSR_IA_GLOBAL_STATUS_RESET, reg);
+}
 
 /*
  * ToPA PMI handler.
+ *
+ * Invoked every time a ToPA entry marked with TOPA_INT is filled.
+ * Uses taskqueue to enqueue a buffer record for userspace.
+ * Re-enables the PC interrupt line as long as tracing is active.
  */
 static int
 pt_topa_intr(struct trapframe *tf)
@@ -804,48 +767,42 @@ pt_topa_intr(struct trapframe *tf)
 	uint64_t reg;
 
 	SDT_PROBE0(pt, , , topa__intr);
-	/* TODO: handle possible double entry */
-	/* Check ToPA PMI status on curcpu. */
-	reg = rdmsr(MSR_IA_GLOBAL_STATUS);
-	if ((reg & GLOBAL_STATUS_FLAG_TRACETOPAPMI) == 0)
+
+	if (pt_cpu_get_state(curcpu) != PT_ACTIVE) {
 		return (0);
-
-	/* Ignore spurious PMI interrupts. */
-	if (pt_cpu_get_state(curcpu) != PT_ACTIVE)
+	}
+	reg = rdmsr(MSR_IA_GLOBAL_STATUS);
+	if ((reg & GLOBAL_STATUS_FLAG_TRACETOPAPMI) == 0) {
+		/* ACK spurious or leftover interrupt. */
+		pt_topa_status_clear();
 		return (1);
+	}
 
-	/* Disable preemption. */
-	critical_enter();
-	/* Fetch active trace context. */
 	ctx = pt_pcpu[curcpu].ctx;
 	buf = &ctx->buf;
 	KASSERT(buf->topa_hw != NULL,
 	    ("%s: ToPA PMI interrupt with invalid buffer", __func__));
 
-	/* Disable tracing so we don't trace the PMI handler. */
 	pt_cpu_toggle_local(&ctx->save_area, false);
 	pt_update_buffer(buf);
-	/* Clear ToPA PMI status. */
-	reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
-	reg &= ~GLOBAL_STATUS_FLAG_TRACETOPAPMI;
-	reg |= GLOBAL_STATUS_FLAG_TRACETOPAPMI;
-	wrmsr(MSR_IA_GLOBAL_STATUS_RESET, reg);
-
-	/* Notify userspace. */
+	pt_topa_status_clear();
 	taskqueue_enqueue_flags(taskqueue_pt, &ctx->task,
 	    TASKQUEUE_FAIL_IF_PENDING);
 
-	/* Don't re-enable ToPA PMI if trace stop was requested. */
-	if (pt_cpu_get_state(curcpu) != PT_TERMINATING) {
-		lapic_reenable_pcint();
-		/* Re-enable tracing. */
+	if (pt_cpu_get_state(curcpu) == PT_ACTIVE) {
 		pt_cpu_toggle_local(&ctx->save_area, true);
+		lapic_reenable_pcint();
 	}
-	critical_exit();
-
 	return (1);
 }
 
+/*
+ * Module initialization.
+ *
+ * Saves all PT-related cpuid info, registers itself as a HWT backend,
+ * and allocates metadata required to keep track of tracing operations
+ * on each CPU.
+ */
 static int
 pt_init(void)
 {
@@ -853,18 +810,17 @@ pt_init(void)
 	int error;
 
 	dprintf("pt: Enumerating part 1\n");
-	cpuid_count(PT_CPUID, 0, cp);
+	cpuid_count(CPUID_PT_LEAF, 0, cp);
 	dprintf("pt: Maximum valid sub-leaf Index: %x\n", cp[0]);
 	dprintf("pt: ebx %x\n", cp[1]);
 	dprintf("pt: ecx %x\n", cp[2]);
 
-	/* Save relevant cpuid info. */
 	pt_info.l0_eax = cp[0];
 	pt_info.l0_ebx = cp[1];
 	pt_info.l0_ecx = cp[2];
 
 	dprintf("pt: Enumerating part 2\n");
-	cpuid_count(PT_CPUID, 1, cp);
+	cpuid_count(CPUID_PT_LEAF, 1, cp);
 	dprintf("pt: eax %x\n", cp[0]);
 	dprintf("pt: ebx %x\n", cp[1]);
 
@@ -876,18 +832,28 @@ pt_init(void)
 		printf("pt: unable to register hwt backend, error %d\n", error);
 		return (error);
 	}
-	pt_pcpu = malloc(sizeof(struct pt_cpu) * mp_ncpus, M_PT,
+	pt_pcpu = mallocarray(mp_ncpus, sizeof(struct pt_cpu), M_PT,
 	    M_ZERO | M_WAITOK);
-	pt_pcpu_ctx = malloc(sizeof(struct pt_ctx) * mp_ncpus, M_PT,
+	pt_pcpu_ctx = mallocarray(mp_ncpus, sizeof(struct pt_ctx), M_PT,
 	    M_ZERO | M_WAITOK);
-	/* Enable ToPA interrupts */
-	lapic_enable_pcint();
 
+	nmi_register_handler(pt_topa_intr);
+	if (!lapic_enable_pcint()) {
+		printf("pt: failed to setup interrupt line\n");
+		return (error);
+	}
 	initialized = true;
 
 	return (0);
 }
 
+/*
+ * Checks whether the CPU support Intel PT.
+ *
+ * The driver relies on XSAVE/XRSTOR PT extensions,
+ * Table of Physical Addresses (ToPA) support, and
+ * support for multiple ToPA entries.
+ */
 static bool
 pt_supported(void)
 {
@@ -938,15 +904,15 @@ pt_supported(void)
 static void
 pt_deinit(void)
 {
-	if (initialized)
+	if (!initialized)
 		return;
-
+	nmi_remove_handler(pt_topa_intr);
+	lapic_disable_pcint();
 	hwt_backend_unregister(&backend);
-	hwt_intr = NULL;
 	free(pt_pcpu, M_PT);
 	free(pt_pcpu_ctx, M_PT);
 	pt_pcpu = NULL;
-	lapic_disable_pcint();
+	initialized = false;
 }
 
 static int
