@@ -1,6 +1,7 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
- * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,7 +32,7 @@
 
 #include <x86/include/specialreg.h>
 
-#define IP_FILTER_MAX_RANGES (4) /* Intel SDM Vol. 3C, 33-29 */
+#define PT_IP_FILTER_MAX_RANGES (2) /* Intel SDM Vol. 3C, 33-29 */
 
 struct pt_cpu_config {
 	uint64_t rtit_ctl;
@@ -40,37 +41,17 @@ struct pt_cpu_config {
 	struct ipf_range {
 		vm_offset_t start;
 		vm_offset_t end;
-	} ip_ranges[IP_FILTER_MAX_RANGES];
+	} ip_ranges[PT_IP_FILTER_MAX_RANGES];
 	uint32_t mtc_freq;
 	uint32_t cyc_thresh;
 	uint32_t psb_freq;
 };
 
 #ifdef _KERNEL
-#include <sys/malloc.h>
 
-#define PT_CPUID 0x14
-#define PT_SUPPORTED_FLAGS \
-	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT)
+#define PT_SUPPORTED_FLAGS                                        \
+	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT | \
+	    RTIT_CTL_USER | RTIT_CTL_OS | RTIT_CTL_BRANCHEN)
 
-struct xsave_header {
-	uint64_t xsave_bv;
-	uint64_t xcomp_bv;
-	uint8_t reserved[48];
-};
-
-struct pt_ext_area {
-	uint64_t rtit_ctl;
-	uint64_t rtit_output_base;
-	uint64_t rtit_output_mask_ptrs;
-	uint64_t rtit_status;
-	uint64_t rtit_cr3_match;
-	uint64_t rtit_addr0_a;
-	uint64_t rtit_addr0_b;
-	uint64_t rtit_addr1_a;
-	uint64_t rtit_addr1_b;
-};
-
-MALLOC_DECLARE(M_PT);
 #endif /* _KERNEL */
 #endif /* !_AMD64_PT_PT_H_ */

@@ -45,7 +45,6 @@
 #include "opt_clock.h"
 #include "opt_cpu.h"
 #include "opt_hwpmc_hooks.h"
-#include "opt_hwt_hooks.h"
 #include "opt_isa.h"
 #include "opt_kdb.h"
 
@@ -73,10 +72,6 @@
 PMC_SOFT_DEFINE( , , page_fault, all);
 PMC_SOFT_DEFINE( , , page_fault, read);
 PMC_SOFT_DEFINE( , , page_fault, write);
-#endif
-
-#ifdef HWT_HOOKS
-#include <dev/hwt/hwt_intr.h>
 #endif
 
 #include <vm/vm.h>
@@ -214,32 +209,6 @@ static const struct {
 		.fhandler = (uintptr_t)fsbase_load_fault,
 	},
 };
-
-static __inline int
-nmi_handle_pcint(struct trapframe *frame){
-	int handled = 0;
-
-#ifdef HWT_HOOKS
-	/*
-	 * Handle Intel PT interrupt if hwt is active.
-	 */
-	if (hwt_intr != NULL)
-		handled |= !!(*hwt_intr)(frame);
-#endif
-
-#ifdef HWPMC_HOOKS
-	/*
-	 * CPU PMCs interrupt using an NMI.  If the PMC module is
-	 * active, pass the 'rip' value to the PMC module's interrupt
-	 * handler.  A non-zero return value from the handler means that
-	 * the NMI was consumed by it and we can return immediately.
-	 */
-	if (pmc_intr != NULL)
-		handled |= !!(*pmc_intr)(frame);
-#endif
-
-	return (handled);
-}
 
 /*
  * Exception, fault, and trap interface to the FreeBSD kernel.

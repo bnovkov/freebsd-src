@@ -478,7 +478,6 @@ hwt_pt_decode_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		hwt_pt_print(tc, dctx, blk.ip);
 	} while (offs < (start + len));
 	pt_blk_get_offset(dec, &offs);
-	printf("len %p, offs %p\n", (void *)len, (void *)offs);
 	*processed = offs - start;
 
 	return (error);
