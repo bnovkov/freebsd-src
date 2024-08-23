@@ -181,6 +181,21 @@ struct savefpu_ymm {
 #undef __envxmm64
 
 /*
+ * Intel Processor Trace XSAVE-managed state.
+ */
+struct pt_ext_area {
+	uint64_t rtit_ctl;
+	uint64_t rtit_output_base;
+	uint64_t rtit_output_mask_ptrs;
+	uint64_t rtit_status;
+	uint64_t rtit_cr3_match;
+	uint64_t rtit_addr0_a;
+	uint64_t rtit_addr0_b;
+	uint64_t rtit_addr1_a;
+	uint64_t rtit_addr1_b;
+};
+
+/*
  * The hardware default control word for i387's and later coprocessors is
  * 0x37F, giving:
  *
