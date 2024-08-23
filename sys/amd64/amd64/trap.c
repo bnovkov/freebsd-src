@@ -45,7 +45,6 @@
 #include "opt_clock.h"
 #include "opt_cpu.h"
 #include "opt_hwpmc_hooks.h"
-#include "opt_hwt_hooks.h"
 #include "opt_isa.h"
 #include "opt_kdb.h"
 
@@ -73,10 +72,6 @@
 PMC_SOFT_DEFINE( , , page_fault, all);
 PMC_SOFT_DEFINE( , , page_fault, read);
 PMC_SOFT_DEFINE( , , page_fault, write);
-#endif
-
-#ifdef HWT_HOOKS
-#include <dev/hwt/hwt_intr.h>
 #endif
 
 #include <vm/vm.h>
@@ -207,32 +202,6 @@ static const struct {
 	},
 };
 
-static __inline int
-nmi_handle_pcint(struct trapframe *frame){
-	int handled = 0;
-
-#ifdef HWT_HOOKS
-	/*
-	 * Handle Intel PT interrupt if hwt is active.
-	 */
-	if (hwt_intr != NULL)
-		handled |= !!(*hwt_intr)(frame);
-#endif
-
-#ifdef HWPMC_HOOKS
-	/*
-	 * CPU PMCs interrupt using an NMI.  If the PMC module is
-	 * active, pass the 'rip' value to the PMC module's interrupt
-	 * handler.  A non-zero return value from the handler means that
-	 * the NMI was consumed by it and we can return immediately.
-	 */
-	if (pmc_intr != NULL)
-		handled |= !!(*pmc_intr)(frame);
-#endif
-
-	return (handled);
-}
-
 /*
  * Exception, fault, and trap interface to the FreeBSD kernel.
  * This common code is called from assembly language IDT gate entry
@@ -261,27 +230,20 @@ trap(struct trapframe *frame)
 	VM_CNT_INC(v_trap);
 	type = frame->tf_trapno;
 
-#ifdef SMP
-	/* Handler for NMI IPIs used for stopping CPUs. */
-	if (type == T_NMI && ipi_nmi_handler() == 0)
-		return;
-#endif
-
 #ifdef KDB
 	if (kdb_active) {
 		kdb_reenter();
 		return;
 	}
 #endif
+	if (type == T_NMI) {
+		nmi_handle_intr(frame);
+		return;
+	}
 
 	if (type == T_RESERVED) {
 		trap_fatal(frame, 0);
 		return;
-	}
-
-	if (type == T_NMI) {
-		if (nmi_handle_pcint(frame) != 0)
-			return;
 	}
 
 	if ((frame->tf_rflags & PSL_I) == 0) {
@@ -413,10 +375,6 @@ trap(struct trapframe *frame)
 			ucode = FPE_INTDIV;
 			signo = SIGFPE;
 			break;
-
-		case T_NMI:
-			nmi_handle_intr(type, frame);
-			return;
 
 		case T_OFLOW:		/* integer overflow fault */
 			ucode = FPE_INTOVF;
@@ -629,10 +587,6 @@ trap(struct trapframe *frame)
 				return;
 #endif
 			break;
-
-		case T_NMI:
-			nmi_handle_intr(type, frame);
-			return;
 		}
 
 		trap_fatal(frame, 0);
