@@ -4,13 +4,13 @@
 #include <sys/domain.h>
 #include <sys/domainset.h>
 #include <sys/kernel.h>
+#include <sys/linker.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/queue.h>
 #include <sys/vmem.h>
 #include <sys/zcond.h>
-#include <sys/linker.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -21,8 +21,8 @@
 #include <vm/vm_pagequeue.h>
 
 #include <machine/cpufunc.h>
-#include <machine/pmap.h>
 #include <machine/patch.h>
+#include <machine/pmap.h>
 
 static struct pmap patch_pmap;
 static vm_offset_t patch_va;
@@ -70,15 +70,13 @@ patch_init_pte(void)
 		pml4e = &patch_pmap.pm_pmltop[pml4_idx];
 	}
 
-	KASSERT(*pml4e != 0,
-	    ("%s: va %#jx pml4e == 0", __func__, patch_va));
+	KASSERT(*pml4e != 0, ("%s: va %#jx pml4e == 0", __func__, patch_va));
 	mphys = *pml4e & PG_FRAME;
 
 	pdpe = (pdp_entry_t *)PHYS_TO_DMAP(mphys);
 	pdp_idx = pmap_pdpe_index(patch_va);
 	pdpe += pdp_idx;
-	KASSERT(*pdpe != 0,
-	    ("%s: va %#jx pdpe == 0", __func__, patch_va));
+	KASSERT(*pdpe != 0, ("%s: va %#jx pdpe == 0", __func__, patch_va));
 	mphys = *pdpe & PG_FRAME;
 
 	pde = (pd_entry_t *)PHYS_TO_DMAP(mphys);
@@ -100,15 +98,14 @@ patch_pmap_init(const void *unused)
 	vm_offset_t text_start;
 	size_t copy_size;
 
-	text_start = (vm_offset_t) &stext;
-	copy_size = linker_kernel_file->size - (text_start - (vm_offset_t) linker_kernel_file->address);
+	text_start = (vm_offset_t)&stext;
+	copy_size = linker_kernel_file->size -
+	    (text_start - (vm_offset_t)linker_kernel_file->address);
 
-	printf("kernel addr offset = %lx | text start = %lx | kernel size = %zu | copy size = %zu\n", (vm_offset_t) linker_kernel_file->address, text_start, linker_kernel_file->size, copy_size);
 	memset(&patch_pmap, 0, sizeof(patch_pmap));
 	PMAP_LOCK_INIT(&patch_pmap);
 	pmap_pinit(&patch_pmap);
-	pmap_copy(&patch_pmap, kernel_pmap, text_start, PAGE_SIZE,
-	    text_start);
+	pmap_copy(&patch_pmap, kernel_pmap, text_start, PAGE_SIZE, text_start);
 
 	patch_pte = patch_init_pte();
 }
@@ -159,8 +156,8 @@ kpatch_va_valid(vm_offset_t va)
 	extern char stext, etext;
 	vm_offset_t start, end;
 
-	start = (vm_offset_t) &stext;
-	end = (vm_offset_t) &etext;
+	start = (vm_offset_t)&stext;
+	end = (vm_offset_t)&etext;
 
 	return (va >= start && va <= end);
 }
