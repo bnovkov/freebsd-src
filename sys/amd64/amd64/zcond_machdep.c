@@ -30,6 +30,8 @@
 
 #include <sys/types.h>
 #include <sys/zcond.h>
+#include <sys/pcpu.h>
+#include <sys/kassert.h>
 
 #include <machine/cpufunc.h>
 #include <machine/zcond.h>
