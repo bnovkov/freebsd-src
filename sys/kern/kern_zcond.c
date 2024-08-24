@@ -32,22 +32,15 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/cpuset.h>
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/linker.h>
 #include <sys/linker_set.h>
-#include <sys/lock.h>
-#include <sys/malloc.h>
-#include <sys/mutex.h>
 #include <sys/refcount.h>
 #include <sys/sbuf.h>
 #include <sys/smp.h>
 #include <sys/sysctl.h>
 #include <sys/zcond.h>
-
-#include <machine/atomic.h>
-#include <machine/cpufunc.h>
 
 struct patch_point {
 	vm_offset_t patch_addr;
