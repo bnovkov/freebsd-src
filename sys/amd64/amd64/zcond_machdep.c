@@ -29,19 +29,8 @@
  */
 
 #include <sys/types.h>
-#include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/domain.h>
-#include <sys/domainset.h>
-#include <sys/kernel.h>
-#include <sys/lock.h>
-#include <sys/malloc.h>
-#include <sys/mutex.h>
-#include <sys/queue.h>
 #include <sys/zcond.h>
 
-#include <machine/cpufunc.h>
-#include <machine/zcond.h>
 #include <machine/md_var.h>
 
 static uint8_t insn[ZCOND_MAX_INSN_SIZE];

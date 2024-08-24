@@ -46,13 +46,6 @@
 #include <sys/sysctl.h>
 #include <sys/zcond.h>
 
-#include <vm/vm.h>
-#include <vm/pmap.h>
-#include <vm/vm_extern.h>
-#include <vm/vm_kern.h>
-#include <vm/vm_map.h>
-#include <vm/vm_page.h>
-
 #include <machine/atomic.h>
 #include <machine/cpufunc.h>
 
