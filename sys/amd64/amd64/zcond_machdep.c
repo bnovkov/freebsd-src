@@ -77,7 +77,7 @@ insn_jmp(size_t size, vm_offset_t patch_addr, vm_offset_t lbl_true_addr)
 }
 
 void
-zcond_before_patch(vm_page_t patch_page, struct zcond_md_ctxt *ctxt)
+zcond_before_patch(struct zcond_md_ctxt *ctxt)
 {
 	ctxt->wp = disable_wp();
 }
