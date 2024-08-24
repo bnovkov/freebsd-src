@@ -42,7 +42,7 @@
 
 #include <machine/cpufunc.h>
 #include <machine/zcond.h>
-#include <machine/cpu_machdep.c>
+#include <machine/cpu_machdep.h>
 
 static uint8_t insn[ZCOND_MAX_INSN_SIZE];
 
