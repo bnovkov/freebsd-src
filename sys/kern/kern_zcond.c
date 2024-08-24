@@ -69,9 +69,6 @@ struct zcond_patch_arg {
 	struct zcond_md_ctxt *md_ctxt;
 };
 
-MALLOC_DECLARE(M_ZCOND);
-MALLOC_DEFINE(M_ZCOND, "zcond", "malloc for the zcond subsystem");
-
 static void
 zcond_load_patch_points(linker_file_t lf)
 {
@@ -108,10 +105,6 @@ zcond_load_patch_points_cb(linker_file_t lf, void *arg __unused)
 	return (0);
 }
 
-/* When performing a patch on a zcond, each page containing a
-		   patch_point is patched to this address. */
-static vm_offset_t patch_addr;
-
 /*
  * Collect patch_points from the __zcond_table ELF section into a list.
  * Prepare a CPU local copy of the kernel_pmap, used to safely patch
@@ -123,7 +116,6 @@ zcond_init(const void *unused)
 	EVENTHANDLER_REGISTER(kld_load, zcond_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	linker_file_foreach(zcond_load_patch_points_cb, NULL);
-	patch_addr = zcond_get_patch_va();
 }
 SYSINIT(zcond, SI_SUB_ZCOND, SI_ORDER_SECOND, zcond_init, NULL);
 
@@ -134,7 +126,6 @@ static void
 zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 {
 	struct patch_point *p;
-	vm_page_t patch_page;
 	uint8_t *insn;
 	size_t insn_size;
 
@@ -142,11 +133,8 @@ zcond_patch(struct zcond *cond, struct zcond_md_ctxt *ctxt)
 		insn = zcond_get_patch_insn(p->patch_addr, p->lbl_true_addr,
 		    &insn_size);
 
-		patch_page = PHYS_TO_VM_PAGE(vtophys(p->patch_addr));
-		zcond_before_patch(patch_page, ctxt);
-
-		memcpy((void *)(patch_addr + (p->patch_addr & PAGE_MASK)), insn,
-		    insn_size);
+		zcond_before_patch(ctxt);
+		memcpy((void *)p->patch_addr, insn, insn_size);
 		zcond_after_patch(ctxt);
 	}
 }
