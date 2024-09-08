@@ -400,7 +400,7 @@ main(int argc, char *argv[])
 
 	error = 0;
 	if (!error && memsize)
-		error = vm_setup_memory(ctx, memsize, VM_MMAP_ALL);
+		error = vm_setup_memory(ctx, NULL, 0, memsize, VM_MMAP_ALL);
 
 	if (!error && (get_memseg || get_all))
 		error = show_memseg(ctx);
