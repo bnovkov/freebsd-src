@@ -1,6 +1,7 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/cpuset.h>
+#include <sys/domainset.h>
 
 #include <stdio.h>
 #include <libutil.h>
@@ -19,7 +20,7 @@ ATF_TC_BODY(invalid, tc)
 
 	snprintf(testvalue, sizeof(testvalue), "%d", CPU_SETSIZE + 1);
 
-	ATF_CHECK_EQ(cpuset_parselist(testvalue,  &mask), CPUSET_PARSE_INVALID_CPU);
+	ATF_CHECK_EQ(cpuset_parselist(testvalue,  &mask), CPUSET_PARSE_OUT_OF_RANGE);
 }
 
 ATF_TC(invalidchar);

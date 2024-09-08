@@ -213,7 +213,12 @@ int	cpuset_parselist(const char *list, cpuset_t *mask);
 #define CPUSET_PARSE_OK			0
 #define CPUSET_PARSE_GETAFFINITY	-1
 #define CPUSET_PARSE_ERROR		-2
-#define CPUSET_PARSE_INVALID_CPU	-3
+#define CPUSET_PARSE_OUT_OF_RANGE	-3
+#define CPUSET_PARSE_GETDOMAIN		-4
+#endif
+
+#ifdef _SYS_DOMAINSET_H_
+int	domainset_parselist(const char *list, domainset_t *mask, int *policyp);
 #endif
 
 __END_DECLS
