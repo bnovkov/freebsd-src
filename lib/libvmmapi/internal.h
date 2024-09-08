@@ -9,11 +9,6 @@
 
 #include <sys/types.h>
 
-enum {
-	VM_MEMSEG_LOW,
-	VM_MEMSEG_HIGH,
-	VM_MEMSEG_COUNT,
-};
 
 struct vmctx {
 	int	fd;		/* device file descriptor */
@@ -25,6 +20,7 @@ struct vmctx {
 	int	memflags;
 	char	*baseaddr;
 	char	*name;
+	cpuset_t cpu_affinity[VM_MAXSYSMEM];
 };
 
 struct vcpu {
