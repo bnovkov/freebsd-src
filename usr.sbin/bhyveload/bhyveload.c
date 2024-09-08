@@ -916,7 +916,7 @@ main(int argc, char** argv)
 	}
 
 	vm_set_memflags(ctx, memflags);
-	error = vm_setup_memory(ctx, mem_size, VM_MMAP_ALL);
+	error = vm_setup_memory(ctx, NULL, 0, mem_size, VM_MMAP_ALL);
 	if (error)
 		err(1, "vm_setup_memory");
 
