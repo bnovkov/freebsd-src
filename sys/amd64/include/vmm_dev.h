@@ -29,6 +29,8 @@
 #ifndef	_VMM_DEV_H_
 #define	_VMM_DEV_H_
 
+#include <sys/domainset.h>
+
 #include <machine/vmm.h>
 #include <machine/vmm_snapshot.h>
 
@@ -47,11 +49,31 @@ struct vm_munmap {
 	vm_paddr_t	gpa;
 	size_t		len;
 };
+/* Maximum number of NUMA domains in a guest. */
+#define VM_MAXMEMDOM 8
+#define VM_MAXSYSMEM VM_MAXMEMDOM
+
+/*
+ * Identifiers for memory segments.
+ * Each guest NUMA domain is represented by a single system
+ * memory segment from [VM_SYSMEM, VM_MAXSYSMEM).
+ * The remaining identifiers can be used to create devmem segments.
+ */
+enum {
+        VM_SYSMEM,
+        VM_BOOTROM = VM_MAXSYSMEM,
+        VM_FRAMEBUFFER,
+        VM_PCIROM,
+        VM_MEMSEG_END
+};
 
 #define	VM_MEMSEG_NAME(m)	((m)->name[0] != '\0' ? (m)->name : NULL)
 struct vm_memseg {
 	int		segid;
 	size_t		len;
+	domainset_t	*ds_mask;
+	size_t		ds_mask_size;
+	int 		ds_policy;
 	char		name[VM_MAX_SUFFIXLEN + 1];
 };
 

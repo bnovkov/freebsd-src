@@ -44,6 +44,7 @@
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/vnode.h>
+#include <sys/domainset.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -136,7 +137,7 @@ struct mem_seg {
 	bool	sysmem;
 	struct vm_object *object;
 };
-#define	VM_MAX_MEMSEGS	4
+#define	VM_MAX_MEMSEGS VM_MEMSEG_END
 
 struct mem_map {
 	vm_paddr_t	gpa;
@@ -146,7 +147,7 @@ struct mem_map {
 	int		prot;
 	int		flags;
 };
-#define	VM_MAX_MEMMAPS	8
+#define	VM_MAX_MEMMAPS (VM_MAX_MEMSEGS * 2)
 
 /*
  * Initialization:
@@ -830,10 +831,14 @@ vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa)
 }
 
 int
-vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem)
+vm_alloc_memseg(struct vm *vm, int ident, size_t len, int ds_policy,
+    domainset_t *ds_mask, size_t mask_size, bool sysmem)
 {
+	struct domainset domain, *obj_ds_policy;
 	struct mem_seg *seg;
+	domainset_t *mask;
 	vm_object_t obj;
+	int error;
 
 	sx_assert(&vm->mem_segs_lock, SX_XLOCKED);
 
@@ -851,14 +856,44 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem)
 			return (EINVAL);
 	}
 
+	error = 0;
+	mask = NULL;
+	if (ds_policy != DOMAINSET_POLICY_INVALID) {
+		if (mask_size < sizeof(domainset_t) ||
+		    mask_size > DOMAINSET_MAXSIZE / NBBY)
+			return (ERANGE);
+		memset(&domain, 0, sizeof(domain));
+		mask = malloc(mask_size, M_TEMP, M_WAITOK | M_ZERO);
+		error = copyin(ds_mask, mask, mask_size);
+		if (error)
+			goto out;
+		error = domainset_populate(&domain, mask, ds_policy, mask_size);
+		if (error) {
+			printf("%s: failed to process domain policy"
+			    ", error: %d\n", __func__, error);
+			goto out;
+		}
+		obj_ds_policy = domainset_create(&domain);
+		if (obj_ds_policy == NULL) {
+			error = EINVAL;
+			goto out;
+		}
+	}
 	obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
-	if (obj == NULL)
-		return (ENOMEM);
-
+	if (obj == NULL) {
+		error = ENOMEM;
+		goto out;
+	}
 	seg->len = len;
 	seg->object = obj;
+	if (ds_policy != DOMAINSET_POLICY_INVALID)
+		seg->object->domain.dr_policy = obj_ds_policy;
 	seg->sysmem = sysmem;
-	return (0);
+
+out:
+	if (mask != NULL)
+		free(mask, M_TEMP);
+	return (error);
 }
 
 int

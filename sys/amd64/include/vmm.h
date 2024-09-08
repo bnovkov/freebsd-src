@@ -30,6 +30,7 @@
 #define	_VMM_H_
 
 #include <sys/cpuset.h>
+#include <sys/domainset.h>
 #include <sys/sdt.h>
 #include <x86/segments.h>
 
@@ -245,7 +246,8 @@ void vm_unlock_memsegs(struct vm *vm);
 int vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t off,
     size_t len, int prot, int flags);
 int vm_munmap_memseg(struct vm *vm, vm_paddr_t gpa, size_t len);
-int vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem);
+int vm_alloc_memseg(struct vm *vm, int ident, size_t len, int ds_policy,
+    domainset_t *mask, size_t mask_size, bool sysmem);
 void vm_free_memseg(struct vm *vm, int ident);
 int vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa);
 int vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len);
