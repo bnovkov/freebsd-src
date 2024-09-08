@@ -113,6 +113,14 @@ void domainset_zero(void);
  * returned value will not match the key pointer.
  */
 struct domainset *domainset_create(const struct domainset *);
+
+/*
+ * Validate and populate a domainset structure according to the specified
+ * policy and mask.
+ */
+int domainset_populate(struct domainset *domain, domainset_t *mask, int policy,
+    size_t mask_size);
+
 #ifdef _SYS_SYSCTL_H_
 int sysctl_handle_domainset(SYSCTL_HANDLER_ARGS);
 #endif
