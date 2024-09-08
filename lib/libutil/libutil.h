@@ -210,10 +210,12 @@ int	quota_write_usage(struct quotafile *_qf, struct dqblk *_dqb, int _id);
 
 #ifdef _SYS_CPUSET_H_
 int	cpuset_parselist(const char *list, cpuset_t *mask);
+int	domainset_parselist(const char *list, domainset_t *mask, int *policyp);
 #define CPUSET_PARSE_OK			0
 #define CPUSET_PARSE_GETAFFINITY	-1
 #define CPUSET_PARSE_ERROR		-2
-#define CPUSET_PARSE_INVALID_CPU	-3
+#define CPUSET_PARSE_OUT_OF_RANGE	-3
+#define CPUSET_PARSE_GETDOMAIN		-4
 #endif
 
 __END_DECLS
