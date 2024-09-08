@@ -9,21 +9,15 @@
 
 #include <sys/types.h>
 
-enum {
-	VM_MEMSEG_LOW,
-	VM_MEMSEG_HIGH,
-	VM_MEMSEG_COUNT,
-};
 
 struct vmctx {
 	int	fd;
-	struct {
-		vm_paddr_t base;
-		vm_size_t size;
-	} memsegs[VM_MEMSEG_COUNT];
+	vm_size_t lowmem_size;
+	vm_size_t highmem_size;
 	int	memflags;
 	char	*baseaddr;
 	char	*name;
+	cpuset_t cpu_affinity[VM_MAXSYSMEM];
 };
 
 struct vcpu {

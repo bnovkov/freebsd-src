@@ -28,6 +28,7 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/domainset.h>
 
 #include <machine/specialreg.h>
 #include <machine/vmm.h>
