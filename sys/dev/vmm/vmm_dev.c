@@ -279,7 +279,8 @@ alloc_memseg(struct vmmdev_softc *sc, struct vm_memseg *mseg, size_t len)
 			goto done;
 	}
 
-	error = vm_alloc_memseg(sc->vm, mseg->segid, mseg->len, sysmem);
+	error = vm_alloc_memseg(sc->vm, mseg->segid, mseg->len, mseg->ds_policy,
+	    mseg->ds_mask, mseg->ds_mask_size, sysmem);
 	if (error)
 		goto done;
 
