@@ -30,6 +30,7 @@
 #define	_VMM_H_
 
 #include <sys/cpuset.h>
+#include <sys/domainset.h>
 #include <sys/sdt.h>
 #include <x86/segments.h>
 

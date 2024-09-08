@@ -9,6 +9,7 @@
 #include <sys/lock.h>
 #include <sys/sx.h>
 #include <sys/systm.h>
+#include <sys/malloc.h>
 
 #include <machine/vmm.h>
 
@@ -156,11 +157,15 @@ vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa)
 }
 
 int
-vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem)
+vm_alloc_memseg(struct vm *vm, int ident, size_t len, int ds_policy,
+    domainset_t *ds_mask, size_t mask_size, bool sysmem)
 {
+	struct domainset domain, *obj_domainset;
 	struct vm_mem *mem;
 	struct vm_mem_seg *seg;
+	domainset_t *mask;
 	vm_object_t obj;
+	int error;
 
 	mem = vm_mem(vm);
 	vm_assert_memseg_xlocked(vm);
@@ -179,14 +184,41 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem)
 			return (EINVAL);
 	}
 
+	error = 0;
+	mask = NULL;
+	if (ds_policy != DOMAINSET_POLICY_INVALID) {
+		if (mask_size < sizeof(domainset_t) ||
+		    mask_size > DOMAINSET_MAXSIZE / NBBY)
+			return (ERANGE);
+		memset(&domain, 0, sizeof(domain));
+		mask = malloc(mask_size, M_TEMP, M_WAITOK | M_ZERO);
+		error = copyin(ds_mask, mask, mask_size);
+		if (error)
+			goto out;
+		error = domainset_populate(&domain, mask, ds_policy, mask_size);
+		if (error) {
+			printf("%s: failed to process domain policy,"
+			    "error: %d\n", __func__, error);
+			goto out;
+		}
+		obj_domainset = domainset_create(&domain);
+		if (obj_domainset == NULL) {
+			error = EINVAL;
+			goto out;
+		}
+	}
 	obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
 	if (obj == NULL)
 		return (ENOMEM);
 
 	seg->len = len;
 	seg->object = obj;
+	if (ds_policy != DOMAINSET_POLICY_INVALID)
+		seg->object->domain.dr_policy = obj_domainset;
 	seg->sysmem = sysmem;
-	return (0);
+out:
+	free(mask, M_TEMP);
+	return (error);
 }
 
 int
