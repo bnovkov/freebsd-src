@@ -319,7 +319,7 @@ LENTRY(enter_kernel_el)
 	 */
 	isb
 
-	/* Ensure SPSR_EL1 and pstate are in sync. The only wat to set the
+	/* Ensure SPSR_EL1 and pstate are in sync. The only way to set the
 	 * latter is to set the former and return from an exception with eret.
 	 */
 	mov	x2, #(PSR_DAIF | PSR_M_EL1h)
@@ -387,6 +387,10 @@ LENTRY(enter_kernel_el)
 	ldr	x3, =(CNTHCTL_EL1PCTEN | CNTHCTL_EL1PCEN)
 	ldr	x5, =(PSR_DAIF | PSR_M_EL1h)
 
+	/* Enable SPE at EL1 via Monitor Debug Configuration Register */
+	mov	x6, (0b11 << MDCR_E2PB_SHIFT)
+	msr	mdcr_el2, x6
+
 .Ldone_vhe:
 
 	msr	cptr_el2, x2
@@ -416,15 +420,6 @@ LENTRY(enter_kernel_el)
 	orr	x2, x2, #ICC_SRE_EL2_SRE	/* Enable system registers */
 	msr	icc_sre_el2, x2
 2:
-
-	/* Set the Monitor Debug Configuration Register */
-	mrs	x2, mdcr_el2
-	/* Enable SPE at EL1
-	 * TODO: Once VHE is enabled this will need to change - when kern is
-	 * booted at EL2 use 0b00, else 0b11
-	 */
-	orr	x2, x2, (0b11 << MDCR_E2PB_SHIFT)
-	msr	mdcr_el2, x2
 
 	/* Set the address to return to our return address */
 	msr	elr_el2, x30

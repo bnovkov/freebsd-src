@@ -56,8 +56,8 @@
 .endm
 
 .macro pid_in_context_idr label
-	ldr	x9, =arm64_pid_in_contextidr
-	ldr	x10, [x9]
+	adrp	x9, arm64_pid_in_contextidr
+	ldr	x10, [x9, :lo12:arm64_pid_in_contextidr]
 	cbz	x10, \label
 	ldr	x9, [x1, #TD_PROC]
 	ldr	x10, [x9, #PR_PID]

@@ -1709,60 +1709,6 @@
 #define	MDCCSR_EL0_CRm			1
 #define	MDCCSR_EL0_op2			0
 
-/* MDCR_EL2 */
-#define	MDCR_EL2			MRS_REG(MDCR_EL2)
-#define	MDCR_EL2_op0			3
-#define	MDCR_EL2_op1			4
-#define	MDCR_EL2_CRn			1
-#define	MDCR_EL2_CRm			1
-#define	MDCR_EL2_op2			1
-#define	MDCR_HPMN_SHIFT			0
-#define	MDCR_HPMN_MASK			(UL(0xf) << MDCR_HPMN_SHIFT)
-#define	MDCR_TPMCR_SHIFT		5
-#define	MDCR_TPMCR			(UL(0x1) << MDCR_TPMCR_SHIFT)
-#define	MDCR_TPM_SHIFT			6
-#define	MDCR_TPM			(UL(0x1) << MDCR_TPM_SHIFT)
-#define	MDCR_HPME_SHIFT			7
-#define	MDCR_HPME			(UL(0x1) << MDCR_HPME_SHIFT)
-#define	MDCR_TDE_SHIFT			8
-#define	MDCR_TDE			(UL(0x1) << MDCR_TDE_SHIFT)
-#define	MDCR_TDA_SHIFT			9
-#define	MDCR_TDA			(UL(0x1) << MDCR_TDA_SHIFT)
-#define	MDCR_TDOSA_SHIFT		10
-#define	MDCR_TDOSA			(UL(0x1) << MDCR_TDOSA_SHIFT)
-#define	MDCR_TDRA_SHIFT			11
-#define	MDCR_TDRA			(UL(0x1) << MDCR_TDRA_SHIFT)
-#define	MDCR_E2PB_SHIFT			12
-#define	MDCR_E2PB_MASK			(UL(0x3) << MDCR_E2PB_SHIFT)
-#define	MDCR_TPMS_SHIFT			14
-#define	MDCR_TPMS			(UL(0x1) << MDCR_TPMS_SHIFT)
-#define	MDCR_EnSPM_SHIFT		15
-#define	MDCR_EnSPM			(UL(0x1) << MDCR_EnSPM_SHIFT)
-#define	MDCR_HPMD_SHIFT			17
-#define	MDCR_HPMD			(UL(0x1) << MDCR_HPMD_SHIFT)
-#define	MDCR_TTRF_SHIFT			19
-#define	MDCR_TTRF			(UL(0x1) << MDCR_TTRF_SHIFT)
-#define	MDCR_HCCD_SHIFT			23
-#define	MDCR_HCCD			(UL(0x1) << MDCR_HCCD_SHIFT)
-#define	MDCR_E2TB_SHIFT			24
-#define	MDCR_E2TB_MASK			(UL(0x3) << MDCR_E2TB_SHIFT)
-#define	MDCR_HLP_SHIFT			26
-#define	MDCR_HLP			(UL(0x1) << MDCR_HLP_SHIFT)
-#define	MDCR_TDCC_SHIFT			27
-#define	MDCR_TDCC			(UL(0x1) << MDCR_TDCC_SHIFT)
-#define	MDCR_MTPME_SHIFT		28
-#define	MDCR_MTPME			(UL(0x1) << MDCR_MTPME_SHIFT)
-#define	MDCR_HPMFZO_SHIFT		29
-#define	MDCR_HPMFZO			(UL(0x1) << MDCR_HPMFZO_SHIFT)
-#define	MDCR_PMSSE_SHIFT		30
-#define	MDCR_PMSSE_MASK			(UL(0x3) << MDCR_PMSSE_SHIFT)
-#define	MDCR_HPMFZS_SHIFT		36
-#define	MDCR_HPMFZS			(UL(0x1) << MDCR_HPMFZS_SHIFT)
-#define	MDCR_PMEE_SHIFT			40
-#define	MDCR_PMEE_MASK			(UL(0x3) << MDCR_PMEE_SHIFT)
-#define	MDCR_EBWE_SHIFT			43
-#define	MDCR_EBWE			(UL(0x1) << MDCR_EBWE_SHIFT)
-
 /* MDSCR_EL1 - Monitor Debug System Control Register */
 #define	MDSCR_EL1			MRS_REG(MDSCR_EL1)
 #define	MDSCR_EL1_op0			2
