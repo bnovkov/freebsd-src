@@ -1920,6 +1920,9 @@ t4_detach_common(device_t dev)
 static inline int
 stop_adapter(struct adapter *sc)
 {
+	struct port_info *pi;
+	int i;
+
 	if (atomic_testandset_int(&sc->error_flags, ilog2(ADAP_STOPPED))) {
 		CH_ALERT(sc, "%s from %p, flags 0x%08x,0x%08x, EALREADY\n",
 			 __func__, curthread, sc->flags, sc->error_flags);
@@ -1927,7 +1930,24 @@ stop_adapter(struct adapter *sc)
 	}
 	CH_ALERT(sc, "%s from %p, flags 0x%08x,0x%08x\n", __func__, curthread,
 		 sc->flags, sc->error_flags);
-	return (t4_shutdown_adapter(sc));
+	t4_shutdown_adapter(sc);
+	for_each_port(sc, i) {
+		pi = sc->port[i];
+		PORT_LOCK(pi);
+		if (pi->up_vis > 0 && pi->link_cfg.link_ok) {
+			/*
+			 * t4_shutdown_adapter has already shut down all the
+			 * PHYs but it also disables interrupts and DMA so there
+			 * won't be a link interrupt.  Update the state manually
+			 * if the link was up previously and inform the kernel.
+			 */
+			pi->link_cfg.link_ok = false;
+			t4_os_link_changed(pi);
+		}
+		PORT_UNLOCK(pi);
+	}
+
+	return (0);
 }
 
 static inline int
@@ -2020,20 +2040,6 @@ stop_lld(struct adapter *sc)
 	for_each_port(sc, i) {
 		pi = sc->port[i];
 		pi->vxlan_tcam_entry = false;
-
-		PORT_LOCK(pi);
-		if (pi->up_vis > 0) {
-			/*
-			 * t4_shutdown_adapter has already shut down all the
-			 * PHYs but it also disables interrupts and DMA so there
-			 * won't be a link interrupt.  So we update the state
-			 * manually and inform the kernel.
-			 */
-			pi->link_cfg.link_ok = false;
-			t4_os_link_changed(pi);
-		}
-		PORT_UNLOCK(pi);
-
 		for_each_vi(pi, j, vi) {
 			vi->xact_addr_filt = -1;
 			mtx_lock(&vi->tick_mtx);
@@ -2110,21 +2116,30 @@ stop_lld(struct adapter *sc)
 	return (rc);
 }
 
-static int
-t4_suspend(device_t dev)
+int
+suspend_adapter(struct adapter *sc)
 {
-	struct adapter *sc = device_get_softc(dev);
-
-	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
 	stop_adapter(sc);
 	stop_lld(sc);
 #ifdef TCP_OFFLOAD
 	stop_all_uld(sc);
 #endif
 	set_adapter_hwstatus(sc, false);
-	CH_ALERT(sc, "%s end (thread %p).\n", __func__, curthread);
 
 	return (0);
+}
+
+static int
+t4_suspend(device_t dev)
+{
+	struct adapter *sc = device_get_softc(dev);
+	int rc;
+
+	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
+	rc = suspend_adapter(sc);
+	CH_ALERT(sc, "%s end (thread %p).\n", __func__, curthread);
+
+	return (rc);
 }
 
 struct adapter_pre_reset_state {
@@ -2464,20 +2479,28 @@ done:
 	return (rc);
 }
 
-static int
-t4_resume(device_t dev)
+int
+resume_adapter(struct adapter *sc)
 {
-	struct adapter *sc = device_get_softc(dev);
-
-	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
 	restart_adapter(sc);
 	restart_lld(sc);
 #ifdef TCP_OFFLOAD
 	restart_all_uld(sc);
 #endif
+	return (0);
+}
+
+static int
+t4_resume(device_t dev)
+{
+	struct adapter *sc = device_get_softc(dev);
+	int rc;
+
+	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
+	rc = resume_adapter(sc);
 	CH_ALERT(sc, "%s end (thread %p).\n", __func__, curthread);
 
-	return (0);
+	return (rc);
 }
 
 static int
@@ -2512,12 +2535,7 @@ reset_adapter_with_pci_bus_reset(struct adapter *sc)
 static int
 reset_adapter_with_pl_rst(struct adapter *sc)
 {
-	stop_adapter(sc);
-	stop_lld(sc);
-#ifdef TCP_OFFLOAD
-	stop_all_uld(sc);
-#endif
-	set_adapter_hwstatus(sc, false);
+	suspend_adapter(sc);
 
 	/* This is a t4_write_reg without the hw_off_limits check. */
 	MPASS(sc->error_flags & HW_OFF_LIMITS);
@@ -2525,13 +2543,18 @@ reset_adapter_with_pl_rst(struct adapter *sc)
 			  F_PIORSTMODE | F_PIORST | F_AUTOPCIEPAUSE);
 	pause("pl_rst", 1 * hz);		/* Wait 1s for reset */
 
-	restart_adapter(sc);
-	restart_lld(sc);
-#ifdef TCP_OFFLOAD
-	restart_all_uld(sc);
-#endif
+	resume_adapter(sc);
 
 	return (0);
+}
+
+static inline int
+reset_adapter(struct adapter *sc)
+{
+	if (vm_guest == 0)
+		return (reset_adapter_with_pci_bus_reset(sc));
+	else
+		return (reset_adapter_with_pl_rst(sc));
 }
 
 static void
@@ -2544,10 +2567,7 @@ reset_adapter_task(void *arg, int pending)
 
 	if (pending > 1)
 		CH_ALERT(sc, "%s: pending %d\n", __func__, pending);
-	if (vm_guest == 0)
-		rc = reset_adapter_with_pci_bus_reset(sc);
-	else
-		rc = reset_adapter_with_pl_rst(sc);
+	rc = reset_adapter(sc);
 	if (rc != 0) {
 		CH_ERR(sc, "adapter did not reset properly, rc = %d, "
 		       "flags 0x%08x -> 0x%08x, err_flags 0x%08x -> 0x%08x.\n",
@@ -3650,7 +3670,7 @@ fatal_error_task(void *arg, int pending)
 
 	if (t4_reset_on_fatal_err) {
 		CH_ALERT(sc, "resetting adapter after fatal error.\n");
-		rc = reset_adapter_with_pci_bus_reset(sc);
+		rc = reset_adapter(sc);
 		if (rc == 0 && t4_panic_on_fatal_err) {
 			CH_ALERT(sc, "reset was successful, "
 			    "system will NOT panic.\n");

@@ -207,7 +207,7 @@ sysctl_net_inet_tcp_syncache_rexmtlimit_check(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_net_inet_tcp_syncache, OID_AUTO, rexmtlimit,
     CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
     &VNET_NAME(tcp_syncache.rexmt_limit), 0,
-    sysctl_net_inet_tcp_syncache_rexmtlimit_check, "UI",
+    sysctl_net_inet_tcp_syncache_rexmtlimit_check, "IU",
     "Limit on SYN/ACK retransmissions");
 
 VNET_DEFINE(int, tcp_sc_rst_sock_fail) = 1;
@@ -527,10 +527,16 @@ syncache_timer(void *xsch)
 		}
 
 		NET_EPOCH_ENTER(et);
-		syncache_respond(sc, NULL, TH_SYN|TH_ACK);
+		if (syncache_respond(sc, NULL, TH_SYN|TH_ACK) == 0) {
+			syncache_timeout(sc, sch, 0);
+			TCPSTAT_INC(tcps_sndacks);
+			TCPSTAT_INC(tcps_sndtotal);
+			TCPSTAT_INC(tcps_sc_retransmitted);
+		} else {
+			syncache_drop(sc, sch);
+			TCPSTAT_INC(tcps_sc_dropped);
+		}
 		NET_EPOCH_EXIT(et);
-		TCPSTAT_INC(tcps_sc_retransmitted);
-		syncache_timeout(sc, sch, 0);
 	}
 	if (!TAILQ_EMPTY(&(sch)->sch_bucket))
 		callout_reset(&(sch)->sch_timer, (sch)->sch_nextc - tick,
@@ -688,7 +694,13 @@ syncache_chkrst(struct in_conninfo *inc, struct tcphdr *th, struct mbuf *m,
 				    "sending challenge ACK\n",
 				    s, __func__,
 				    th->th_seq, sc->sc_irs + 1, sc->sc_wnd);
-			syncache_respond(sc, m, TH_ACK);
+			if (syncache_respond(sc, m, TH_ACK) == 0) {
+				TCPSTAT_INC(tcps_sndacks);
+				TCPSTAT_INC(tcps_sndtotal);
+			} else {
+				syncache_drop(sc, sch);
+				TCPSTAT_INC(tcps_sc_dropped);
+			}
 		}
 	} else {
 		if ((s = tcp_log_addrs(inc, th, NULL, NULL)))
@@ -1549,6 +1561,9 @@ syncache_add(struct in_conninfo *inc, struct tcpopt *to, struct tcphdr *th,
 			syncache_timeout(sc, sch, 1);
 			TCPSTAT_INC(tcps_sndacks);
 			TCPSTAT_INC(tcps_sndtotal);
+		} else {
+			syncache_drop(sc, sch);
+			TCPSTAT_INC(tcps_sc_dropped);
 		}
 		SCH_UNLOCK(sch);
 		goto donenoprobe;
@@ -1720,9 +1735,7 @@ skip_alloc:
 	 * Do a standard 3-way handshake.
 	 */
 	if (syncache_respond(sc, m, TH_SYN|TH_ACK) == 0) {
-		if (V_tcp_syncookies && V_tcp_syncookiesonly && sc != &scs)
-			syncache_free(sc);
-		else if (sc != &scs)
+		if (sc != &scs)
 			syncache_insert(sc, sch);   /* locks and unlocks sch */
 		TCPSTAT_INC(tcps_sndacks);
 		TCPSTAT_INC(tcps_sndtotal);

@@ -1,7 +1,9 @@
-/*
- * SPDX-License-Identifier: BSD-2-Clause
+/*-
+ * Copyright (c) 2015-2018 The FreeBSD Foundation
+ * Copyright (c) 2024 Jessica Clarke <jrtc27@FreeBSD.org>
  *
- * Copyright (c) 2022 Goran Mekić
+ * Part of this software was developed by Konstantin Belousov <kib@FreeBSD.org>
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -15,7 +17,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -25,39 +27,23 @@
  * SUCH DAMAGE.
  */
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <fcntl.h>
+#ifndef __RISCV_IFUNC_H
+#define	__RISCV_IFUNC_H
 
-#define CMD_MASK 0xF0
-#define NOTE_ON 0x90
-#define NOTE_OFF 0x80
-#define CHANNEL_MASK 0xF
-#define CONTROLLER_ON 0xB0
+#define	DEFINE_IFUNC(qual, ret_type, name, args)			\
+    static ret_type (*name##_resolver(void))args __used;		\
+    qual ret_type name args __attribute__((ifunc(#name "_resolver")));	\
+    static ret_type (*name##_resolver(void))args
 
-typedef struct midi_event {
-	unsigned char type;
-	unsigned char channel;
-	union {
-		unsigned char note;
-		unsigned controller;
-	};
-	union {
-		unsigned char velocity;
-		unsigned char value;
-	};
-} midi_event_t;
+#define	DEFINE_UIFUNC(qual, ret_type, name, args)			\
+    static ret_type (*name##_resolver(unsigned long, unsigned long,	\
+	unsigned long, unsigned long, unsigned long, unsigned long,	\
+	unsigned long, unsigned long))args __used;			\
+    qual ret_type name args __attribute__((ifunc(#name "_resolver")));	\
+    static ret_type (*name##_resolver(unsigned long elf_hwcap __unused,	\
+	unsigned long _arg2 __unused, unsigned long _arg3 __unused,	\
+	unsigned long _arg4 __unused, unsigned long _arg5 __unused,	\
+	unsigned long _arg6 __unused, unsigned long _arg7 __unused,	\
+	unsigned long _arg8 __unused))args
 
-typedef struct midi_config {
-	char   *device;
-	int	fd;
-} midi_config_t;
-
-void
-oss_midi_init(midi_config_t *config)
-{
-	if ((config->fd = open(config->device, O_RDWR)) == -1) {
-		perror("Error opening MIDI device");
-		exit(1);
-	}
-}
+#endif
