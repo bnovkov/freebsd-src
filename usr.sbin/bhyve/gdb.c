@@ -85,6 +85,7 @@
 #define	GDB_BP_INSTR		(uint8_t []){0xcc}
 #define	GDB_PC_REGNAME		VM_REG_GUEST_RIP
 #define	GDB_BREAKPOINT_CAP	VM_CAP_BPT_EXIT
+#define GDB_WATCHPOINT_AVAIL 4
 #elif defined(__aarch64__)
 #define	GDB_BP_SIZE		4
 #define	GDB_BP_INSTR		(uint8_t []){0x00, 0x00, 0x20, 0xd4}
@@ -126,6 +127,22 @@ struct breakpoint {
 	uint64_t gpa;
 	uint8_t shadow_inst[GDB_BP_SIZE];
 	TAILQ_ENTRY(breakpoint) link;
+};
+
+struct watchpoint_stats {
+	int no_active;
+	int no_evicted;
+	int avail_dbregs; /* Tracks DR regs used by the guest */
+	struct watchpoint {
+		enum {
+		WATCH_INACTIVE = 0,
+		WATCH_ACTIVE,
+		WATCH_EVICTED,
+	} state;
+		uint64_t gva;
+		int type;
+		int bytes;
+	} watchpoints[GDB_WATCHPOINT_AVAIL];
 };
 
 /*
@@ -282,6 +299,7 @@ debug(const char *fmt, ...)
 #endif
 
 static void	remove_all_sw_breakpoints(void);
+static void remove_all_hw_watchpoints(void);
 
 static int
 guest_paging_info(struct vcpu *vcpu, struct vm_guest_paging *paging)
@@ -489,6 +507,7 @@ close_connection(void)
 	cur_fd = -1;
 
 	remove_all_sw_breakpoints();
+	remove_all_hw_watchpoints();
 
 	/* Clear any pending events. */
 	memset(vcpu_state, 0, guest_ncpus * sizeof(*vcpu_state));
@@ -496,6 +515,21 @@ close_connection(void)
 	/* Resume any stopped vCPUs. */
 	gdb_resume_vcpus();
 	pthread_mutex_unlock(&gdb_lock);
+}
+
+static const char *
+gdb_watch_type_str(struct watchpoint *wp)
+{
+	switch (wp->type) {
+	case GDB_WATCHPOINT_TYPE_ACCESS:
+		return "awatch";
+	case GDB_WATCHPOINT_TYPE_READ:
+		return "rwatch";
+	case GDB_WATCHPOINT_TYPE_WRITE:
+		return "watch";
+	default:
+		return "?";
+	}
 }
 
 static uint8_t

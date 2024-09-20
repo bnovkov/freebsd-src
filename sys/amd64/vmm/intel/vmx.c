@@ -313,6 +313,7 @@ SDT_PROBE_DEFINE4(vmm, vmx, exit, return,
 
 static int vmx_getdesc(void *vcpui, int reg, struct seg_desc *desc);
 static int vmx_getreg(void *vcpui, int reg, uint64_t *retval);
+static int vmx_setreg(void *vcpui, int reg, uint64_t val);
 static int vmxctx_setreg(struct vmxctx *vmxctx, int reg, uint64_t val);
 static void vmx_inject_pir(struct vlapic *vlapic);
 #ifdef BHYVE_SNAPSHOT
@@ -329,6 +330,35 @@ static inline bool
 host_has_rdtscp(void)
 {
 	return ((amd_feature & AMDID_RDTSCP) != 0);
+}
+
+static __inline int
+mov_dr_gpr_to_reg(int gpr)
+{
+	switch (gpr) {
+	case 0:
+		return VM_REG_GUEST_RAX;
+	case 1:
+		return VM_REG_GUEST_RCX;
+	case 2:
+		return VM_REG_GUEST_RDX;
+	case 3:
+		return VM_REG_GUEST_RBX;
+	case 4:
+		return VM_REG_GUEST_RSP;
+	case 5:
+		return VM_REG_GUEST_RBP;
+	case 6:
+		return VM_REG_GUEST_RSI;
+	case 7:
+		return VM_REG_GUEST_RDI;
+	case 8 ... 15:
+		return VM_REG_GUEST_R8 + (gpr - 8);
+	default:
+		break;
+	};
+
+	return -1;
 }
 
 #ifdef KTR
@@ -2328,6 +2358,81 @@ vmx_task_switch_reason(uint64_t qual)
 	}
 }
 
+/*
+ * Emulates MOV DR according to Intel SDM Vol. 2B 4-43.
+ */
+static int
+emulate_mov_dr(struct vmx_vcpu *vcpu, struct vm_exit *vmexit, uint64_t qual)
+{
+	bool write;
+	int error, gpr;
+	uint64_t regval;
+	int cpl, src, dst;
+	int dbreg, dbreg_num;
+
+	cpl = vmx_cpl();
+	if (cpl != 0) {
+		vm_inject_gp(vcpu->vcpu);
+		return (1);
+	}
+
+	dbreg_num = EXIT_QUAL_MOV_DR_REG(qual);
+	gpr = mov_dr_gpr_to_reg(EXIT_QUAL_MOV_DR_GPR(qual));
+	write = !!(EXIT_QUAL_MOV_DR_RW(qual) == 0);
+	regval = vmx_get_guest_reg(vcpu, gpr);
+	error = vmx_getreg(vcpu, gpr, &regval);
+	KASSERT(error == 0,
+	    ("%s: error %d fetching GPR %d", __func__, error, gpr));
+	if ((regval & CR4_DE) && (dbreg_num == 4 || dbreg_num == 5)) {
+		vm_inject_ud(vcpu->vcpu);
+		return (1);
+	}
+	switch (dbreg_num) {
+	case 0 ... 3:
+		dbreg = VM_REG_GUEST_DR0 + dbreg_num;
+		break;
+	case 6:
+		dbreg = VM_REG_GUEST_DR6;
+		break;
+	case 7:
+		dbreg = VM_REG_GUEST_DR7;
+		break;
+	default:
+		panic("%s: Unknown debug register number %d", __func__,
+		    dbreg_num);
+	}
+
+	/*
+	 * Bounce exit to userland - allow the
+	 * gdb stub to adjust its watchpoint metadata.
+	 */
+	vmexit->exitcode = VM_EXITCODE_DB;
+	vmexit->u.dbg.trace_trap = 0;
+	vmexit->u.dbg.pushf_intercept = 0;
+	vmexit->u.dbg.drx_access = dbreg_num;
+	vmexit->u.dbg.gpr = -1;
+	if (write) {
+		dst = dbreg;
+		src = gpr;
+	} else {
+		dst = gpr;
+		src = dbreg;
+		vmexit->u.dbg.gpr = gpr;
+	}
+
+	error = vmx_getreg(vcpu, src, &regval);
+	KASSERT(error == 0, ("%s: error %d fetching DR6", __func__, error));
+	regval = vmx_getreg(vcpu, src, &regval);
+	KASSERT(error == 0,
+	    ("%s: error %d fetching GPR %d", __func__, error, src));
+	if (write && dbreg_num == 7) {
+		vmexit->u.dbg.watchpoints = (int)(regval);
+	}
+	vmx_setreg(vcpu, dst, regval);
+
+	return (0);
+}
+
 static int
 emulate_wrmsr(struct vmx_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 {
@@ -2522,6 +2627,16 @@ vmx_exit_process(struct vmx *vmx, struct vmx_vcpu *vcpu, struct vm_exit *vmexit)
 			break;
 		}
 		break;
+
+	case EXIT_REASON_DR_ACCESS:
+		handled = 0;
+		error = emulate_mov_dr(vcpu, vmexit, qual);
+		if (error) {
+			/* Fault was injected into guest */
+			vmexit->exitcode = VM_EXITCODE_BOGUS;
+			handled = 1;
+		}
+		break;
 	case EXIT_REASON_RDMSR:
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_RDMSR, 1);
 		retu = false;
@@ -2707,6 +2822,77 @@ vmx_exit_process(struct vmx *vmx, struct vmx_vcpu *vcpu, struct vm_exit *vmexit)
 			vmexit->u.bpt.inst_length = vmexit->inst_length;
 			vmexit->inst_length = 0;
 			break;
+		}
+		if (intr_type == VMCS_INTR_T_HWEXCEPTION &&
+		    intr_vec == IDT_DB &&
+		    (vmx->cap[vcpu].set & (1 << VM_CAP_DB_EXIT))) {
+			int reflect;
+			int watch_mask;
+			uint64_t regval, dr6;
+			/*
+			 * A debug exception VMEXIT does not update the DR{6,7}
+			 * registers (SDM Vol. 3C 27-1). It is therefore
+			 * necessary to emulate these writes here.
+			 *
+			 * We reflect everything except watchpoint hits. Since
+			 * it is up to the userland to reinject a debug
+			 * exception when a guest watchpoint is hit, the
+			 * register must be updated here so that the guest may
+			 * properly register the watchpoint hit.
+			 */
+			error = vmx_getreg(vcpu, VM_REG_GUEST_DR6, &dr6);
+			KASSERT(error == 0,
+			    ("%s: error %d fetching DR6", __func__, error));
+
+			error = vmx_getreg(vcpu, VM_REG_GUEST_RFLAGS, &regval);
+			KASSERT(error == 0,
+			    ("%s: error %d fetching DR6", __func__, error));
+
+			reflect = 0;
+			watch_mask = qual & EXIT_QUAL_DBG_B_MASK;
+			dr6 &= DBREG_DR6_RESERVED1;
+			/*
+			 * Clear the RTM flag (0 indicates a hit,
+			 * Intel SDM Vol. 3B 17-3 ).
+			 */
+			dr6 |= (1 << 16);
+			if (watch_mask) {
+				vmexit->exitcode = VM_EXITCODE_DB;
+				vmexit->u.dbg.pushf_intercept = 0;
+				vmexit->u.dbg.trace_trap = 0;
+				vmexit->u.dbg.drx_access = -1;
+				vmexit->u.dbg.watchpoints = watch_mask;
+				vmexit->u.dbg.drx_access = -1;
+				vmexit->u.dbg.watchpoints = watch_mask;
+
+				dr6 |= watch_mask;
+
+				/* Bounce to userland */
+				reflect = 0;
+			} else {
+				dr6 |= !!(qual & EXIT_QUAL_DBG_BD) ?
+				    DBREG_DR6_BD :
+				    0;
+				dr6 |= !!(qual & EXIT_QUAL_DBG_BS) ?
+				    DBREG_DR6_BS :
+				    0;
+				regval &= ~(PSL_T);
+
+				/* Reflect back into guest */
+				reflect = 1;
+			}
+			error = vmx_setreg(vmx, vcpu, VM_REG_GUEST_DR6, dr6);
+			KASSERT(error == 0,
+			    ("%s: error %d updating DR6", __func__, error));
+
+			error = vmx_setreg(vmx, vcpu, VM_REG_GUEST_RFLAGS,
+			    regval);
+			KASSERT(error == 0,
+			    ("%s: error %d fetching DR6", __func__, error));
+
+			if (!reflect) {
+				break;
+			}
 		}
 
 		if (intr_vec == IDT_PF) {
@@ -3658,6 +3844,25 @@ vmx_setcap(void *vcpui, int type, int val)
 			flag = (1 << IDT_BP);
 			reg = VMCS_EXCEPTION_BITMAP;
 		}
+		break;
+	case VM_CAP_DB_EXIT:
+		retval = 0;
+
+		/* Don't change the bitmap if we are tracing all exceptions. */
+		if (vcpu->cap.exc_bitmap != 0xffffffff) {
+			pptr = &vcpu->cap.proc_ctls;
+			baseval = *pptr;
+			flag = (1 << IDT_DB);
+			reg = VMCS_EXCEPTION_BITMAP;
+		}
+		break;
+	case VM_CAP_DR_MOV_EXIT:
+		retval = 0;
+
+		pptr = &vcpu->cap.proc_ctls;
+		baseval = *pptr;
+		flag = PROCBASED_MOV_DR_EXITING;
+		reg = VMCS_PRI_PROC_BASED_CTLS;
 		break;
 	case VM_CAP_IPI_EXIT:
 		retval = 0;
