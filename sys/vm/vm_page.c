@@ -2146,6 +2146,243 @@ vm_page_alloc_after(vm_object_t object, vm_pindex_t pindex,
 	return (m);
 }
 
+static void
+vm_page_alloc_init_page(vm_object_t object, vm_page_t m, int flags, int req)
+{
+	vm_page_dequeue(m);
+	vm_page_alloc_check(m);
+
+	/*
+	 * Initialize the page.  Only the PG_ZERO flag is inherited.
+	 */
+	flags |= m->flags & PG_ZERO;
+	if ((req & VM_ALLOC_NODUMP) != 0)
+		flags |= PG_NODUMP;
+	m->flags = flags;
+	m->a.flags = 0;
+	m->oflags = (object->flags & OBJ_UNMANAGED) != 0 ? VPO_UNMANAGED : 0;
+	if ((req & (VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY)) == 0)
+		m->busy_lock = VPB_CURTHREAD_EXCLUSIVE;
+	else if ((req & VM_ALLOC_SBUSY) != 0)
+		m->busy_lock = VPB_SHARERS_WORD(1);
+	else
+		m->busy_lock = VPB_UNBUSIED;
+	if (req & VM_ALLOC_WIRED) {
+		vm_wire_add(1);
+		m->ref_count = 1;
+	}
+	m->a.act_count = 0;
+
+	/* Ignore device objects; the pager sets "memattr" for them. */
+	if (object->memattr != VM_MEMATTR_DEFAULT &&
+	    (object->flags & OBJ_FICTITIOUS) == 0)
+		pmap_page_set_memattr(m, object->memattr);
+}
+
+static void __always_inline
+vm_page_alloc_pages_init(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
+    int req)
+{
+	int flags;
+
+	flags = 0;
+	flags |= m->flags & PG_PCPU_CACHE;
+	vm_page_alloc_init_page(object, m, flags,
+	    req);
+	m->object = object;
+	m->pindex = pindex;
+	m->ref_count |= VPRC_OBJREF;
+}
+
+static int
+vm_page_alloc_pages_domain(vm_object_t object, vm_pindex_t pindex,
+    vm_page_t *ma, int npages, int req,
+    int domain, vm_page_t mpred, struct pctrie_iter *it)
+{
+	int got, rv;
+	int i;
+	vm_page_t m;
+	struct vm_domain *vmd;
+
+#define VPAP_FLAGS                                                   \
+	(VM_ALLOC_CLASS_MASK | VM_ALLOC_WAITFAIL | VM_ALLOC_NOWAIT | \
+	    VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY | VM_ALLOC_WIRED |      \
+	    VM_ALLOC_NODUMP | VM_ALLOC_ZERO)
+
+	KASSERT((req & ~VPAP_FLAGS) == 0,
+	    ("invalid request %#x", req));
+	KASSERT(((req & (VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY)) !=
+	    (VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY)),
+	    ("invalid request %#x", req));
+	KASSERT(mpred == NULL || mpred->pindex < pindex,
+	    ("mpred %p doesn't precede pindex 0x%jx", mpred,
+	    (uintmax_t)pindex));
+	KASSERT(npages > 0,
+	    ("%s: npages is negative: %d", __func__,
+	    npages));
+	VM_OBJECT_ASSERT_WLOCKED(object);
+
+	got = 0;
+	vmd = VM_DOMAIN(domain);
+again:
+#if VM_NRESERVLEVEL > 0
+	if (vm_object_reserv(object)) {
+		while (got < npages) {
+			rv = vm_reserv_alloc_npages(object, pindex + got,
+			    domain, mpred, req, &ma[got], npages - got);
+			if (rv == 0)
+				break;
+			got += rv;
+		}
+	}
+#endif
+	/*
+	 *  Fall back to the per-domain pagecache.
+	 */
+	if (got < npages &&
+	    vmd->vmd_pgcache[VM_FREEPOOL_DEFAULT].zone != NULL) {
+		while (got < npages) {
+			m = uma_zalloc(
+			    vmd->vmd_pgcache[VM_FREEPOOL_DEFAULT].zone,
+			    M_NOWAIT | M_NOVM);
+			if (m != NULL) {
+				m->flags |= PG_PCPU_CACHE;
+				ma[got++] = m;
+				continue;
+			}
+			break;
+		}
+	}
+
+	/*
+	 * vm_phys_alloc_npages can only handle
+	 * (1 << NFREEORDER-1) pages at a time.
+	 */
+	if (got < npages && vm_domain_allocate(vmd, req, (npages - got))) {
+		while (got < npages) {
+			vm_domain_free_lock(vmd);
+			rv = vm_phys_alloc_npages(domain, VM_FREEPOOL_DEFAULT,
+			    min(npages - got, 1 << (VM_NFREEORDER - 1)),
+			    &ma[got]);
+			vm_domain_free_unlock(vmd);
+			if (rv == 0)
+				break;
+			got += rv;
+		}
+		if (got < npages)
+			vm_domain_freecnt_inc(vmd, npages - got);
+	}
+
+	if (got == 0) {
+#if VM_NRESERVLEVEL > 0
+		if (vm_reserv_reclaim_inactive(domain))
+			goto again;
+#endif
+		return (0);
+	}
+
+	/*
+	 * Initialize and pre-link all pages into the memq.
+	 */
+	m = ma[0];
+	vm_page_alloc_pages_init(m, object, pindex, req);
+	if (mpred != NULL) {
+		KASSERT(mpred->object == object,
+		    ("%s: object doesn't contain mpred", __func__));
+		KASSERT(mpred->pindex < m->pindex,
+		    ("%s: first page in array doesn't precede pindex",
+		     __func__));
+		KASSERT(TAILQ_NEXT(mpred, listq) == NULL ||
+			m->pindex < TAILQ_NEXT(mpred, listq)->pindex,
+		    ("%s: pindex doesn't precede msucc", __func__));
+	} else {
+		KASSERT(TAILQ_EMPTY(&object->memq) ||
+			m->pindex < TAILQ_FIRST(&object->memq)->pindex,
+		    ("%s: no mpred but not first page", __func__));
+	}
+	if (__predict_true(mpred != NULL)) {
+		TAILQ_INSERT_AFTER(&object->memq, mpred, m, listq);
+	} else {
+		TAILQ_INSERT_HEAD(&object->memq, m, listq);
+	}
+	for (i = 1; i < got; i++) {
+		m = ma[i];
+		vm_page_alloc_pages_init(m, object, pindex + i, req);
+		TAILQ_INSERT_AFTER(&object->memq, ma[i - 1], m, listq);
+	}
+
+	rv = vm_page_insert_batch(object, it, ma, got);
+	KASSERT(rv >= 0,
+	    ("%s: vm_page_insert_batch: negative return value %d\n",
+	     __func__, rv));
+	if (rv < got) {
+
+		/*
+		 * Not all pages were inserted - release
+		 * the ones that didn't make it into
+		 * the radix tree.
+		 */
+		if (req & VM_ALLOC_WIRED)
+			vm_wire_sub(got - rv);
+		for (i = rv; i < got; i++) {
+			m = ma[i];
+			if (req & VM_ALLOC_WIRED) {
+				m->ref_count = 0;
+			}
+			TAILQ_REMOVE(&object->memq, m, listq);
+			m->object = NULL;
+			m->pindex = 0;
+			m->ref_count &= ~VPRC_OBJREF;
+			m->oflags = VPO_UNMANAGED;
+			m->busy_lock = VPB_UNBUSIED;
+			vm_page_free_toq(m);
+		}
+		got = rv;
+	}
+
+	return (got);
+}
+
+/*
+ *      vm_page_alloc_pages:
+ *
+ *      Attempt to allocate 'npages' pages and insert them into the object starting
+ *      from the specified offset. By default, all pages are exclusive busied.
+ *
+ *	Returns the number of allocated pages.
+ *	The number of allocated pages may differ from 'nitems' if
+ *	VM_ALLOC_NOWAIT was specified.
+ *
+ *      The caller must always specify an allocation class.
+ */
+int
+vm_page_alloc_pages(vm_object_t object, vm_pindex_t pindex, vm_page_t *ma,
+    int npages, int req, struct pctrie_iter *it)
+{
+	struct vm_domainset_batch_iter dbi;
+	int domain, batch_npages;
+	vm_page_t mpred;
+	int got;
+
+	VM_OBJECT_ASSERT_WLOCKED(object);
+	vm_domainset_batch_iter_page_init(&dbi, object, pindex, npages,
+	    &domain, &batch_npages, &req);
+	got = 0;
+	do {
+		mpred = vm_radix_iter_lookup_le(it, pindex + got);
+		if (got + batch_npages > npages) {
+			batch_npages = npages - got;
+		}
+		got += vm_page_alloc_pages_domain(object, pindex + got,
+		    &ma[got], batch_npages, req, domain, mpred, it);
+		if (got == npages)
+			break;
+	} while (vm_domainset_batch_iter_page(&dbi, object, pindex + got,
+	    &domain, &batch_npages) == 0);
+
+	return (got);
+}
+
 /*
  * Returns true if the number of free pages exceeds the minimum
  * for the request class and false otherwise.
