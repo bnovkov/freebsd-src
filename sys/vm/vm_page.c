@@ -175,6 +175,8 @@ static int vm_page_insert_after(vm_page_t m, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mpred);
 static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object,
     vm_page_t mpred);
+static void vm_page_insert_radixdone_batch(vm_object_t object,
+    vm_page_t *ma, int npages);
 static void vm_page_mvqueue(vm_page_t m, const uint8_t queue,
     const uint16_t nflag);
 static int vm_page_reclaim_run(int req_class, int domain, u_long npages,
@@ -1607,6 +1609,51 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
 	 * update the object's generation count.
 	 */
 	if (pmap_page_is_write_mapped(m))
+		vm_object_set_writeable_dirty(object);
+}
+
+/*
+ *	vm_page_insert_radixdone_batch:
+ *
+ *	Complete page array insertion into the specified object after the
+ *	radix trie hooking.
+ *
+ *	The object must be locked.
+ */
+static void
+vm_page_insert_radixdone_batch(vm_object_t object, vm_page_t *ma, int npages)
+{
+	int i;
+	vm_page_t m;
+	bool dirty;
+
+	VM_OBJECT_ASSERT_WLOCKED(object);
+
+	/*
+	 * Hold the vnode until the last page is released.
+	 */
+	if (object->resident_page_count == 0 && object->type == OBJT_VNODE)
+		vhold(object->handle);
+
+	/*
+	 * Show that the object has 'npages' more resident pages.
+	 */
+	object->resident_page_count += npages;
+	dirty = false;
+	for (i = 0; i < npages; i++) {
+		m = ma[i];
+		vm_pager_page_inserted(object, m);
+		if (pmap_page_is_write_mapped(m)) {
+			dirty = true;
+			break;
+		}
+	}
+
+	/*
+	 * Since we are inserting new and possibly dirty pages,
+	 * update the object's generation count.
+	 */
+	if (dirty)
 		vm_object_set_writeable_dirty(object);
 }
 
