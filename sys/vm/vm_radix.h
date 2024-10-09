@@ -243,6 +243,12 @@ vm_radix_iter_lookup_ge(struct pctrie_iter *pages, vm_pindex_t index)
 	return (VM_RADIX_PCTRIE_ITER_LOOKUP_GE(pages, index));
 }
 
+static __inline vm_page_t
+vm_radix_iter_lookup_le(struct pctrie_iter *pages, vm_pindex_t index)
+{
+	return (VM_RADIX_PCTRIE_ITER_LOOKUP_LE(pages, index));
+}
+
 /*
  * Update the iterator to point to the page with the least pindex that is 'jump'
  * or more greater than or equal to the current pindex, or NULL if there are no
