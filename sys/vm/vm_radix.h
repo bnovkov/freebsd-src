@@ -80,6 +80,18 @@ vm_radix_iter_insert(struct pctrie_iter *pages, vm_page_t page)
 }
 
 /*
+ * Inserts an array of pages into the trie.
+ * Panics if any of the keys already exist.
+ * Returns the number of inserted pages.
+ */
+static __inline int
+vm_radix_insert_batch(struct pctrie_iter *it, vm_page_t *ma,
+    vm_pindex_t pindex, int npages)
+{
+	return (VM_RADIX_PCTRIE_INSERT_BATCH(it, ma, pindex, npages));
+}
+
+/*
  * Insert the page into the vm_radix tree with its pindex as the key.  Panic if
  * the pindex already exists.  Return zero on success or a non-zero error on
  * memory allocation failure.  Set the out parameter mpred to the previous page
