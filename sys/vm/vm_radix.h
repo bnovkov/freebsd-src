@@ -39,6 +39,15 @@
 #include <vm/vm.h>
 
 void		vm_radix_wait(void);
+=======
+ * Inserts an array of pages into the trie.
+ * Panics if any of the keys already exist.
+ * Returns the number of inserted pages.
+ */
+static __inline int
+vm_radix_insert_batch(struct pctrie_iter *it, vm_page_t *ma, int npages)
+{
+	return (VM_RADIX_PCTRIE_INSERT_BATCH(it, ma, npages));
 void		vm_radix_zinit(void);
 void		*vm_radix_node_alloc(struct pctrie *ptree);
 void		vm_radix_node_free(struct pctrie *ptree, void *node);
@@ -77,6 +86,17 @@ static __inline int
 vm_radix_iter_insert(struct pctrie_iter *pages, vm_page_t page)
 {
 	return (VM_RADIX_PCTRIE_ITER_INSERT(pages, page));
+}
+
+/*
+ * Inserts an array of pages into the trie.
+ * Panics if any of the keys already exist.
+ * Returns the number of inserted pages.
+ */
+static __inline int
+vm_radix_insert_batch(struct pctrie_iter *it, vm_page_t *ma, int npages)
+{
+	return (VM_RADIX_PCTRIE_INSERT_BATCH(it, ma, npages));
 }
 
 /*

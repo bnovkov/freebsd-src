@@ -1611,6 +1611,29 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
 }
 
 /*
+ *      vm_page_insert_batch:
+ *
+ *      Inserts page array "ma" into the specified object
+ *      starting at offset "pindex".
+ *
+ *      The object must be locked.
+ */
+static __always_inline int
+vm_page_insert_batch(vm_object_t object, struct pctrie_iter *it,
+    vm_page_t *ma, int npages)
+{
+	int ninserted;
+
+	VM_OBJECT_ASSERT_WLOCKED(object);
+
+	ninserted = vm_radix_insert_batch(it, ma, npages);
+	if (ninserted > 0)
+		vm_page_insert_radixdone_batch(object, ma, ninserted);
+
+	return (ninserted);
+}
+
+/*
  * Do the work to remove a page from its object.  The caller is responsible for
  * updating the page's fields to reflect this removal.
  */
