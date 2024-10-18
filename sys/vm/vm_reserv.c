@@ -614,6 +614,40 @@ vm_reserv_populate(vm_reserv_t rv, int index)
 }
 
 /*
+ * Populates the given reservation's popmap from ['start', 'end')
+ * and increases its population count. Moves the reservation
+ * to the tail of the partially populated reservation queue.
+ */
+static void
+vm_reserv_populate_range(vm_reserv_t rv, int start, int end)
+{
+
+	vm_reserv_assert_locked(rv);
+	CTR5(KTR_VM, "%s: rv %p object %p popcnt %d inpartpop %d",
+	    __func__, rv, rv->object, rv->popcnt, rv->inpartpopq);
+	vm_reserv_populate_check(rv);
+	KASSERT(start >= 0 && start < end,
+	    ("%s: invalid range %d, %d",
+	    __func__, start, end));
+	KASSERT(end <= VM_LEVEL_0_NPAGES,
+	    ("%s: end index is out of range: %d",
+	    __func__, end));
+
+	bit_nset(rv->popmap, start, end - 1);
+	rv->popcnt += end - start;
+#ifdef VM_SUBLEVEL_0_NPAGES
+	if (vm_reserv_is_sublevel_full(rv, start))
+		rv->pages[rounddown2(start, VM_SUBLEVEL_0_NPAGES)].psind = 1;
+	for (start = roundup2(start, VM_SUBLEVEL_0_NPAGES); start < end;
+	    start += VM_SUBLEVEL_0_NPAGES)
+		rv->pages[rounddown2(start, VM_SUBLEVEL_0_NPAGES)].psind = 1;
+	if (vm_reserv_is_sublevel_full(rv, end - 1))
+		rv->pages[rounddown2(end - 1, VM_SUBLEVEL_0_NPAGES)].psind = 1;
+#endif
+	vm_reserv_partpopq_update(rv);
+}
+
+/*
  * Allocates a contiguous set of physical pages of the given size "npages"
  * from existing or newly created reservations.  All of the physical pages
  * must be at or above the given physical address "low" and below the given
@@ -639,7 +673,7 @@ vm_reserv_alloc_contig(vm_object_t object, vm_pindex_t pindex, int domain,
 	vm_pindex_t first, leftcap, rightcap;
 	vm_reserv_t rv;
 	u_long allocpages, maxpages, minpages;
-	int i, index, n;
+	int index, n;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT(npages != 0, ("vm_reserv_alloc_contig: npages is 0"));
@@ -693,8 +727,7 @@ vm_reserv_alloc_contig(vm_object_t object, vm_pindex_t pindex, int domain,
 			goto out;
 		if (!vm_domain_allocate(vmd, req, npages))
 			goto out;
-		for (i = 0; i < npages; i++)
-			vm_reserv_populate(rv, index + i);
+		vm_reserv_populate_range(rv, index, index + npages);
 		vm_reserv_unlock(rv);
 		return (m);
 out:
@@ -801,8 +834,7 @@ out:
 		vm_reserv_lock(rv);
 		vm_reserv_insert(rv, object, first);
 		n = ulmin(VM_LEVEL_0_NPAGES - index, npages);
-		for (i = 0; i < n; i++)
-			vm_reserv_populate(rv, index + i);
+		vm_reserv_populate_range(rv, index, index + n);
 		npages -= n;
 		if (m_ret == NULL) {
 			m_ret = &rv->pages[index];
