@@ -549,36 +549,9 @@ vm_reserv_has_pindex(vm_reserv_t rv, vm_pindex_t pindex)
 	return (((pindex - rv->pindex) & ~(VM_LEVEL_0_NPAGES - 1)) == 0);
 }
 
-/*
- * Increases the given reservation's population count.  Moves the reservation
- * to the tail of the partially populated reservation queue.
- */
-static void
-vm_reserv_populate(vm_reserv_t rv, int index)
+static __inline void
+vm_reserv_partpopq_update(vm_reserv_t rv)
 {
-
-	vm_reserv_assert_locked(rv);
-	CTR5(KTR_VM, "%s: rv %p object %p popcnt %d inpartpop %d",
-	    __FUNCTION__, rv, rv->object, rv->popcnt, rv->inpartpopq);
-	KASSERT(rv->object != NULL,
-	    ("vm_reserv_populate: reserv %p is free", rv));
-	KASSERT(!bit_test(rv->popmap, index),
-	    ("vm_reserv_populate: reserv %p's popmap[%d] is set", rv,
-	    index));
-	KASSERT(rv->popcnt < VM_LEVEL_0_NPAGES,
-	    ("vm_reserv_populate: reserv %p is already full", rv));
-	KASSERT(rv->pages->psind >= 0 &&
-	    rv->pages->psind < VM_LEVEL_0_PSIND,
-	    ("vm_reserv_populate: reserv %p is already promoted", rv));
-	KASSERT(rv->domain < vm_ndomains,
-	    ("vm_reserv_populate: reserv %p's domain is corrupted %d",
-	    rv, rv->domain));
-	bit_set(rv->popmap, index);
-#ifdef VM_SUBLEVEL_0_NPAGES
-	if (vm_reserv_is_sublevel_full(rv, index))
-		rv->pages[rounddown2(index, VM_SUBLEVEL_0_NPAGES)].psind = 1;
-#endif
-	rv->popcnt++;
 	if ((unsigned)(ticks - rv->lasttick) < PARTPOPSLOP &&
 	    rv->inpartpopq && rv->popcnt != VM_LEVEL_0_NPAGES)
 		return;
@@ -598,6 +571,46 @@ vm_reserv_populate(vm_reserv_t rv, int index)
 		rv->pages->psind = VM_LEVEL_0_PSIND;
 	}
 	vm_reserv_domain_unlock(rv->domain);
+}
+
+static void
+vm_reserv_populate_check(vm_reserv_t rv)
+{
+	KASSERT(rv->object != NULL,
+	    ("vm_reserv_populate: reserv %p is free", rv));
+	KASSERT(rv->popcnt < VM_LEVEL_0_NPAGES,
+	    ("vm_reserv_populate: reserv %p is already full", rv));
+	KASSERT(rv->pages->psind >= 0 &&
+	    rv->pages->psind < VM_LEVEL_0_PSIND,
+	    ("vm_reserv_populate: reserv %p is already promoted", rv));
+	KASSERT(rv->domain < vm_ndomains,
+	    ("vm_reserv_populate: reserv %p's domain is corrupted %d",
+	    rv, rv->domain));
+}
+
+/*
+ * Increases the given reservation's population count.  Moves the reservation
+ * to the tail of the partially populated reservation queue.
+ */
+static void
+vm_reserv_populate(vm_reserv_t rv, int index)
+{
+
+	vm_reserv_assert_locked(rv);
+	CTR5(KTR_VM, "%s: rv %p object %p popcnt %d inpartpop %d",
+	    __FUNCTION__, rv, rv->object, rv->popcnt, rv->inpartpopq);
+	vm_reserv_populate_check(rv);
+	KASSERT(!bit_test(rv->popmap, index),
+	    ("vm_reserv_populate: reserv %p's popmap[%d] is set", rv,
+	    index));
+
+	bit_set(rv->popmap, index);
+#ifdef VM_SUBLEVEL_0_NPAGES
+	if (vm_reserv_is_sublevel_full(rv, index))
+		rv->pages[rounddown2(index, VM_SUBLEVEL_0_NPAGES)].psind = 1;
+#endif
+	rv->popcnt++;
+	vm_reserv_partpopq_update(rv);
 }
 
 /*
