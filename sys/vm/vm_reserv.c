@@ -617,6 +617,35 @@ vm_reserv_populate(vm_reserv_t rv, int index)
 }
 
 /*
+ * Populates the given reservation's popmap from ['start', 'end')
+ * and increases its population count. Moves the reservation
+ * to the tail of the partially populated reservation queue.
+ */
+static void
+vm_reserv_populate_range(vm_reserv_t rv, int start, int end)
+{
+
+	vm_reserv_assert_locked(rv);
+	CTR5(KTR_VM, "%s: rv %p object %p popcnt %d inpartpop %d",
+	    __FUNCTION__, rv, rv->object, rv->popcnt, rv->inpartpopq);
+	vm_reserv_populate_check(rv);
+	KASSERT(start >= 0 && start < end,
+	    ("%s: invalid range %d, %d",
+	    __func__, start, end));
+	KASSERT(end <= VM_LEVEL_0_NPAGES,
+	    ("%s: end index is out of range: %d",
+	    __func__, end));
+
+	bit_nset(rv->popmap, start, end - 1);
+#ifdef VM_SUBLEVEL_0_NPAGES
+	if (vm_reserv_is_sublevel_full(rv, end - 1))
+		rv->pages[rounddown2(end - 1, VM_SUBLEVEL_0_NPAGES)].psind = 1;
+#endif
+	rv->popcnt += end - start;
+	vm_reserv_partpopq_update(rv);
+}
+
+/*
  * Allocates a contiguous set of physical pages of the given size "npages"
  * from existing or newly created reservations.  All of the physical pages
  * must be at or above the given physical address "low" and below the given
