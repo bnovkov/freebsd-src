@@ -66,6 +66,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libiscsiutil \
 	libjail \
 	libkiconv \
+	libkldelf \
 	libkvm \
 	liblua \
 	liblzma \
@@ -127,6 +128,7 @@ SUBDIR_DEPEND_libc++:= libcxxrt
 SUBDIR_DEPEND_libc= libsys libcompiler_rt libssp_nonshared
 SUBDIR_DEPEND_libcam= libsbuf
 SUBDIR_DEPEND_libcasper= libnv
+SUBDIR_DEPEND_libcrypt= libmd
 SUBDIR_DEPEND_libdevstat= libkvm
 SUBDIR_DEPEND_libdpv= libfigpar ncurses libutil
 SUBDIR_DEPEND_libedit= ncurses
@@ -149,11 +151,6 @@ SUBDIR_DEPEND_liblzma= libthr
 SUBDIR_DEPEND_libpcap= ofed
 .endif
 SUBDIR_DEPEND_nss_tacplus= libtacplus
-
-.if !defined(COMPAT_LIBCOMPAT)
-SUBDIR+=	flua
-SUBDIR_DEPEND_flua=	libjail libucl
-.endif
 
 # NB: keep these sorted by MK_* knobs
 

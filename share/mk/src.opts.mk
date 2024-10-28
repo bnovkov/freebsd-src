@@ -116,6 +116,7 @@ __DEFAULT_YES_OPTIONS = \
     IPFW \
     ISCSI \
     JAIL \
+    JEMALLOC_LG_VADDR_WIDE \
     KDUMP \
     KVM \
     LDNS \
@@ -126,12 +127,14 @@ __DEFAULT_YES_OPTIONS = \
     LLVM_ASSERTIONS \
     LLVM_COV \
     LLVM_CXXFILT \
+    LOADER_BIOS_TEXTONLY \
     LOADER_GELI \
     LOADER_KBOOT \
     LOADER_LUA \
     LOADER_OFW \
     LOADER_PXEBOOT \
     LOADER_UBOOT \
+    LOADER_IA32 \
     LOCALES \
     LOCATE \
     LPR \
@@ -204,7 +207,6 @@ __DEFAULT_NO_OPTIONS = \
     DTRACE_TESTS \
     EXPERIMENTAL \
     HESIOD \
-    LOADER_BIOS_TEXTONLY \
     LOADER_VERBOSE \
     LOADER_VERIEXEC_PASS_MANIFEST \
     LLVM_BINUTILS \
@@ -329,6 +331,10 @@ BROKEN_OPTIONS+=LOADER_KBOOT
 # UBOOT is only for arm, and big-endian powerpc
 .if (${__T:Marm*} == "" && ${__T:Mpowerpc*} == "") || ${__T} == "powerpc64le"
 BROKEN_OPTIONS+=LOADER_UBOOT
+.endif
+# The 32-bit UEFI loader is only for amd64
+.if ${__T} != "amd64"
+BROKEN_OPTIONS+=LOADER_IA32
 .endif
 # GELI and Lua in loader currently cause boot failures on powerpc.
 # Further debugging is required -- probably they are just broken on big

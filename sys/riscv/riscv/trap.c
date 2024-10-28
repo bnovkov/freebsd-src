@@ -37,11 +37,12 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/bus.h>
+#include <sys/intr.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
-#include <sys/bus.h>
 #include <sys/proc.h>
 #include <sys/ptrace.h>
 #include <sys/syscall.h>
@@ -63,7 +64,6 @@
 #include <machine/pcpu.h>
 
 #include <machine/resource.h>
-#include <machine/intr.h>
 
 #ifdef KDTRACE_HOOKS
 #include <sys/dtrace_bsd.h>
@@ -73,8 +73,6 @@
 #include <ddb/ddb.h>
 #include <ddb/db_sym.h>
 #endif
-
-void intr_irq_handler(struct trapframe *tf);
 
 int (*dtrace_invop_jump_addr)(struct trapframe *);
 
@@ -319,7 +317,7 @@ do_trap_supervisor(struct trapframe *frame)
 	exception = frame->tf_scause & SCAUSE_CODE;
 	if ((frame->tf_scause & SCAUSE_INTR) != 0) {
 		/* Interrupt */
-		intr_irq_handler(frame);
+		intr_irq_handler(frame, INTR_ROOT_IRQ);
 		return;
 	}
 
@@ -400,7 +398,7 @@ do_trap_user(struct trapframe *frame)
 	exception = frame->tf_scause & SCAUSE_CODE;
 	if ((frame->tf_scause & SCAUSE_INTR) != 0) {
 		/* Interrupt */
-		intr_irq_handler(frame);
+		intr_irq_handler(frame, INTR_ROOT_IRQ);
 		return;
 	}
 	intr_enable();

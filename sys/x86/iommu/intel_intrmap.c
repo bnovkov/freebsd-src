@@ -29,6 +29,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
+#include <sys/domainset.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -318,7 +319,10 @@ dmar_ir_free_irte(struct dmar_unit *unit, u_int cookie)
 int
 dmar_init_irt(struct dmar_unit *unit)
 {
-
+	SYSCTL_ADD_INT(&unit->iommu.sysctl_ctx,
+	    SYSCTL_CHILDREN(device_get_sysctl_tree(unit->iommu.dev)),
+	    OID_AUTO, "ir", CTLFLAG_RD, &unit->ir_enabled, 0,
+	    "Interrupt remapping ops enabled");
 	if ((unit->hw_ecap & DMAR_ECAP_IR) == 0)
 		return (0);
 	unit->ir_enabled = 1;
@@ -334,10 +338,20 @@ dmar_init_irt(struct dmar_unit *unit)
 		return (0);
 	}
 	unit->irte_cnt = roundup_pow_of_two(num_io_irqs);
-	unit->irt = kmem_alloc_contig(unit->irte_cnt * sizeof(dmar_irte_t),
-	    M_ZERO | M_WAITOK, 0, iommu_high, PAGE_SIZE, 0,
-	    DMAR_IS_COHERENT(unit) ?
-	    VM_MEMATTR_DEFAULT : VM_MEMATTR_UNCACHEABLE);
+	if (unit->memdomain == -1) {
+		unit->irt = kmem_alloc_contig(
+		    unit->irte_cnt * sizeof(dmar_irte_t),
+		    M_ZERO | M_WAITOK, 0, iommu_high, PAGE_SIZE, 0,
+		    DMAR_IS_COHERENT(unit) ?
+		    VM_MEMATTR_DEFAULT : VM_MEMATTR_UNCACHEABLE);
+	} else {
+		unit->irt = kmem_alloc_contig_domainset(
+		    DOMAINSET_PREF(unit->memdomain),
+		    unit->irte_cnt * sizeof(dmar_irte_t),
+		    M_ZERO | M_WAITOK, 0, iommu_high, PAGE_SIZE, 0,
+		    DMAR_IS_COHERENT(unit) ?
+		    VM_MEMATTR_DEFAULT : VM_MEMATTR_UNCACHEABLE);
+	}
 	if (unit->irt == NULL)
 		return (ENOMEM);
 	unit->irt_phys = pmap_kextract((vm_offset_t)unit->irt);

@@ -137,6 +137,8 @@ struct node_host {
 	struct node_host	*tail;
 };
 
+void	freehostlist(struct node_host *);
+
 struct node_mac {
 	u_int8_t	 mac[ETHER_ADDR_LEN];
 	u_int8_t	 mask[ETHER_ADDR_LEN];
@@ -300,7 +302,7 @@ int	parse_flags(char *);
 int	pfctl_load_anchors(int, struct pfctl *, struct pfr_buffer *);
 
 void	print_pool(struct pfctl_pool *, u_int16_t, u_int16_t, sa_family_t, int);
-void	print_src_node(struct pf_src_node *, int);
+void	print_src_node(struct pfctl_src_node *, int);
 void	print_eth_rule(struct pfctl_eth_rule *, const char *, int);
 void	print_rule(struct pfctl_rule *, const char *, int, int);
 void	print_tabledef(const char *, int, int, struct node_tinithead *);

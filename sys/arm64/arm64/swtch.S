@@ -55,13 +55,19 @@
 999:
 .endm
 
-.macro pid_in_context_idr label
+/*
+ * Lower 32 bits of CONTEXTIDR_EL1 are PID
+ * Upper 32 bits are reserved for future use e.g. TID
+ */
+.macro pid_in_context_idr
 	adrp	x9, arm64_pid_in_contextidr
-	ldr	x10, [x9, :lo12:arm64_pid_in_contextidr]
-	cbz	x10, \label
+	ldrb	w10, [x9, :lo12:arm64_pid_in_contextidr]
+	cbz	w10, 998f
 	ldr	x9, [x1, #TD_PROC]
-	ldr	x10, [x9, #PR_PID]
+	/* PID is always 0 or positive, do not sign extend */
+	ldr	w10, [x9, #P_PID]
 	msr	contextidr_el1, x10
+998:
 .endm
 
 /*
@@ -78,9 +84,8 @@ ENTRY(cpu_throw)
 
 1:
 	/* debug/trace: set CONTEXTIDR_EL1 to current PID, if enabled */
-	pid_in_context_idr 2f
+	pid_in_context_idr
 
-2:
 #ifdef VFP
 	/* Backup the new thread pointer around a call to C code */
 	mov	x19, x1
@@ -161,9 +166,8 @@ ENTRY(cpu_switch)
 	mov	x21, x2
 
 	/* debug/trace: set CONTEXTIDR_EL1 to current PID, if enabled */
-	pid_in_context_idr 0f
+	pid_in_context_idr
 
-0:
 #ifdef VFP
 	bl	vfp_save_state_switch
 	mov	x0, x20
@@ -284,14 +288,12 @@ ENTRY(savectx)
 	mrs	x6, tpidr_el0
 	stp	x5, x6, [x0, #PCB_SP]
 
-	/* Store the VFP registers */
 #ifdef VFP
-	mov	x28, lr
-	bl	vfp_save_state_savectx
-	mov	lr, x28
-#endif
-
+	/* Store the VFP registers */
+	b	vfp_save_state_savectx
+#else
 	ret
+#endif
 END(savectx)
 
 GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)

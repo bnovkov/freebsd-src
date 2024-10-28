@@ -65,7 +65,6 @@ struct dmar_domain {
 	u_int refs;			/* (u) Refs, including ctx */
 	struct dmar_unit *dmar;		/* (c) */
 	LIST_ENTRY(dmar_domain) link;	/* (u) Member in the dmar list */
-	LIST_HEAD(, dmar_ctx) contexts;	/* (u) */
 	vm_object_t pgtbl_obj;		/* (c) Page table pages */
 	u_int batch_no;
 };
@@ -73,8 +72,6 @@ struct dmar_domain {
 struct dmar_ctx {
 	struct iommu_ctx context;
 	uint64_t last_fault_rec[2];	/* Last fault reported */
-	LIST_ENTRY(dmar_ctx) link;	/* (u) Member in the domain list */
-	u_int refs;			/* (u) References from tags */
 };
 
 #define	DMAR_DOMAIN_PGLOCK(dom)		VM_OBJECT_WLOCK((dom)->pgtbl_obj)
@@ -112,6 +109,7 @@ struct dmar_unit {
 	struct x86_unit_common x86c;
 	uint16_t segment;
 	uint64_t base;
+	int memdomain;
 
 	/* Resources */
 	int reg_rid;
@@ -219,10 +217,10 @@ void dmar_qi_invalidate_iotlb_glob_locked(struct dmar_unit *unit);
 void dmar_qi_invalidate_iec_glob(struct dmar_unit *unit);
 void dmar_qi_invalidate_iec(struct dmar_unit *unit, u_int start, u_int cnt);
 
-vm_object_t domain_get_idmap_pgtbl(struct dmar_domain *domain,
+vm_object_t dmar_get_idmap_pgtbl(struct dmar_domain *domain,
     iommu_gaddr_t maxaddr);
-void put_idmap_pgtbl(vm_object_t obj);
-void domain_flush_iotlb_sync(struct dmar_domain *domain, iommu_gaddr_t base,
+void dmar_put_idmap_pgtbl(vm_object_t obj);
+void dmar_flush_iotlb_sync(struct dmar_domain *domain, iommu_gaddr_t base,
     iommu_gaddr_t size);
 int dmar_domain_alloc_pgtbl(struct dmar_domain *domain);
 void dmar_domain_free_pgtbl(struct dmar_domain *domain);

@@ -355,16 +355,18 @@ static u_int physmap_idx;
 static SYSCTL_NODE(_vm, OID_AUTO, pmap, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "VM/pmap parameters");
 
+static bool pmap_lpa_enabled __read_mostly = false;
 pt_entry_t pmap_sh_attr __read_mostly = ATTR_SH(ATTR_SH_IS);
 
 #if PAGE_SIZE == PAGE_SIZE_4K
 #define	L1_BLOCKS_SUPPORTED	1
 #else
-/* TODO: Make this dynamic when we support FEAT_LPA2 (TCR_EL1.DS == 1) */
-#define	L1_BLOCKS_SUPPORTED	0
+#define	L1_BLOCKS_SUPPORTED	(pmap_lpa_enabled)
 #endif
 
 #define	PMAP_ASSERT_L1_BLOCKS_SUPPORTED	MPASS(L1_BLOCKS_SUPPORTED)
+
+static bool pmap_l1_supported __read_mostly = false;
 
 /*
  * This ASID allocator uses a bit vector ("asid_set") to remember which ASIDs
@@ -407,7 +409,6 @@ SYSCTL_INT(_vm_pmap_vmid, OID_AUTO, epoch, CTLFLAG_RD, &vmids.asid_epoch, 0,
     "The current epoch number");
 
 void (*pmap_clean_stage2_tlbi)(void);
-void (*pmap_invalidate_vpipt_icache)(void);
 void (*pmap_stage2_invalidate_range)(uint64_t, vm_offset_t, vm_offset_t, bool);
 void (*pmap_stage2_invalidate_all)(uint64_t);
 
@@ -1306,10 +1307,17 @@ pmap_bootstrap(vm_size_t kernlen)
 {
 	vm_offset_t dpcpu, msgbufpv;
 	vm_paddr_t start_pa, pa;
+	uint64_t tcr;
+
+	tcr = READ_SPECIALREG(tcr_el1);
 
 	/* Verify that the ASID is set through TTBR0. */
-	KASSERT((READ_SPECIALREG(tcr_el1) & TCR_A1) == 0,
-	    ("pmap_bootstrap: TCR_EL1.A1 != 0"));
+	KASSERT((tcr & TCR_A1) == 0, ("pmap_bootstrap: TCR_EL1.A1 != 0"));
+
+	if ((tcr & TCR_DS) != 0)
+		pmap_lpa_enabled = true;
+
+	pmap_l1_supported = L1_BLOCKS_SUPPORTED;
 
 	/* Set this early so we can use the pagetable walking functions */
 	kernel_pmap_store.pm_l0 = pagetable_l0_ttbr1;
@@ -1680,6 +1688,9 @@ static SYSCTL_NODE(_vm_pmap, OID_AUTO, l1, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
 static COUNTER_U64_DEFINE_EARLY(pmap_l1_demotions);
 SYSCTL_COUNTER_U64(_vm_pmap_l1, OID_AUTO, demotions, CTLFLAG_RD,
     &pmap_l1_demotions, "L1 (1GB/64GB) page demotions");
+
+SYSCTL_BOOL(_vm_pmap_l1, OID_AUTO, supported, CTLFLAG_RD, &pmap_l1_supported,
+    0, "L1 blocks are supported");
 
 static SYSCTL_NODE(_vm_pmap, OID_AUTO, l2c, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "L2C (32MB/1GB) page mapping counters");
@@ -4606,7 +4617,7 @@ pmap_update_entry(pmap_t pmap, pd_entry_t *ptep, pd_entry_t newpte,
 /*
  * Performs a break-before-make update of an ATTR_CONTIGUOUS mapping.
  */
-static void
+static void __nosanitizecoverage
 pmap_update_strided(pmap_t pmap, pd_entry_t *ptep, pd_entry_t *ptep_end,
     pd_entry_t newpte, vm_offset_t va, vm_offset_t stride, vm_size_t size)
 {
@@ -9064,20 +9075,16 @@ pmap_stage2_fault(pmap_t pmap, uint64_t esr, uint64_t far)
 		ptep = pmap_pte(pmap, far, &lvl);
 fault_exec:
 		if (ptep != NULL && (pte = pmap_load(ptep)) != 0) {
-			if (icache_vmid) {
-				pmap_invalidate_vpipt_icache();
-			} else {
-				/*
-				 * If accessing an executable page invalidate
-				 * the I-cache so it will be valid when we
-				 * continue execution in the guest. The D-cache
-				 * is assumed to already be clean to the Point
-				 * of Coherency.
-				 */
-				if ((pte & ATTR_S2_XN_MASK) !=
-				    ATTR_S2_XN(ATTR_S2_XN_NONE)) {
-					invalidate_icache();
-				}
+			/*
+			 * If accessing an executable page invalidate
+			 * the I-cache so it will be valid when we
+			 * continue execution in the guest. The D-cache
+			 * is assumed to already be clean to the Point
+			 * of Coherency.
+			 */
+			if ((pte & ATTR_S2_XN_MASK) !=
+			    ATTR_S2_XN(ATTR_S2_XN_NONE)) {
+				invalidate_icache();
 			}
 			pmap_set_bits(ptep, ATTR_AF | ATTR_DESCR_VALID);
 			rv = KERN_SUCCESS;
@@ -9166,12 +9173,23 @@ pmap_fault(pmap_t pmap, uint64_t esr, uint64_t far)
 			if (pmap_klookup(far, NULL))
 				rv = KERN_SUCCESS;
 		} else {
-			PMAP_LOCK(pmap);
+			bool owned;
+
+			/*
+			 * In the EFIRT driver we lock the pmap before
+			 * calling into the runtime service. As the lock
+			 * is already owned by the current thread skip
+			 * locking it again.
+			 */
+			owned = PMAP_OWNED(pmap);
+			if (!owned)
+				PMAP_LOCK(pmap);
 			/* Ask the MMU to check the address. */
 			intr = intr_disable();
 			par = arm64_address_translate_s1e0r(far);
 			intr_restore(intr);
-			PMAP_UNLOCK(pmap);
+			if (!owned)
+				PMAP_UNLOCK(pmap);
 
 			/*
 			 * If the translation was successful, then we can

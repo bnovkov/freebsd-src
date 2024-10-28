@@ -88,6 +88,7 @@ SUBDIR=	alias \
 	mandoc \
 	mdo \
 	mesg \
+	mididump \
 	ministat \
 	mkdep \
 	mkfifo \
@@ -211,6 +212,9 @@ SUBDIR+=		gh-bc
 .else
 SUBDIR.${MK_OPENSSL}+=	bc
 SUBDIR.${MK_OPENSSL}+=	dc
+.endif
+.if ${MK_GNU_DIFF} == "no"
+SUBDIR+=		diff3
 .endif
 SUBDIR.${MK_HESIOD}+=	hesinfo
 SUBDIR.${MK_ICONV}+=	iconv

@@ -427,6 +427,8 @@
         ..
         libkvm
         ..
+        libmd
+        ..
         libmp
         ..
         libnv
@@ -852,6 +854,8 @@
             ..
             pipe
             ..
+            tty
+            ..
         ..
         kqueue
             libkqueue
@@ -1094,6 +1098,8 @@
         dirname
         ..
         du
+        ..
+        env
         ..
         factor
         ..

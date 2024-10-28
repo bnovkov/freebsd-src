@@ -31,8 +31,6 @@
 #include <dev/ofw/openfirm.h>
 #endif
 
-#include <sys/intr.h>
-
 #ifndef NIRQ
 #define	NIRQ		16384	/* XXX - It should be an option. */
 #endif
@@ -47,5 +45,8 @@ arm_irq_memory_barrier(uintptr_t irq)
 #define	ACPI_MSI_XREF	2
 #define	ACPI_GPIO_XREF	3
 #endif
+
+#define	INTR_ROOT_FIQ	1
+#define	INTR_ROOT_NUM	2
 
 #endif	/* _MACHINE_INTR_H */
