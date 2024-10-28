@@ -5375,9 +5375,11 @@ int
 vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
     vm_page_t *ma, int count)
 {
-	vm_page_t m, mpred;
+	struct pctrie_iter it;
+	vm_page_t m, mpred, msucc;
 	int pflags;
-	int i;
+	int ncontig;
+	int i, j, got;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT(((u_int)allocflags >> VM_ALLOC_COUNT_SHIFT) == 0,
@@ -5388,8 +5390,10 @@ vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
 
 	pflags = vm_page_grab_pflags(allocflags);
 	i = 0;
+	vm_page_iter_init(&it, object);
 retrylookup:
-	m = vm_page_mpred(object, pindex + i);
+	pctrie_iter_reset(&it);
+	m = vm_radix_iter_lookup_le(&it, pindex + i);
 	if (m == NULL || m->pindex != pindex + i) {
 		mpred = m;
 		m = NULL;
@@ -5403,27 +5407,61 @@ retrylookup:
 					goto retrylookup;
 				break;
 			}
+			if (vm_page_none_valid(m) &&
+			    (allocflags & VM_ALLOC_ZERO) != 0) {
+				if ((m->flags & PG_ZERO) == 0)
+					pmap_zero_page(m);
+				vm_page_valid(m);
+			}
+			vm_page_grab_release(m, allocflags);
+			ma[i] = mpred = m;
+			m = vm_page_next(m);
 		} else {
 			if ((allocflags & VM_ALLOC_NOCREAT) != 0)
 				break;
-			m = vm_page_alloc_after(object, pindex + i,
-			    pflags | VM_ALLOC_COUNT(count - i), mpred);
-			if (m == NULL) {
+			msucc = NULL;
+			if (mpred != NULL) {
+				msucc = vm_page_next(mpred);
+				if (msucc != NULL) {
+					ncontig = min(count - i,
+					    msucc->pindex - (pindex + i));
+				} else {
+					ncontig = count - i;
+				}
+			}
+			if (msucc == NULL) {
+				pctrie_iter_reset(&it);
+				msucc = vm_radix_iter_lookup_ge(&it,
+				    pindex + i);
+				if (msucc != NULL) {
+					ncontig = min(count - i,
+					    msucc->pindex - (pindex + i));
+				} else {
+					ncontig = count - i;
+				}
+			}
+			got = vm_page_alloc_pages(object, pindex + i, &ma[i],
+			    ncontig, pflags, &it);
+			if (got == 0) {
 				if ((allocflags & (VM_ALLOC_NOWAIT |
 				    VM_ALLOC_WAITFAIL)) != 0)
-					break;
+			 		break;
 				goto retrylookup;
 			}
+			for (j = 0; j < got; j++, i++) {
+				m = ma[i];
+				if (vm_page_none_valid(m) &&
+					(allocflags & VM_ALLOC_ZERO) != 0) {
+					if ((m->flags & PG_ZERO) == 0)
+						pmap_zero_page(m);
+					vm_page_valid(m);
+				}
+				vm_page_grab_release(m, allocflags);
+			}
+			mpred = ma[i - 1];
+			m = vm_page_next(ma[i - 1]);
+			i -= 1;
 		}
-		if (vm_page_none_valid(m) &&
-		    (allocflags & VM_ALLOC_ZERO) != 0) {
-			if ((m->flags & PG_ZERO) == 0)
-				pmap_zero_page(m);
-			vm_page_valid(m);
-		}
-		vm_page_grab_release(m, allocflags);
-		ma[i] = mpred = m;
-		m = vm_page_next(m);
 	}
 	return (i);
 }
