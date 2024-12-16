@@ -46,6 +46,7 @@
 #include <signal.h>
 #include <err.h>
 #include <string.h>
+#include <assert.h>
 
 #include "hwt.h"
 #include "hwt_elf.h"
@@ -83,7 +84,8 @@ hwt_record_to_elf_img(struct trace_context *tc,
 	    entry->fullpath);
 	path = pmcstat_string_intern(imagepath);
 
-	image = pmcstat_image_from_path(path, 0, &args, &plugins);
+	image = pmcstat_image_from_path(path,
+	    !!(entry->record_type == HWT_RECORD_KERNEL), &args, &plugins);
 	if (image == NULL)
 		return (-1);
 
@@ -118,11 +120,12 @@ hwt_record_to_elf_img(struct trace_context *tc,
 }
 
 int
-hwt_record_fetch(struct trace_context *tc, int *nrecords)
+hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 {
 	struct hwt_record_user_entry *entry;
 	struct hwt_record_get record_get;
 	struct hwt_exec_img img;
+	struct hwt_wakeup w;
 	int nentries;
 	int error;
 	int j;
@@ -132,6 +135,7 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 
 	record_get.records = tc->records;
 	record_get.nentries = &nentries;
+	record_get.wait = wait;
 
 	error = ioctl(tc->thr_fd, HWT_IOC_RECORD_GET, &record_get);
 	if (error != 0) {
@@ -147,7 +151,6 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 
 		switch (entry->record_type) {
 		case HWT_RECORD_MMAP:
-		case HWT_RECORD_MUNMAP:
 		case HWT_RECORD_EXECUTABLE:
 		case HWT_RECORD_INTERP:
 		case HWT_RECORD_KERNEL:
@@ -155,8 +158,11 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 			/* Invoke backend callback, if any. */
 			if (tc->trace_dev->methods->image_load_cb != NULL &&
 			    (error = tc->trace_dev->methods->image_load_cb(tc,
-					 &img) != 0))
+				&img))) {
+				ioctl(tc->thr_fd, HWT_IOC_WAKEUP, &w);
 				return (error);
+			}
+
 			if (entry->record_type != HWT_RECORD_KERNEL)
 				hwt_mmap_received(tc, entry);
 			break;
@@ -167,7 +173,15 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 				return (error);
 			break;
 		case HWT_RECORD_THREAD_SET_NAME:
+		case HWT_RECORD_MUNMAP:
 			break;
+		case HWT_RECORD_BUFFER:
+			/* Invoke backend process method. */
+			assert(tc->trace_dev->methods->process_buffer != NULL);
+			if ((error = tc->trace_dev->methods->process_buffer(tc,
+				entry->buf_id, entry->curpage,
+				entry->offset)) != 0)
+				return (error);
 		default:
 			break;
 		}
@@ -177,5 +191,5 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords)
 
 	*nrecords = nentries;
 
-	return (0);
+	return (error);
 }

@@ -49,7 +49,6 @@
 #include <dev/hwt/hwt_context.h>
 #include <dev/hwt/hwt_contexthash.h>
 #include <dev/hwt/hwt_config.h>
-#include <dev/hwt/hwt_event.h>
 #include <dev/hwt/hwt_thread.h>
 #include <dev/hwt/hwt_owner.h>
 #include <dev/hwt/hwt_backend.h>
@@ -203,7 +202,7 @@ hwt_hook_mmap(struct thread *td)
 
 	if (pause) {
 		HWT_THR_LOCK(thr);
-		msleep(thr, &thr->mtx, 0, "hwt-mmap", 0);
+		msleep(thr, &thr->mtx, PCATCH, "hwt-mmap", 0);
 		HWT_THR_UNLOCK(thr);
 	}
 
@@ -231,7 +230,7 @@ hwt_hook_thread_create(struct thread *td)
 		return (ENXIO);
 	thread_id = atomic_fetchadd_int(&ctx->thread_counter, 1);
 	bufsize = ctx->bufsize;
-	kva_req = ctx->kva_req;
+	kva_req = ctx->hwt_backend->kva_req;
 	sprintf(path, "hwt_%d_%d", ctx->ident, thread_id);
 	hwt_ctx_put(ctx);
 
@@ -265,6 +264,7 @@ hwt_hook_thread_create(struct thread *td)
 
 	thr->vm->ctx = ctx;
 	thr->ctx = ctx;
+	thr->backend = ctx->hwt_backend;
 	thr->thread_id = thread_id;
 	thr->td = td;
 
@@ -273,7 +273,7 @@ hwt_hook_thread_create(struct thread *td)
 	HWT_CTX_UNLOCK(ctx);
 
 	/* Notify userspace. */
-	hwt_event_send(HWT_KQ_NEW_RECORD_EV, &entry->task, NULL, (void *)ctx);
+	hwt_record_wakeup(ctx);
 
 	hwt_ctx_put(ctx);
 
@@ -307,11 +307,11 @@ hwt_hook_handler(struct thread *td, int func, void *arg)
 		break;
 	case HWT_EXEC:
 	case HWT_MMAP:
-		hwt_record(td, arg);
+		hwt_record_td(td, arg, M_WAITOK | M_ZERO);
 		hwt_hook_mmap(td);
 		break;
 	case HWT_RECORD:
-		hwt_record(td, arg);
+		hwt_record_td(td, arg, M_WAITOK | M_ZERO);
 		break;
 	};
 }

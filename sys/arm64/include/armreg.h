@@ -2144,6 +2144,12 @@
 #define	PMBSR_DL			(UL(0x1) << PMBSR_DL_SHIFT)
 #define	PMBSR_EC_SHIFT			26
 #define	PMBSR_EC_MASK			(UL(0x3f) << PMBSR_EC_SHIFT)
+#define	PMBSR_EC_VAL(x) \
+    (((x) & PMBSR_EC_MASK) >> PMBSR_EC_SHIFT)
+#define	PMBSR_EC_OTHER_BUF_MGMT		UL(0b000000)
+#define	PMBSR_EC_GRAN_PROT_CHK		UL(0b011110)
+#define	PMBSR_EC_STAGE1_DA		UL(0b100100)
+#define	PMBSR_EC_STAGE2_DA		UL(0b100101)
 
 /* PMCCFILTR_EL0 */
 #define	PMCCFILTR_EL0			MRS_REG(PMCCFILTR_EL0)
@@ -2394,6 +2400,16 @@
 #define	PMSIDR_FnE			(UL(0x1) << PMSIDR_FnE_SHIFT)
 #define	PMSIDR_Interval_SHIFT		8
 #define	PMSIDR_Interval_MASK		(UL(0xf) << PMSIDR_Interval_SHIFT)
+#define	PMSIDR_Interval_VAL(x) \
+    (((x) & PMSIDR_Interval_MASK) >> PMSIDR_Interval_SHIFT)
+#define	PMSIDR_Interval_256		UL(0b0000)
+#define	PMSIDR_Interval_512		UL(0b0010)
+#define	PMSIDR_Interval_768		UL(0b0011)
+#define	PMSIDR_Interval_1024		UL(0b0100)
+#define	PMSIDR_Interval_1536		UL(0b0101)
+#define	PMSIDR_Interval_2048		UL(0b0110)
+#define	PMSIDR_Interval_3072		UL(0b0111)
+#define	PMSIDR_Interval_4096		UL(0b1000)
 #define	PMSIDR_MaxSize_SHIFT		12
 #define	PMSIDR_MaxSize_MASK		(UL(0xf) << PMSIDR_MaxSize_SHIFT)
 #define	PMSIDR_CountSize_SHIFT		16

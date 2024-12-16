@@ -38,12 +38,42 @@ struct pmcstat_image;
 
 struct trace_dev_methods {
 	int (*init)(struct trace_context *tc);
+	void (*shutdown)(struct trace_context *tc);
+
+	/*
+	 * Called whenever a tracing buffer needs to mapped into hwt.
+	 */
 	int (*mmap)(struct trace_context *tc,
 	    struct hwt_record_user_entry *entry);
-	int (*process)(struct trace_context *tc);
 	int (*set_config)(struct trace_context *tc);
+
+	/*
+	 * Called whenever the traced process's address space layout changes.
+	 */
 	int (
 	    *image_load_cb)(struct trace_context *tc, struct hwt_exec_img *img);
+
+	/*
+	 * Trace data processing methods.
+	 *
+	 * An hwt backend must specify one of the two processing methods.
+	 * If both methods are specified, the 'process_buffer' method will
+	 * always take precedence.
+	 *
+	 * If present, the 'process' method should implement a complete
+	 * replacement for hwt's default processing loop. This means that it is
+	 * responsible for fetching trace data, fetching records, and processing
+	 * the data on its own.
+	 *
+	 * The 'process_buffer' method gets invoked from hwt's default
+	 * processing loop whenever an HWT_BUFFER_RECORD is received and is
+	 * tasked with decoding tracing buffer data. This is suitable for
+	 * backends whose tracing hardware issues interrupts when the tracing
+	 * buffer is ready to be processed.
+	 */
+	int (*process)(struct trace_context *tc);
+	int (*process_buffer)(struct trace_context *tc, int buf_id, int curpage,
+	    vm_offset_t offset);
 };
 
 struct trace_dev {
@@ -83,6 +113,7 @@ struct trace_context {
 	/* Raw trace. */
 	int raw;
 	FILE *raw_f;
+	uint64_t bytes_written;
 
 	/* Trace file. */
 	char *filename;
@@ -94,7 +125,7 @@ struct trace_context {
 struct pmcstat_process *hwt_process_alloc(void);
 int hwt_process_create(int *sockpair, char **cmd, char **env, int *pid0);
 int hwt_process_start(int *sockpair);
-int hwt_record_fetch(struct trace_context *tc, int *nrecords);
+int hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait);
 void hwt_procexit(pid_t pid, int status);
 void hwt_sleep(int msec);
 int hwt_find_sym(struct trace_context *tc);

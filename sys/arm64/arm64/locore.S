@@ -324,7 +324,7 @@ LENTRY(enter_kernel_el)
 	 */
 	isb
 
-	/* Ensure SPSR_EL1 and pstate are in sync. The only wat to set the
+	/* Ensure SPSR_EL1 and pstate are in sync. The only way to set the
 	 * latter is to set the former and return from an exception with eret.
 	 */
 	mov	x2, #(PSR_DAIF | PSR_M_EL1h)
@@ -391,6 +391,10 @@ LENTRY(enter_kernel_el)
 	ldr	x2, =(CPTR_RES1)
 	ldr	x3, =(CNTHCTL_EL1PCTEN | CNTHCTL_EL1PCEN)
 	ldr	x5, =(PSR_DAIF | PSR_M_EL1h)
+
+	/* Enable SPE at EL1 via Monitor Debug Configuration Register */
+	mov	x6, (0b11 << MDCR_E2PB_SHIFT)
+	msr	mdcr_el2, x6
 
 .Ldone_vhe:
 

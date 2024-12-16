@@ -130,7 +130,8 @@ hwt_vm_alloc_pages(struct hwt_vm *vm, int kva_req)
 	memattr = VM_MEMATTR_DEVICE;
 
 	if (kva_req) {
-		if ((vm->kvaddr = kva_alloc(vm->npages * PAGE_SIZE)) == 0)
+		vm->kvaddr = kva_alloc(vm->npages * PAGE_SIZE);
+		if (!vm->kvaddr)
 			return (ENOMEM);
 	}
 
@@ -234,15 +235,19 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	struct hwt_record_get *rget;
 	struct hwt_set_config *sconf;
 	struct hwt_bufptr_get *ptr_get;
+	struct hwt_svc_buf *sbuf;
 
 	struct hwt_context *ctx;
 	struct hwt_vm *vm;
 	struct hwt_owner *ho;
 
-	vm_offset_t curpage_offset;
-	int cpu_id;
-	int curpage;
+	vm_offset_t offset;
+	int ident;
 	int error;
+	uint64_t data = 0;
+	void *data2;
+	size_t data_size;
+	int data_version;
 
 	vm = dev->si_drv1;
 	KASSERT(vm != NULL, ("si_drv1 is NULL"));
@@ -282,9 +287,8 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		break;
 
 	case HWT_IOC_STOP:
-		if (ctx->state == CTX_STATE_STOPPED) {
+		if (ctx->state == CTX_STATE_STOPPED)
 			return (ENXIO);
-		}
 		hwt_backend_stop(ctx);
 		ctx->state = CTX_STATE_STOPPED;
 		break;
@@ -297,6 +301,9 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		break;
 
 	case HWT_IOC_SET_CONFIG:
+		if (ctx->state == CTX_STATE_RUNNING) {
+			return (ENXIO);
+		}
 		sconf = (struct hwt_set_config *)addr;
 		error = hwt_config_set(td, ctx, sconf);
 		if (error)
@@ -318,30 +325,54 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case HWT_IOC_BUFPTR_GET:
 		ptr_get = (struct hwt_bufptr_get *)addr;
 
-		error = hwt_backend_read(ctx, vm, &curpage,
-		    &curpage_offset);
+		error = hwt_backend_read(ctx, vm, &ident, &offset, &data);
 		if (error)
 			return (error);
 
-		error = copyout(&curpage, ptr_get->curpage, sizeof(int));
+		if (ptr_get->ident)
+			error = copyout(&ident, ptr_get->ident, sizeof(int));
 		if (error)
 			return (error);
-		error = copyout(&curpage_offset, ptr_get->curpage_offset,
-		    sizeof(vm_offset_t));
+
+		if (ptr_get->offset)
+			error = copyout(&offset, ptr_get->offset,
+			    sizeof(vm_offset_t));
 		if (error)
 			return (error);
+
+		if (ptr_get->data)
+			error = copyout(&data, ptr_get->data, sizeof(uint64_t));
+		if (error)
+			return (error);
+
 		break;
 
 	case HWT_IOC_SVC_BUF:
 		if (ctx->state == CTX_STATE_STOPPED) {
 			return (ENXIO);
 		}
-		cpu_id = *addr;
-		if (cpu_id > mp_ncpus)
-			return (ENXIO);
-		error = hwt_backend_svc_buf(ctx, cpu_id);
-		if (error)
+
+		sbuf = (struct hwt_svc_buf *)addr;
+		data_size = sbuf->data_size;
+		data_version = sbuf->data_version;
+
+		if (data_size == 0 || data_size > PAGE_SIZE)
+			return (EINVAL);
+
+		data2 = malloc(data_size, M_HWT_VM, M_WAITOK | M_ZERO);
+		error = copyin(sbuf->data, data2, data_size);
+		if (error) {
+			free(data2, M_HWT_VM);
 			return (error);
+		}
+
+		error = hwt_backend_svc_buf(ctx, data2, data_size, data_version);
+		if (error) {
+			free(data2, M_HWT_VM);
+			return (error);
+		}
+
+		free(data2, M_HWT_VM);
 		break;
 
 	default:
@@ -405,7 +436,7 @@ hwt_vm_destroy_buffers(struct hwt_vm *vm)
 	vm_page_t m;
 	int i;
 
-	if (vm->ctx->kva_req && vm->kvaddr != 0) {
+	if (vm->ctx->hwt_backend->kva_req && vm->kvaddr != 0) {
 		pmap_qremove(vm->kvaddr, vm->npages);
 		kva_free(vm->kvaddr, vm->npages * PAGE_SIZE);
 	}

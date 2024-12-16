@@ -10,7 +10,6 @@ SRCS	=			\
 	hwt_context.c		\
 	hwt_contexthash.c	\
 	hwt_cpu.c		\
-	hwt_event.c		\
 	hwt_hook.c		\
 	hwt_ioctl.c		\
 	hwt_owner.c		\

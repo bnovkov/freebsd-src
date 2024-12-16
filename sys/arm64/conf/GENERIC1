@@ -20,15 +20,14 @@
 cpu		ARM64
 ident		GENERIC
 
-makeoptions	NO_MODULES
+# makeoptions	NO_MODULES
 
 options		FDT
 device		acpi
 
 device		uart
-device		uart_snps
-device		uart_ns8250
 device		pl011
+device		re
 
 include		"std.arm64"
 include		"std.dev"

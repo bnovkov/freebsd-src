@@ -744,13 +744,14 @@ catch_int(int sig_num __unused)
 static int
 cs_get_offs(struct trace_context *tc, size_t *offs)
 {
-	struct hwt_bufptr_get bget;
+	struct hwt_bufptr_get bget = {0};
 	vm_offset_t curpage_offset;
 	int curpage;
 	int error;
 
-	bget.curpage = &curpage;
-	bget.curpage_offset = &curpage_offset;
+	bget.ident = &curpage;
+	bget.offset = &curpage_offset;
+	bget.data = NULL;
 
 	error = ioctl(tc->thr_fd, HWT_IOC_BUFPTR_GET, &bget);
 	if (error)

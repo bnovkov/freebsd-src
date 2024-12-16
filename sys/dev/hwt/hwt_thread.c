@@ -147,7 +147,8 @@ hwt_thread_free(struct hwt_thread *thr)
 
 	hwt_vm_free(thr->vm);
 	/* Free private backend data, if any. */
-	hwt_backend_thread_free(thr);
+	if (thr->private != NULL)
+		hwt_backend_thread_free(thr);
 	free(thr, M_HWT_THREAD);
 }
 

@@ -46,7 +46,7 @@
 #define	HWT_IOC_BUFPTR_GET	_IOW(HWT_MAGIC, 0x04, struct hwt_bufptr_get)
 #define	HWT_IOC_SET_CONFIG	_IOW(HWT_MAGIC, 0x05, struct hwt_set_config)
 #define	HWT_IOC_WAKEUP		_IOW(HWT_MAGIC, 0x06, struct hwt_wakeup)
-#define	HWT_IOC_SVC_BUF		_IOW(HWT_MAGIC, 0x07, int)
+#define	HWT_IOC_SVC_BUF		_IOW(HWT_MAGIC, 0x07, struct hwt_svc_buf)
 
 #define	HWT_BACKEND_MAXNAMELEN	256
 
@@ -78,19 +78,36 @@ struct hwt_wakeup {
 
 struct hwt_record_user_entry {
 	enum hwt_record_type	record_type;
-	char			fullpath[MAXPATHLEN];
-	uintptr_t		addr;
-	int			thread_id;
+	union {
+		/*
+		 * Used for MMAP, EXECUTABLE, INTERP,
+		 * and KERNEL records.
+		 */
+		struct {
+			char fullpath[MAXPATHLEN];
+			uintptr_t addr;
+		};
+		/* Used for BUFFER records. */
+		struct {
+			int buf_id;
+			int curpage;
+			vm_offset_t offset;
+		};
+		/* Used for THREAD_* records. */
+		int thread_id;
+	};
 } __aligned(16);
 
 struct hwt_record_get {
 	struct hwt_record_user_entry	*records;
 	int				*nentries;
+	int             wait;
 } __aligned(16);
 
 struct hwt_bufptr_get {
-	int		*curpage;
-	vm_offset_t	*curpage_offset;
+	int		*ident;
+	vm_offset_t	*offset;
+	uint64_t	*data;
 } __aligned(16);
 
 struct hwt_set_config {
@@ -101,6 +118,13 @@ struct hwt_set_config {
 	void			*config;
 	size_t			config_size;
 	int			config_version;
+} __aligned(16);
+
+struct hwt_svc_buf {
+	/* The following passed to backend as is. */
+	void			*data;
+	size_t			data_size;
+	int			data_version;
 } __aligned(16);
 
 #endif /* !_SYS_HWT_H_ */

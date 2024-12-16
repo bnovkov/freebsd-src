@@ -117,29 +117,6 @@
  *    device within the context, entire context will be marked as RUNNING.
  * 4. The rest is similar to the THREAD mode.
  *
- *
- * A taskqueue(9) is declared in this file for asynchronous execution of tasks
- *	e.g. sleepable routines called from interrupt handlers
- *
- * to use it, extern the queue in the src file where it will be used:
- *	extern struct taskqueue *taskqueue_hwt;
- *
- * then call TASK_INIT to setup a task + enqueue it:
- *	TASK_INIT(struct *task, 0, (task_fn_t *)func, *arg);
- *	taskqueue_enqueue(taskqueue_hwt, struct *task);
- *
- *
- * A kqueue(2)(9) can be configured in userspace to allow userspace to sleep
- * until notified by the kernel
- *	e.g. notify userspace to service a buffer on a buffer full interrupt
- *
- * hwt_context ctx contains kqueue_fd + struct thread *hwt_td of the calling
- * userspace tool.
- *
- * Create an event and register on kqueue to wake userspace:
- *	EV_SET(struct *kevent, EVENT_NUM, EVFILT_USER, 0,
- *	    NOTE_TRIGGER | NOTE_FFCOPY | uflags, data, NULL);
- *	ret = kqfd_register(ctx->kqueue_fd, *kevent, ctx->hwt_td, M_WAITOK);
  */
 
 #include <sys/param.h>
@@ -161,9 +138,9 @@
 #include <dev/hwt/hwt_owner.h>
 #include <dev/hwt/hwt_ownerhash.h>
 #include <dev/hwt/hwt_backend.h>
+#include <dev/hwt/hwt_record.h>
 #include <dev/hwt/hwt_ioctl.h>
 #include <dev/hwt/hwt_hook.h>
-#include <dev/hwt/hwt_event.h>
 
 #define	HWT_DEBUG
 #undef	HWT_DEBUG
@@ -212,6 +189,7 @@ hwt_load(void)
 	hwt_ctx_load();
 	hwt_contexthash_load();
 	hwt_ownerhash_load();
+	hwt_record_load();
 
 	error = make_dev_s(&args, &hwt_cdev, "hwt");
 	if (error != 0)
@@ -232,6 +210,7 @@ hwt_unload(void)
 	hwt_hook_unload();
 	EVENTHANDLER_DEREGISTER(process_exit, hwt_exit_tag);
 	destroy_dev(hwt_cdev);
+	hwt_record_unload();
 	hwt_ownerhash_unload();
 	hwt_contexthash_unload();
 	hwt_ctx_unload();

@@ -98,13 +98,12 @@ hwt_ctx_alloc(struct hwt_context **ctx0)
 	int error;
 
 	ctx = malloc(sizeof(struct hwt_context), M_HWT_CTX, M_WAITOK | M_ZERO);
-	ctx->thread_counter = 0;
-	ctx->kva_req = 1; /* default require kern VAs */
 
 	TAILQ_INIT(&ctx->records);
 	TAILQ_INIT(&ctx->threads);
 	TAILQ_INIT(&ctx->cpus);
 	mtx_init(&ctx->mtx, "ctx", NULL, MTX_SPIN);
+	mtx_init(&ctx->rec_mtx, "ctx_rec", NULL, MTX_DEF);
 	refcount_init(&ctx->refcnt, 0);
 
 	error = hwt_ctx_ident_alloc(&ctx->ident);

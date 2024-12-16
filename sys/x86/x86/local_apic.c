@@ -35,6 +35,8 @@
 
 #include <sys/cdefs.h>
 #include "opt_atpic.h"
+#include "opt_hwpmc_hooks.h"
+#include "opt_hwt_hooks.h"
 
 #include "opt_ddb.h"
 
@@ -812,6 +814,7 @@ SYSINIT(lapic_intrcnt, SI_SUB_INTR, SI_ORDER_MIDDLE, lapic_intrcnt, NULL);
 void
 lapic_reenable_pcint(void)
 {
+#if defined(HWPMC_HOOKS) || defined(HWT_HOOKS)
 	uint32_t value;
 
 	if (refcount_load(&pcint_refcnt) == 0)
@@ -819,8 +822,10 @@ lapic_reenable_pcint(void)
 	value = lapic_read32(LAPIC_LVT_PCINT);
 	value &= ~APIC_LVT_M;
 	lapic_write32(LAPIC_LVT_PCINT, value);
+#endif
 }
 
+#if defined(HWPMC_HOOKS) || defined(HWT_HOOKS)
 static void
 lapic_update_pcint(void *dummy)
 {
@@ -830,6 +835,7 @@ lapic_update_pcint(void *dummy)
 	lapic_write32(LAPIC_LVT_PCINT, lvt_mode(la, APIC_LVT_PMC,
 	    lapic_read32(LAPIC_LVT_PCINT)));
 }
+#endif
 
 void
 lapic_calibrate_timer(void)
@@ -859,6 +865,7 @@ lapic_calibrate_timer(void)
 int
 lapic_enable_pcint(void)
 {
+#if defined(HWPMC_HOOKS) || defined(HWT_HOOKS)
 	u_int32_t maxlvt;
 
 #ifdef DEV_ATPIC
@@ -878,11 +885,15 @@ lapic_enable_pcint(void)
 	MPASS(mp_ncpus == 1 || smp_started);
 	smp_rendezvous(NULL, lapic_update_pcint, NULL, NULL);
 	return (1);
+#else
+	return (0);
+#endif
 }
 
 void
 lapic_disable_pcint(void)
 {
+#if defined(HWPMC_HOOKS) || defined(HWT_HOOKS)
 	u_int32_t maxlvt;
 
 #ifdef DEV_ATPIC
@@ -895,7 +906,8 @@ lapic_disable_pcint(void)
 	maxlvt = (lapic_read32(LAPIC_VERSION) & APIC_VER_MAXLVT) >> MAXLVTSHIFT;
 	if (maxlvt < APIC_LVT_PMC)
 		return;
-	if (refcount_release(&pcint_refcnt))
+	if (!refcount_release_if_not_last(&pcint_refcnt) &&
+	    refcount_release(&pcint_refcnt) != 0)
 		return;
 	lvts[APIC_LVT_PMC].lvt_masked = 1;
 
@@ -904,6 +916,7 @@ lapic_disable_pcint(void)
 	KASSERT(mp_ncpus == 1 || smp_started, ("hwpmc unloaded too early"));
 #endif
 	smp_rendezvous(NULL, lapic_update_pcint, NULL, NULL);
+#endif
 }
 
 static int

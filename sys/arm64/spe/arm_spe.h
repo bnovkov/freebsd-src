@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * Copyright (c) 2024 Arm Ltd
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -15,7 +15,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -25,52 +25,53 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/param.h>
-#include <sys/kernel.h>
-#include <sys/event.h>
-#include <sys/queue.h>
-#include <sys/malloc.h>
-#include <sys/taskqueue.h>
+#ifndef _ARM64_ARM_SPE_H_
+#define _ARM64_ARM_SPE_H_
 
-#include <dev/hwt/hwt_context.h>
+/* kqueue events */
+#define ARM_SPE_KQ_BUF		138
+#define ARM_SPE_KQ_SHUTDOWN	139
+#define ARM_SPE_KQ_SIGNAL	140
 
-#include "hwt_event.h"
+/* spe_backend_read() u64 data encoding */
+#define KQ_BUF_POS_SHIFT	0
+#define KQ_BUF_POS		(1 << KQ_BUF_POS_SHIFT)
+#define KQ_PARTREC_SHIFT	1
+#define KQ_PARTREC		(1 << KQ_PARTREC_SHIFT)
+#define KQ_FINAL_BUF_SHIFT	2
+#define KQ_FINAL_BUF		(1 << KQ_FINAL_BUF_SHIFT)
 
-TASKQUEUE_FAST_DEFINE_THREAD(hwt);
+enum arm_spe_ctx_field {
+	ARM_SPE_CTX_NONE,
+	ARM_SPE_CTX_PID,
+	ARM_SPE_CTX_CPU_ID
+};
 
-static void
-hwt_event_record_handler(void *arg, int pending __unused)
-{
-	struct hwt_context *ctx;
-	struct kevent kev;
-	int ret __diagused;
+enum arm_spe_profiling_level {
+	ARM_SPE_KERNEL_AND_USER,
+	ARM_SPE_KERNEL_ONLY,
+	ARM_SPE_USER_ONLY
+};
+struct arm_spe_config {
+	/* Minimum interval is IMP DEF up to maximum 24 bit value */
+	uint32_t interval;
 
-	ctx = (struct hwt_context *)arg;
+	/* Profile kernel (EL1), userspace (EL0) or both */
+	enum arm_spe_profiling_level level;
 
-	EV_SET(&kev, HWT_KQ_NEW_RECORD_EV, EVFILT_USER, EV_ENABLE,
-	    NOTE_TRIGGER, 0, NULL);
-	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->hwt_td, M_WAITOK);
-	KASSERT(ret == 0,
-	    ("%s: kqueue fd register failed: %d\n", __func__, ret));
-}
+	/*
+	 * Configure context field in SPE records to store either the
+	 * current PID, the CPU ID or neither
+	 *
+	 * In PID mode, kernel threads without a process context are
+	 * logged as PID 0
+	 */
+	enum arm_spe_ctx_field ctx_field;
+};
 
-int
-hwt_event_send(int ev_type, struct task *task, task_fn_t *handler, void *arg)
-{
-	int error;
+struct arm_spe_svc_buf {
+	uint32_t ident;
+	uint8_t buf_idx : 1;
+};
 
-	/* TODO: validate event type - EINVAL */
-	if (ev_type == HWT_KQ_NEW_RECORD_EV)
-		handler = hwt_event_record_handler;
-	TASK_INIT(task, 0, handler, arg);
-	error = taskqueue_enqueue(taskqueue_hwt, task);
-
-	return (error);
-}
-
-void
-hwt_event_drain_all(void)
-{
-
-	taskqueue_drain_all(taskqueue_hwt);
-}
+#endif /* _ARM64_ARM_SPE_H_ */

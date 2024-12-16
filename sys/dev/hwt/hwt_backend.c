@@ -149,15 +149,15 @@ hwt_backend_dump(struct hwt_context *ctx, int cpu_id)
 }
 
 int
-hwt_backend_read(struct hwt_context *ctx, struct hwt_vm *vm, int *curpage,
-    vm_offset_t *curpage_offset)
+hwt_backend_read(struct hwt_context *ctx, struct hwt_vm *vm, int *ident,
+    vm_offset_t *offset, uint64_t *data)
 {
 	int error;
 
 	dprintf("%s\n", __func__);
 
-	error = ctx->hwt_backend->ops->hwt_backend_read(vm, curpage,
-	    curpage_offset);
+	error = ctx->hwt_backend->ops->hwt_backend_read(vm, ident,
+	    offset, data);
 
 	return (error);
 }
@@ -252,13 +252,15 @@ hwt_backend_stop(struct hwt_context *ctx)
 }
 
 int
-hwt_backend_svc_buf(struct hwt_context *ctx, int cpu_id)
+hwt_backend_svc_buf(struct hwt_context *ctx, void *data, size_t data_size,
+    int data_version)
 {
 	int error;
 
 	dprintf("%s\n", __func__);
 
-	error = ctx->hwt_backend->ops->hwt_backend_svc_buf(ctx, cpu_id);
+	error = ctx->hwt_backend->ops->hwt_backend_svc_buf(ctx, data, data_size,
+	    data_version);
 
 	return (error);
 }
@@ -284,11 +286,11 @@ hwt_backend_thread_free(struct hwt_thread *thr)
 {
 	dprintf("%s\n", __func__);
 
-	if (thr->ctx->hwt_backend->ops->hwt_backend_thread_free == NULL)
+	if (thr->backend->ops->hwt_backend_thread_free == NULL)
 		return;
 	KASSERT(thr->private != NULL,
 		    ("%s: thread private data is NULL\n", __func__));
-	thr->ctx->hwt_backend->ops->hwt_backend_thread_free(thr);
+	thr->backend->ops->hwt_backend_thread_free(thr);
 
 	return;
 }

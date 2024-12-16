@@ -1,6 +1,7 @@
 /*-
- * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
- * All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 Arm Ltd
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,21 +25,19 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _DEV_HWT_HWT_EVENT_H_
-#define _DEV_HWT_HWT_EVENT_H_
+#ifndef	_HWT_SPE_H_
+#define	_HWT_SPE_H_
 
-/* HWT event delivery flags and values. */
-#define	HWT_KQ_BUFRDY_EV		138
-#define	HWT_KQ_NEW_RECORD_EV		139
+extern struct trace_dev_methods spe_methods;
 
-#define	HWT_KQ_BUFRDY_ID_MASK		0xFFFF
+struct arm_spe_mmap {
+	int	n;
+	/* fd[n], *buf[n] */
+	int	*fds;
+	void	**bufs;
+	int	m;	/* CPU_FLS (highest cpu_id in cpuset + 1) */
+	/* idx[m] */
+	uint16_t *idx;	/* mapping between cpu_id + bufs[idx] */
+};
 
-#ifdef _KERNEL
-struct task;
-
-int hwt_event_send(int ev_type, struct task *task, task_fn_t *handler,
-    void *ctx);
-void hwt_event_drain_all(void);
-
-#endif
-#endif /* !_DEV_HWT_HWT_EVENT_H_ */
+#endif /* !_HWT_SPE_H_ */

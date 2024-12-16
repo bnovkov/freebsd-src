@@ -38,21 +38,34 @@ enum hwt_record_type {
 	HWT_RECORD_MUNMAP,
 	HWT_RECORD_EXECUTABLE,
 	HWT_RECORD_INTERP,
+	HWT_RECORD_KERNEL,
 	HWT_RECORD_THREAD_CREATE,
 	HWT_RECORD_THREAD_SET_NAME,
-	HWT_RECORD_KERNEL,
+	HWT_RECORD_BUFFER
 };
 
 #ifdef _KERNEL
-#include <sys/taskqueue.h>
-
 struct hwt_record_entry {
-	enum hwt_record_type		record_type;
 	TAILQ_ENTRY(hwt_record_entry)	next;
-	char				*fullpath;
-	int				thread_id;
-	uintptr_t			addr;
-	struct task			task;
+	enum hwt_record_type record_type;
+	union {
+		/*
+		 * Used for MMAP, EXECUTABLE, INTERP,
+		 * and KERNEL records.
+		 */
+		struct {
+			char *fullpath;
+			uintptr_t addr;
+		};
+		/* Used for BUFFER records. */
+		struct {
+			int buf_id;
+			int curpage;
+			vm_offset_t offset;
+		};
+		/* Used for THREAD_* records. */
+		int thread_id;
+	};
 };
 #endif
 

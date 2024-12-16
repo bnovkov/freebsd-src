@@ -68,6 +68,7 @@ static struct hwt_backend_ops coresight_ops;
 static struct hwt_backend backend = {
 		.ops = &coresight_ops,
 		.name = "coresight",
+		.kva_req = 0, /* TMC uses raw pages, no kern VAs required */
 };
 static struct coresight_pipeline cs_pipeline[MAXCPU];
 
@@ -185,9 +186,6 @@ coresight_backend_init(struct hwt_context *ctx)
 {
 	int error;
 
-	/* Coresight does not require kva, since TMC uses raw pages */
-	ctx->kva_req = 0;
-
 	if (ctx->mode == HWT_MODE_THREAD)
 		error = coresight_backend_init_thread(ctx);
 	else
@@ -261,7 +259,7 @@ coresight_backend_disable(struct hwt_context *ctx, int cpu_id)
 
 static int
 coresight_backend_read(struct hwt_vm *vm, int *curpage,
-    vm_offset_t *curpage_offset)
+    vm_offset_t *curpage_offset, uint64_t *data)
 {
 	struct coresight_pipeline *pipeline;
 	int error;
