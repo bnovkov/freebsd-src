@@ -318,15 +318,17 @@ static int t4_nofldtxq = -NOFLDTXQ;
 SYSCTL_INT(_hw_cxgbe, OID_AUTO, nofldtxq, CTLFLAG_RDTUN, &t4_nofldtxq, 0,
     "Number of offload TX queues per port");
 
-#define NOFLDRXQ 2
-static int t4_nofldrxq = -NOFLDRXQ;
-SYSCTL_INT(_hw_cxgbe, OID_AUTO, nofldrxq, CTLFLAG_RDTUN, &t4_nofldrxq, 0,
-    "Number of offload RX queues per port");
-
 #define NOFLDTXQ_VI 1
 static int t4_nofldtxq_vi = -NOFLDTXQ_VI;
 SYSCTL_INT(_hw_cxgbe, OID_AUTO, nofldtxq_vi, CTLFLAG_RDTUN, &t4_nofldtxq_vi, 0,
     "Number of offload TX queues per VI");
+#endif
+
+#if defined(TCP_OFFLOAD)
+#define NOFLDRXQ 2
+static int t4_nofldrxq = -NOFLDRXQ;
+SYSCTL_INT(_hw_cxgbe, OID_AUTO, nofldrxq, CTLFLAG_RDTUN, &t4_nofldrxq, 0,
+    "Number of offload RX queues per port");
 
 #define NOFLDRXQ_VI 1
 static int t4_nofldrxq_vi = -NOFLDRXQ_VI;
@@ -334,12 +336,12 @@ SYSCTL_INT(_hw_cxgbe, OID_AUTO, nofldrxq_vi, CTLFLAG_RDTUN, &t4_nofldrxq_vi, 0,
     "Number of offload RX queues per VI");
 
 #define TMR_IDX_OFLD 1
-int t4_tmr_idx_ofld = TMR_IDX_OFLD;
+static int t4_tmr_idx_ofld = TMR_IDX_OFLD;
 SYSCTL_INT(_hw_cxgbe, OID_AUTO, holdoff_timer_idx_ofld, CTLFLAG_RDTUN,
     &t4_tmr_idx_ofld, 0, "Holdoff timer index for offload queues");
 
 #define PKTC_IDX_OFLD (-1)
-int t4_pktc_idx_ofld = PKTC_IDX_OFLD;
+static int t4_pktc_idx_ofld = PKTC_IDX_OFLD;
 SYSCTL_INT(_hw_cxgbe, OID_AUTO, holdoff_pktc_idx_ofld, CTLFLAG_RDTUN,
     &t4_pktc_idx_ofld, 0, "holdoff packet counter index for offload queues");
 
@@ -686,9 +688,10 @@ SYSCTL_INT(_hw_cxgbe, OID_AUTO, drop_pkts_with_l4_errors, CTLFLAG_RDTUN,
  * TOE tunables.
  */
 static int t4_cop_managed_offloading = 0;
-SYSCTL_INT(_hw_cxgbe, OID_AUTO, cop_managed_offloading, CTLFLAG_RDTUN,
+SYSCTL_INT(_hw_cxgbe_toe, OID_AUTO, cop_managed_offloading, CTLFLAG_RDTUN,
     &t4_cop_managed_offloading, 0,
     "COP (Connection Offload Policy) controls all TOE offload");
+TUNABLE_INT("hw.cxgbe.cop_managed_offloading", &t4_cop_managed_offloading);
 #endif
 
 #ifdef KERN_TLS
@@ -780,6 +783,8 @@ static int t4_alloc_irq(struct adapter *, struct irq *, int rid,
 static int t4_free_irq(struct adapter *, struct irq *);
 static void t4_init_atid_table(struct adapter *);
 static void t4_free_atid_table(struct adapter *);
+static void stop_atid_allocator(struct adapter *);
+static void restart_atid_allocator(struct adapter *);
 static void get_regs(struct adapter *, struct t4_regdump *, uint8_t *);
 static void vi_refresh_stats(struct vi_info *);
 static void cxgbe_refresh_stats(struct vi_info *);
@@ -861,10 +866,15 @@ static int read_i2c(struct adapter *, struct t4_i2c_data *);
 static int clear_stats(struct adapter *, u_int);
 static int hold_clip_addr(struct adapter *, struct t4_clip_addr *);
 static int release_clip_addr(struct adapter *, struct t4_clip_addr *);
+static inline int stop_adapter(struct adapter *);
+static inline void set_adapter_hwstatus(struct adapter *, const bool);
+static int stop_lld(struct adapter *);
+static inline int restart_adapter(struct adapter *);
+static int restart_lld(struct adapter *);
 #ifdef TCP_OFFLOAD
-static int toe_capability(struct vi_info *, bool);
-static int t4_deactivate_all_uld(struct adapter *);
+static int deactivate_all_uld(struct adapter *);
 static void stop_all_uld(struct adapter *);
+static void restart_all_uld(struct adapter *);
 #endif
 #ifdef KERN_TLS
 static int ktls_capability(struct adapter *, bool);
@@ -928,15 +938,15 @@ struct {
 	{0x6402, "Chelsio T6225-SO-CR"},	/* 2 x 10/25G, nomem */
 	{0x6403, "Chelsio T6425-CR"},		/* 4 x 10/25G */
 	{0x6404, "Chelsio T6425-SO-CR"},	/* 4 x 10/25G, nomem */
-	{0x6405, "Chelsio T6225-OCP-SO"},	/* 2 x 10/25G, nomem */
-	{0x6406, "Chelsio T62100-OCP-SO"},	/* 2 x 40/50/100G, nomem */
+	{0x6405, "Chelsio T6225-SO-OCP3"},	/* 2 x 10/25G, nomem */
+	{0x6406, "Chelsio T6225-OCP3"},		/* 2 x 10/25G */
 	{0x6407, "Chelsio T62100-LP-CR"},	/* 2 x 40/50/100G */
 	{0x6408, "Chelsio T62100-SO-CR"},	/* 2 x 40/50/100G, nomem */
 	{0x6409, "Chelsio T6210-BT"},		/* 2 x 10GBASE-T */
 	{0x640d, "Chelsio T62100-CR"},		/* 2 x 40/50/100G */
 	{0x6410, "Chelsio T6-DBG-100"},		/* 2 x 40/50/100G, debug */
 	{0x6411, "Chelsio T6225-LL-CR"},	/* 2 x 10/25G */
-	{0x6414, "Chelsio T61100-OCP-SO"},	/* 1 x 40/50/100G, nomem */
+	{0x6414, "Chelsio T62100-SO-OCP3"},	/* 2 x 40/50/100G, nomem */
 	{0x6415, "Chelsio T6201-BT"},		/* 2 x 1000BASE-T */
 
 	/* Custom */
@@ -1617,11 +1627,7 @@ t4_attach(device_t dev)
 		goto done;
 	}
 
-	rc = bus_generic_probe(dev);
-	if (rc != 0) {
-		device_printf(dev, "failed to probe child drivers: %d\n", rc);
-		goto done;
-	}
+	bus_identify_children(dev);
 
 	/*
 	 * Ensure thread-safe mailbox access (in debug builds).
@@ -1632,12 +1638,7 @@ t4_attach(device_t dev)
 	 */
 	sc->flags |= CHK_MBOX_ACCESS;
 
-	rc = bus_generic_attach(dev);
-	if (rc != 0) {
-		device_printf(dev,
-		    "failed to attach all child ports: %d\n", rc);
-		goto done;
-	}
+	bus_attach_children(dev);
 	t4_calibration_start(sc);
 
 	device_printf(dev,
@@ -1764,7 +1765,7 @@ t4_detach_common(device_t dev)
 	sc = device_get_softc(dev);
 
 #ifdef TCP_OFFLOAD
-	rc = t4_deactivate_all_uld(sc);
+	rc = deactivate_all_uld(sc);
 	if (rc) {
 		device_printf(dev,
 		    "failed to detach upper layer drivers: %d\n", rc);
@@ -1839,7 +1840,7 @@ t4_detach_common(device_t dev)
 		    sc->msix_res);
 
 	if (sc->l2t)
-		t4_free_l2t(sc->l2t);
+		t4_free_l2t(sc);
 	if (sc->smt)
 		t4_free_smt(sc->smt);
 	t4_free_atid_table(sc);
@@ -1909,57 +1910,102 @@ t4_detach_common(device_t dev)
 	return (0);
 }
 
-static inline bool
-ok_to_reset(struct adapter *sc)
-{
-	struct tid_info *t = &sc->tids;
-	struct port_info *pi;
-	struct vi_info *vi;
-	int i, j;
-	int caps = IFCAP_TOE | IFCAP_NETMAP | IFCAP_TXRTLMT;
-
-	if (is_t6(sc))
-		caps |= IFCAP_TXTLS;
-
-	ASSERT_SYNCHRONIZED_OP(sc);
-	MPASS(!(sc->flags & IS_VF));
-
-	for_each_port(sc, i) {
-		pi = sc->port[i];
-		for_each_vi(pi, j, vi) {
-			if (if_getcapenable(vi->ifp) & caps)
-				return (false);
-		}
-	}
-
-	if (atomic_load_int(&t->tids_in_use) > 0)
-		return (false);
-	if (atomic_load_int(&t->stids_in_use) > 0)
-		return (false);
-	if (atomic_load_int(&t->atids_in_use) > 0)
-		return (false);
-	if (atomic_load_int(&t->ftids_in_use) > 0)
-		return (false);
-	if (atomic_load_int(&t->hpftids_in_use) > 0)
-		return (false);
-	if (atomic_load_int(&t->etids_in_use) > 0)
-		return (false);
-
-	return (true);
-}
-
 static inline int
 stop_adapter(struct adapter *sc)
 {
-	if (atomic_testandset_int(&sc->error_flags, ilog2(ADAP_STOPPED)))
-		return (1);		/* Already stopped. */
-	return (t4_shutdown_adapter(sc));
+	struct port_info *pi;
+	int i;
+
+	if (atomic_testandset_int(&sc->error_flags, ilog2(ADAP_STOPPED))) {
+		CH_ALERT(sc, "%s from %p, flags 0x%08x,0x%08x, EALREADY\n",
+			 __func__, curthread, sc->flags, sc->error_flags);
+		return (EALREADY);
+	}
+	CH_ALERT(sc, "%s from %p, flags 0x%08x,0x%08x\n", __func__, curthread,
+		 sc->flags, sc->error_flags);
+	t4_shutdown_adapter(sc);
+	for_each_port(sc, i) {
+		pi = sc->port[i];
+		PORT_LOCK(pi);
+		if (pi->up_vis > 0 && pi->link_cfg.link_ok) {
+			/*
+			 * t4_shutdown_adapter has already shut down all the
+			 * PHYs but it also disables interrupts and DMA so there
+			 * won't be a link interrupt.  Update the state manually
+			 * if the link was up previously and inform the kernel.
+			 */
+			pi->link_cfg.link_ok = false;
+			t4_os_link_changed(pi);
+		}
+		PORT_UNLOCK(pi);
+	}
+
+	return (0);
+}
+
+static inline int
+restart_adapter(struct adapter *sc)
+{
+	uint32_t val;
+
+	if (!atomic_testandclear_int(&sc->error_flags, ilog2(ADAP_STOPPED))) {
+		CH_ALERT(sc, "%s from %p, flags 0x%08x,0x%08x, EALREADY\n",
+			 __func__, curthread, sc->flags, sc->error_flags);
+		return (EALREADY);
+	}
+	CH_ALERT(sc, "%s from %p, flags 0x%08x,0x%08x\n", __func__, curthread,
+		 sc->flags, sc->error_flags);
+
+	MPASS(hw_off_limits(sc));
+	MPASS((sc->flags & FW_OK) == 0);
+	MPASS((sc->flags & MASTER_PF) == 0);
+	MPASS(sc->reset_thread == NULL);
+
+	/*
+	 * The adapter is supposed to be back on PCIE with its config space and
+	 * BARs restored to their state before reset.  Register access via
+	 * t4_read_reg BAR0 should just work.
+	 */
+	sc->reset_thread = curthread;
+	val = t4_read_reg(sc, A_PL_WHOAMI);
+	if (val == 0xffffffff || val == 0xeeeeeeee) {
+		CH_ERR(sc, "%s: device registers not readable.\n", __func__);
+		sc->reset_thread = NULL;
+		atomic_set_int(&sc->error_flags, ADAP_STOPPED);
+		return (ENXIO);
+	}
+	atomic_clear_int(&sc->error_flags, ADAP_FATAL_ERR);
+	atomic_add_int(&sc->incarnation, 1);
+	atomic_add_int(&sc->num_resets, 1);
+
+	return (0);
+}
+
+static inline void
+set_adapter_hwstatus(struct adapter *sc, const bool usable)
+{
+	if (usable) {
+		/* Must be marked reusable by the designated thread. */
+		ASSERT_SYNCHRONIZED_OP(sc);
+		MPASS(sc->reset_thread == curthread);
+		mtx_lock(&sc->reg_lock);
+		atomic_clear_int(&sc->error_flags, HW_OFF_LIMITS);
+		mtx_unlock(&sc->reg_lock);
+	} else {
+		/* Mark the adapter totally off limits. */
+		begin_synchronized_op(sc, NULL, SLEEP_OK, "t4hwsts");
+		mtx_lock(&sc->reg_lock);
+		atomic_set_int(&sc->error_flags, HW_OFF_LIMITS);
+		mtx_unlock(&sc->reg_lock);
+		sc->flags &= ~(FW_OK | MASTER_PF);
+		sc->reset_thread = NULL;
+		end_synchronized_op(sc, 0);
+	}
 }
 
 static int
-t4_suspend(device_t dev)
+stop_lld(struct adapter *sc)
 {
-	struct adapter *sc = device_get_softc(dev);
 	struct port_info *pi;
 	struct vi_info *vi;
 	if_t ifp;
@@ -1974,43 +2020,24 @@ t4_suspend(device_t dev)
 #endif
 	int rc, i, j, k;
 
-	CH_ALERT(sc, "suspend requested\n");
-
-	rc = begin_synchronized_op(sc, NULL, SLEEP_OK, "t4sus");
+	/*
+	 * XXX: Can there be a synch_op in progress that will hang because
+	 * hardware has been stopped?  We'll hang too and the solution will be
+	 * to use a version of begin_synch_op that wakes up existing synch_op
+	 * with errors.  Maybe stop_adapter should do this wakeup?
+	 *
+	 * I don't think any synch_op could get stranded waiting for DMA or
+	 * interrupt so I think we're okay here.  Remove this comment block
+	 * after testing.
+	 */
+	rc = begin_synchronized_op(sc, NULL, SLEEP_OK, "t4slld");
 	if (rc != 0)
 		return (ENXIO);
-
-	/* XXX: Can the kernel call suspend repeatedly without resume? */
-	MPASS(!hw_off_limits(sc));
-
-	if (!ok_to_reset(sc)) {
-		/* XXX: should list what resource is preventing suspend. */
-		CH_ERR(sc, "not safe to suspend.\n");
-		rc = EBUSY;
-		goto done;
-	}
-
-	/* No more DMA or interrupts. */
-	stop_adapter(sc);
 
 	/* Quiesce all activity. */
 	for_each_port(sc, i) {
 		pi = sc->port[i];
 		pi->vxlan_tcam_entry = false;
-
-		PORT_LOCK(pi);
-		if (pi->up_vis > 0) {
-			/*
-			 * t4_shutdown_adapter has already shut down all the
-			 * PHYs but it also disables interrupts and DMA so there
-			 * won't be a link interrupt.  So we update the state
-			 * manually and inform the kernel.
-			 */
-			pi->link_cfg.link_ok = false;
-			t4_os_link_changed(pi);
-		}
-		PORT_UNLOCK(pi);
-
 		for_each_vi(pi, j, vi) {
 			vi->xact_addr_filt = -1;
 			mtx_lock(&vi->tick_mtx);
@@ -2037,7 +2064,9 @@ t4_suspend(device_t dev)
 			}
 #if defined(TCP_OFFLOAD) || defined(RATELIMIT)
 			for_each_ofld_txq(vi, k, ofld_txq) {
+				TXQ_LOCK(&ofld_txq->wrq);
 				ofld_txq->wrq.eq.flags &= ~EQ_HW_ALLOCATED;
+				TXQ_UNLOCK(&ofld_txq->wrq);
 			}
 #endif
 			for_each_rxq(vi, k, rxq) {
@@ -2055,8 +2084,17 @@ t4_suspend(device_t dev)
 		if (sc->flags & FULL_INIT_DONE) {
 			/* Control queue */
 			wrq = &sc->sge.ctrlq[i];
+			TXQ_LOCK(wrq);
 			wrq->eq.flags &= ~EQ_HW_ALLOCATED;
+			TXQ_UNLOCK(wrq);
 			quiesce_wrq(wrq);
+		}
+
+		if (pi->flags & HAS_TRACEQ) {
+			pi->flags &= ~HAS_TRACEQ;
+			sc->traceq = -1;
+			sc->tracer_valid = 0;
+			sc->tracer_enabled = 0;
 		}
 	}
 	if (sc->flags & FULL_INIT_DONE) {
@@ -2069,22 +2107,43 @@ t4_suspend(device_t dev)
 	callout_stop(&sc->cal_callout);
 	callout_drain(&sc->cal_callout);
 
-	/* Mark the adapter totally off limits. */
-	mtx_lock(&sc->reg_lock);
-	atomic_set_int(&sc->error_flags, HW_OFF_LIMITS);
-	sc->flags &= ~(FW_OK | MASTER_PF);
-	sc->reset_thread = NULL;
-	mtx_unlock(&sc->reg_lock);
-
 	if (t4_clock_gate_on_suspend) {
 		t4_set_reg_field(sc, A_PMU_PART_CG_PWRMODE, F_MA_PART_CGEN |
 		    F_LE_PART_CGEN | F_EDC1_PART_CGEN | F_EDC0_PART_CGEN |
 		    F_TP_PART_CGEN | F_PDP_PART_CGEN | F_SGE_PART_CGEN, 0);
 	}
 
-	CH_ALERT(sc, "suspend completed.\n");
-done:
 	end_synchronized_op(sc, 0);
+
+	stop_atid_allocator(sc);
+	t4_stop_l2t(sc);
+
+	return (rc);
+}
+
+int
+suspend_adapter(struct adapter *sc)
+{
+	stop_adapter(sc);
+	stop_lld(sc);
+#ifdef TCP_OFFLOAD
+	stop_all_uld(sc);
+#endif
+	set_adapter_hwstatus(sc, false);
+
+	return (0);
+}
+
+static int
+t4_suspend(device_t dev)
+{
+	struct adapter *sc = device_get_softc(dev);
+	int rc;
+
+	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
+	rc = suspend_adapter(sc);
+	CH_ALERT(sc, "%s end (thread %p).\n", __func__, curthread);
+
 	return (rc);
 }
 
@@ -2240,9 +2299,8 @@ compare_caps_and_params(struct adapter *sc, struct adapter_pre_reset_state *o)
 }
 
 static int
-t4_resume(device_t dev)
+restart_lld(struct adapter *sc)
 {
-	struct adapter *sc = device_get_softc(dev);
 	struct adapter_pre_reset_state *old_state = NULL;
 	struct port_info *pi;
 	struct vi_info *vi;
@@ -2250,37 +2308,18 @@ t4_resume(device_t dev)
 	struct sge_txq *txq;
 	int rc, i, j, k;
 
-	CH_ALERT(sc, "resume requested.\n");
-
-	rc = begin_synchronized_op(sc, NULL, SLEEP_OK, "t4res");
+	rc = begin_synchronized_op(sc, NULL, SLEEP_OK, "t4rlld");
 	if (rc != 0)
 		return (ENXIO);
-	MPASS(hw_off_limits(sc));
-	MPASS((sc->flags & FW_OK) == 0);
-	MPASS((sc->flags & MASTER_PF) == 0);
-	MPASS(sc->reset_thread == NULL);
-	sc->reset_thread = curthread;
-
-	/* Register access is expected to work by the time we're here. */
-	if (t4_read_reg(sc, A_PL_WHOAMI) == 0xffffffff) {
-		CH_ERR(sc, "%s: can't read device registers\n", __func__);
-		rc = ENXIO;
-		goto done;
-	}
-
-	/* Note that HW_OFF_LIMITS is cleared a bit later. */
-	atomic_clear_int(&sc->error_flags, ADAP_FATAL_ERR | ADAP_STOPPED);
 
 	/* Restore memory window. */
 	setup_memwin(sc);
 
 	/* Go no further if recovery mode has been requested. */
 	if (TUNABLE_INT_FETCH("hw.cxgbe.sos", &i) && i != 0) {
-		CH_ALERT(sc, "recovery mode on resume.\n");
+		CH_ALERT(sc, "%s: recovery mode during restart.\n", __func__);
 		rc = 0;
-		mtx_lock(&sc->reg_lock);
-		atomic_clear_int(&sc->error_flags, HW_OFF_LIMITS);
-		mtx_unlock(&sc->reg_lock);
+		set_adapter_hwstatus(sc, true);
 		goto done;
 	}
 
@@ -2346,9 +2385,7 @@ t4_resume(device_t dev)
 	 * want to access the hardware too.  It is safe to do so.  Note that
 	 * this thread is still in the middle of a synchronized_op.
 	 */
-	mtx_lock(&sc->reg_lock);
-	atomic_clear_int(&sc->error_flags, HW_OFF_LIMITS);
-	mtx_unlock(&sc->reg_lock);
+	set_adapter_hwstatus(sc, true);
 
 	if (sc->flags & FULL_INIT_DONE) {
 		rc = adapter_full_init(sc);
@@ -2373,6 +2410,15 @@ t4_resume(device_t dev)
 					CH_ERR(vi, "failed to re-initialize "
 					    "interface: %d\n", rc);
 					goto done;
+				}
+				if (sc->traceq < 0 && IS_MAIN_VI(vi)) {
+					sc->traceq = sc->sge.rxq[vi->first_rxq].iq.abs_id;
+					t4_write_reg(sc, is_t4(sc) ?
+					    A_MPS_TRC_RSS_CONTROL :
+					    A_MPS_T5_TRC_RSS_CONTROL,
+					    V_RSSCONTROL(pi->tx_chan) |
+					    V_QUEUENUMBER(sc->traceq));
+					pi->flags |= HAS_TRACEQ;
 				}
 
 				ifp = vi->ifp;
@@ -2437,14 +2483,37 @@ t4_resume(device_t dev)
 
 	/* Reset all calibration */
 	t4_calibration_start(sc);
-
 done:
-	if (rc == 0) {
-		sc->incarnation++;
-		CH_ALERT(sc, "resume completed.\n");
-	}
 	end_synchronized_op(sc, 0);
 	free(old_state, M_CXGBE);
+
+	restart_atid_allocator(sc);
+	t4_restart_l2t(sc);
+
+	return (rc);
+}
+
+int
+resume_adapter(struct adapter *sc)
+{
+	restart_adapter(sc);
+	restart_lld(sc);
+#ifdef TCP_OFFLOAD
+	restart_all_uld(sc);
+#endif
+	return (0);
+}
+
+static int
+t4_resume(device_t dev)
+{
+	struct adapter *sc = device_get_softc(dev);
+	int rc;
+
+	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
+	rc = resume_adapter(sc);
+	CH_ALERT(sc, "%s end (thread %p).\n", __func__, curthread);
+
 	return (rc);
 }
 
@@ -2453,7 +2522,7 @@ t4_reset_prepare(device_t dev, device_t child)
 {
 	struct adapter *sc = device_get_softc(dev);
 
-	CH_ALERT(sc, "reset_prepare.\n");
+	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
 	return (0);
 }
 
@@ -2462,70 +2531,62 @@ t4_reset_post(device_t dev, device_t child)
 {
 	struct adapter *sc = device_get_softc(dev);
 
-	CH_ALERT(sc, "reset_post.\n");
+	CH_ALERT(sc, "%s from thread %p.\n", __func__, curthread);
 	return (0);
 }
 
 static int
-reset_adapter(struct adapter *sc)
+reset_adapter_with_pci_bus_reset(struct adapter *sc)
 {
-	int rc, oldinc, error_flags;
+	int rc;
 
-	CH_ALERT(sc, "reset requested.\n");
-
-	rc = begin_synchronized_op(sc, NULL, SLEEP_OK, "t4rst1");
-	if (rc != 0)
-		return (EBUSY);
-
-	if (hw_off_limits(sc)) {
-		CH_ERR(sc, "adapter is suspended, use resume (not reset).\n");
-		rc = ENXIO;
-		goto done;
-	}
-
-	if (!ok_to_reset(sc)) {
-		/* XXX: should list what resource is preventing reset. */
-		CH_ERR(sc, "not safe to reset.\n");
-		rc = EBUSY;
-		goto done;
-	}
-
-done:
-	oldinc = sc->incarnation;
-	end_synchronized_op(sc, 0);
-	if (rc != 0)
-		return (rc);	/* Error logged already. */
-
-	atomic_add_int(&sc->num_resets, 1);
 	mtx_lock(&Giant);
 	rc = BUS_RESET_CHILD(device_get_parent(sc->dev), sc->dev, 0);
 	mtx_unlock(&Giant);
-	if (rc != 0)
-		CH_ERR(sc, "bus_reset_child failed: %d.\n", rc);
-	else {
-		rc = begin_synchronized_op(sc, NULL, SLEEP_OK, "t4rst2");
-		if (rc != 0)
-			return (EBUSY);
-		error_flags = atomic_load_int(&sc->error_flags);
-		if (sc->incarnation > oldinc && error_flags == 0) {
-			CH_ALERT(sc, "bus_reset_child succeeded.\n");
-		} else {
-			CH_ERR(sc, "adapter did not reset properly, flags "
-			    "0x%08x, error_flags 0x%08x.\n", sc->flags,
-			    error_flags);
-			rc = ENXIO;
-		}
-		end_synchronized_op(sc, 0);
-	}
-
 	return (rc);
+}
+
+static int
+reset_adapter_with_pl_rst(struct adapter *sc)
+{
+	suspend_adapter(sc);
+
+	/* This is a t4_write_reg without the hw_off_limits check. */
+	MPASS(sc->error_flags & HW_OFF_LIMITS);
+	bus_space_write_4(sc->bt, sc->bh, A_PL_RST,
+			  F_PIORSTMODE | F_PIORST | F_AUTOPCIEPAUSE);
+	pause("pl_rst", 1 * hz);		/* Wait 1s for reset */
+
+	resume_adapter(sc);
+
+	return (0);
+}
+
+static inline int
+reset_adapter(struct adapter *sc)
+{
+	if (vm_guest == 0)
+		return (reset_adapter_with_pci_bus_reset(sc));
+	else
+		return (reset_adapter_with_pl_rst(sc));
 }
 
 static void
 reset_adapter_task(void *arg, int pending)
 {
-	/* XXX: t4_async_event here? */
-	reset_adapter(arg);
+	struct adapter *sc = arg;
+	const int flags = sc->flags;
+	const int eflags = sc->error_flags;
+	int rc;
+
+	if (pending > 1)
+		CH_ALERT(sc, "%s: pending %d\n", __func__, pending);
+	rc = reset_adapter(sc);
+	if (rc != 0) {
+		CH_ERR(sc, "adapter did not reset properly, rc = %d, "
+		       "flags 0x%08x -> 0x%08x, err_flags 0x%08x -> 0x%08x.\n",
+		       rc, flags, sc->flags, eflags, sc->error_flags);
+	}
 }
 
 static int
@@ -2702,7 +2763,7 @@ cxgbe_attach(device_t dev)
 	for_each_vi(pi, i, vi) {
 		if (i == 0)
 			continue;
-		vi->dev = device_add_child(dev, sc->names->vi_ifnet_name, -1);
+		vi->dev = device_add_child(dev, sc->names->vi_ifnet_name, DEVICE_UNIT_ANY);
 		if (vi->dev == NULL) {
 			device_printf(dev, "failed to add VI %d\n", i);
 			continue;
@@ -2712,7 +2773,7 @@ cxgbe_attach(device_t dev)
 
 	cxgbe_sysctls(pi);
 
-	bus_generic_attach(dev);
+	bus_attach_children(dev);
 
 	return (0);
 }
@@ -3615,9 +3676,6 @@ fatal_error_task(void *arg, int pending)
 	struct adapter *sc = arg;
 	int rc;
 
-#ifdef TCP_OFFLOAD
-	stop_all_uld(sc);
-#endif
 	if (atomic_testandclear_int(&sc->error_flags, ilog2(ADAP_CIM_ERR))) {
 		dump_cim_regs(sc);
 		dump_cimla(sc);
@@ -3625,7 +3683,7 @@ fatal_error_task(void *arg, int pending)
 	}
 
 	if (t4_reset_on_fatal_err) {
-		CH_ALERT(sc, "resetting on fatal error.\n");
+		CH_ALERT(sc, "resetting adapter after fatal error.\n");
 		rc = reset_adapter(sc);
 		if (rc == 0 && t4_panic_on_fatal_err) {
 			CH_ALERT(sc, "reset was successful, "
@@ -3931,6 +3989,7 @@ t4_init_atid_table(struct adapter *sc)
 	mtx_init(&t->atid_lock, "atid lock", NULL, MTX_DEF);
 	t->afree = t->atid_tab;
 	t->atids_in_use = 0;
+	t->atid_alloc_stopped = false;
 	for (i = 1; i < t->natids; i++)
 		t->atid_tab[i - 1].next = &t->atid_tab[i];
 	t->atid_tab[t->natids - 1].next = NULL;
@@ -3952,6 +4011,28 @@ t4_free_atid_table(struct adapter *sc)
 	t->atid_tab = NULL;
 }
 
+static void
+stop_atid_allocator(struct adapter *sc)
+{
+	struct tid_info *t = &sc->tids;
+
+	mtx_lock(&t->atid_lock);
+	t->atid_alloc_stopped = true;
+	mtx_unlock(&t->atid_lock);
+}
+
+static void
+restart_atid_allocator(struct adapter *sc)
+{
+	struct tid_info *t = &sc->tids;
+
+	mtx_lock(&t->atid_lock);
+	KASSERT(t->atids_in_use == 0,
+	    ("%s: %d atids still in use.", __func__, t->atids_in_use));
+	t->atid_alloc_stopped = false;
+	mtx_unlock(&t->atid_lock);
+}
+
 int
 alloc_atid(struct adapter *sc, void *ctx)
 {
@@ -3959,7 +4040,7 @@ alloc_atid(struct adapter *sc, void *ctx)
 	int atid = -1;
 
 	mtx_lock(&t->atid_lock);
-	if (t->afree) {
+	if (t->afree && !t->atid_alloc_stopped) {
 		union aopen_entry *p = t->afree;
 
 		atid = p - t->atid_tab;
@@ -7004,8 +7085,22 @@ quiesce_txq(struct sge_txq *txq)
 static void
 quiesce_wrq(struct sge_wrq *wrq)
 {
+	struct wrqe *wr;
 
-	/* XXXTX */
+	TXQ_LOCK(wrq);
+	while ((wr = STAILQ_FIRST(&wrq->wr_list)) != NULL) {
+		STAILQ_REMOVE_HEAD(&wrq->wr_list, link);
+#ifdef INVARIANTS
+		wrq->nwr_pending--;
+		wrq->ndesc_needed -= howmany(wr->wr_len, EQ_ESIZE);
+#endif
+		free(wr, M_CXGBE);
+	}
+	MPASS(wrq->nwr_pending == 0);
+	MPASS(wrq->ndesc_needed == 0);
+	wrq->nwr_pending = 0;
+	wrq->ndesc_needed = 0;
+	TXQ_UNLOCK(wrq);
 }
 
 static void
@@ -7694,7 +7789,7 @@ t4_sysctls(struct adapter *sc)
 		SYSCTL_ADD_INT(ctx, children, OID_AUTO, "rx_coalesce",
 		    CTLFLAG_RW, &sc->tt.rx_coalesce, 0, "receive coalescing");
 
-		sc->tt.tls = 0;
+		sc->tt.tls = 1;
 		SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "tls", CTLTYPE_INT |
 		    CTLFLAG_RW | CTLFLAG_MPSAFE, sc, 0, sysctl_tls, "I",
 		    "Inline TLS allowed");
@@ -12289,7 +12384,7 @@ t4_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data, int fflag,
 }
 
 #ifdef TCP_OFFLOAD
-static int
+int
 toe_capability(struct vi_info *vi, bool enable)
 {
 	int rc;
@@ -12355,6 +12450,7 @@ toe_capability(struct vi_info *vi, bool enable)
 
 		if (isset(&sc->offload_map, pi->port_id)) {
 			/* TOE is enabled on another VI of this port. */
+			MPASS(pi->uld_vis > 0);
 			pi->uld_vis++;
 			return (0);
 		}
@@ -12380,17 +12476,17 @@ toe_capability(struct vi_info *vi, bool enable)
 		if (!uld_active(sc, ULD_ISCSI))
 			(void) t4_activate_uld(sc, ULD_ISCSI);
 
-		pi->uld_vis++;
-		setbit(&sc->offload_map, pi->port_id);
+		if (pi->uld_vis++ == 0)
+			setbit(&sc->offload_map, pi->port_id);
 	} else {
-		pi->uld_vis--;
-
-		if (!isset(&sc->offload_map, pi->port_id) || pi->uld_vis > 0)
+		if ((if_getcapenable(vi->ifp) & IFCAP_TOE) == 0) {
+			/* TOE is already disabled. */
 			return (0);
-
-		KASSERT(uld_active(sc, ULD_TOM),
-		    ("%s: TOM never initialized?", __func__));
-		clrbit(&sc->offload_map, pi->port_id);
+		}
+		MPASS(isset(&sc->offload_map, pi->port_id));
+		MPASS(pi->uld_vis > 0);
+		if (--pi->uld_vis == 0)
+			clrbit(&sc->offload_map, pi->port_id);
 	}
 
 	return (0);
@@ -12484,7 +12580,7 @@ t4_deactivate_uld(struct adapter *sc, int id)
 }
 
 static int
-t4_deactivate_all_uld(struct adapter *sc)
+deactivate_all_uld(struct adapter *sc)
 {
 	int i, rc;
 
@@ -12519,6 +12615,24 @@ stop_all_uld(struct adapter *sc)
 		    t4_uld_list[i]->uld_stop == NULL)
 			continue;
 		(void) t4_uld_list[i]->uld_stop(sc);
+	}
+	sx_sunlock(&t4_uld_list_lock);
+	end_synchronized_op(sc, 0);
+}
+
+static void
+restart_all_uld(struct adapter *sc)
+{
+	int i;
+
+	if (begin_synchronized_op(sc, NULL, SLEEP_OK | INTR_OK, "t4uldre") != 0)
+		return;
+	sx_slock(&t4_uld_list_lock);
+	for (i = 0; i <= ULD_MAX; i++) {
+		if (t4_uld_list[i] == NULL || !uld_active(sc, i) ||
+		    t4_uld_list[i]->uld_restart == NULL)
+			continue;
+		(void) t4_uld_list[i]->uld_restart(sc);
 	}
 	sx_sunlock(&t4_uld_list_lock);
 	end_synchronized_op(sc, 0);

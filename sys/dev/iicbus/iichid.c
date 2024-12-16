@@ -1154,7 +1154,7 @@ iichid_attach(device_t dev)
 	if (sc->irq_res == NULL || error != 0) {
 #ifdef IICHID_SAMPLING
 		device_printf(sc->dev,
-		    "Interrupt setup failed. Fallback to sampling\n");
+		    "Using sampling mode\n");
 		sc->sampling_rate_slow = IICHID_SAMPLING_RATE_SLOW;
 #else
 		device_printf(sc->dev, "Interrupt setup failed\n");
@@ -1190,7 +1190,7 @@ iichid_attach(device_t dev)
 	}
 #endif /* IICHID_SAMPLING */
 
-	child = device_add_child(dev, "hidbus", -1);
+	child = device_add_child(dev, "hidbus", DEVICE_UNIT_ANY);
 	if (child == NULL) {
 		device_printf(sc->dev, "Could not add I2C device\n");
 		iichid_detach(dev);
@@ -1199,14 +1199,15 @@ iichid_attach(device_t dev)
 	}
 
 	device_set_ivars(child, &sc->hw);
-	error = bus_generic_attach(dev);
-	if (error) {
-		device_printf(dev, "failed to attach child: error %d\n", error);
-		iichid_detach(dev);
-	}
+	bus_attach_children(dev);
+	error = 0;
 done:
-	(void)iichid_set_power(sc, I2C_HID_POWER_OFF);
-	sc->power_on = false;
+	iicbus_request_bus(device_get_parent(dev), dev, IIC_WAIT);
+	if (!sc->open) {
+		(void)iichid_set_power(sc, I2C_HID_POWER_OFF);
+		sc->power_on = false;
+	}
+	iicbus_release_bus(device_get_parent(dev), dev);
 	return (error);
 }
 

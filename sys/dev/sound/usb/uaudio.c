@@ -1125,7 +1125,7 @@ uaudio_attach(device_t dev)
 		    sc->sc_child[i].mix_info == 0)
 			continue;
 		sc->sc_child[i].pcm_device =
-		    device_add_child(dev, "pcm", -1);
+		    device_add_child(dev, "pcm", DEVICE_UNIT_ANY);
 
 		if (sc->sc_child[i].pcm_device == NULL) {
 			DPRINTF("out of memory\n");
@@ -1135,10 +1135,7 @@ uaudio_attach(device_t dev)
 		    &sc->sc_sndcard_func);
 	}
 
-	if (bus_generic_attach(dev)) {
-		DPRINTF("child attach failed\n");
-		goto detach;
-	}
+	bus_attach_children(dev);
 
 	if (uaudio_handle_hid) {
 		if (uaudio_hid_probe(sc, uaa) == 0) {
@@ -1209,14 +1206,9 @@ uaudio_attach_sub(device_t dev, kobj_class_t mixer_class, kobj_class_t chan_clas
 	snprintf(status, sizeof(status), "on %s",
 	    device_get_nameunit(device_get_parent(dev)));
 
-	if (pcm_register(dev, sc,
-	    (sc->sc_play_chan[i].num_alt > 0) ? 1 : 0,
-	    (sc->sc_rec_chan[i].num_alt > 0) ? 1 : 0)) {
-		goto detach;
-	}
+	pcm_init(dev, sc);
 
 	uaudio_pcm_setflags(dev, SD_F_MPSAFE);
-	sc->sc_child[i].pcm_registered = 1;
 
 	if (sc->sc_play_chan[i].num_alt > 0) {
 		sc->sc_play_chan[i].priv_sc = sc;
@@ -1229,7 +1221,9 @@ uaudio_attach_sub(device_t dev, kobj_class_t mixer_class, kobj_class_t chan_clas
 		pcm_addchan(dev, PCMDIR_REC, chan_class,
 		    &sc->sc_rec_chan[i]);
 	}
-	pcm_setstatus(dev, status);
+	if (pcm_register(dev, status))
+		goto detach;
+	sc->sc_child[i].pcm_registered = 1;
 
 	uaudio_mixer_register_sysctl(sc, dev, i);
 
@@ -2687,8 +2681,6 @@ uaudio_chan_init(struct uaudio_chan *ch, struct snd_dbuf *b,
 	DPRINTF("Worst case buffer is %d bytes\n", (int)buf_size);
 
 	ch->buf = malloc(buf_size, M_DEVBUF, M_WAITOK | M_ZERO);
-	if (ch->buf == NULL)
-		goto error;
 	if (sndbuf_setup(b, ch->buf, buf_size) != 0)
 		goto error;
 
@@ -3256,31 +3248,27 @@ uaudio_mixer_add_ctl_sub(struct uaudio_softc *sc, struct uaudio_mixer_node *mc)
 	    malloc(sizeof(*p_mc_new), M_USBDEV, M_WAITOK);
 	int ch;
 
-	if (p_mc_new != NULL) {
-		memcpy(p_mc_new, mc, sizeof(*p_mc_new));
-		p_mc_new->next = sc->sc_mixer_root;
-		sc->sc_mixer_root = p_mc_new;
-		sc->sc_mixer_count++;
+	memcpy(p_mc_new, mc, sizeof(*p_mc_new));
+	p_mc_new->next = sc->sc_mixer_root;
+	sc->sc_mixer_root = p_mc_new;
+	sc->sc_mixer_count++;
 
-		/* set default value for all channels */
-		for (ch = 0; ch < p_mc_new->nchan; ch++) {
-			switch (p_mc_new->val_default) {
-			case 1:
-				/* 50% */
-				p_mc_new->wData[ch] = (p_mc_new->maxval + p_mc_new->minval) / 2;
-				break;
-			case 2:
-				/* 100% */
-				p_mc_new->wData[ch] = p_mc_new->maxval;
-				break;
-			default:
-				/* 0% */
-				p_mc_new->wData[ch] = p_mc_new->minval;
-				break;
-			}
+	/* set default value for all channels */
+	for (ch = 0; ch < p_mc_new->nchan; ch++) {
+		switch (p_mc_new->val_default) {
+		case 1:
+			/* 50% */
+			p_mc_new->wData[ch] = (p_mc_new->maxval + p_mc_new->minval) / 2;
+			break;
+		case 2:
+			/* 100% */
+			p_mc_new->wData[ch] = p_mc_new->maxval;
+			break;
+		default:
+			/* 0% */
+			p_mc_new->wData[ch] = p_mc_new->minval;
+			break;
 		}
-	} else {
-		DPRINTF("out of memory\n");
 	}
 }
 

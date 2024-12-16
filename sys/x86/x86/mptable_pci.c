@@ -65,8 +65,9 @@ mptable_hostb_attach(device_t dev)
 {
 
 	mptable_pci_host_res_init(dev);
-	device_add_child(dev, "pci", -1);
-	return (bus_generic_attach(dev));
+	device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+	bus_attach_children(dev);
+	return (0);
 }
 
 static int

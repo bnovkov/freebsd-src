@@ -33,6 +33,7 @@
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/condvar.h>
+#include <sys/bitstring.h>
 
 #define INIT_ULPTX_WRH(w, wrlen, atomic, tid) do { \
 	(w)->wr_hi = htonl(V_FW_WR_OP(FW_ULPTX_WR) | V_FW_WR_ATOMIC(atomic)); \
@@ -56,15 +57,6 @@
 	INIT_TP_WR(w, tid); \
 	OPCODE_TID(w) = htonl(MK_OPCODE_TID(cpl, tid)); \
 } while (0)
-
-TAILQ_HEAD(stid_head, stid_region);
-struct listen_ctx;
-
-struct stid_region {
-	TAILQ_ENTRY(stid_region) link;
-	u_int used;	/* # of stids used by this region */
-	u_int free;	/* # of contiguous stids free right after this region */
-};
 
 /*
  * Max # of ATIDs.  The absolute HW max is larger than this but we reserve a few
@@ -143,14 +135,15 @@ struct tid_info {
 
 	struct mtx stid_lock __aligned(CACHE_LINE_SIZE);
 	struct listen_ctx **stid_tab;
+	bitstr_t *stid_bitmap;
 	u_int stids_in_use;
-	u_int nstids_free_head;	/* # of available stids at the beginning */
-	struct stid_head stids;
+	bool stid_tab_stopped;
 
 	struct mtx atid_lock __aligned(CACHE_LINE_SIZE);
 	union aopen_entry *atid_tab;
 	union aopen_entry *afree;
 	u_int atids_in_use;
+	bool atid_alloc_stopped;
 
 	/* High priority filters and normal filters share the lock and cv. */
 	struct mtx ftid_lock __aligned(CACHE_LINE_SIZE);
@@ -212,6 +205,7 @@ struct uld_info {
 	int (*uld_activate)(struct adapter *);
 	int (*uld_deactivate)(struct adapter *);
 	int (*uld_stop)(struct adapter *);
+	int (*uld_restart)(struct adapter *);
 };
 
 struct tom_tunables {

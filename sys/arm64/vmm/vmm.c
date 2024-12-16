@@ -60,13 +60,13 @@
 #include <machine/vm.h>
 #include <machine/vmparam.h>
 #include <machine/vmm.h>
-#include <machine/vmm_dev.h>
 #include <machine/vmm_instruction_emul.h>
 
 #include <dev/pci/pcireg.h>
+#include <dev/vmm/vmm_dev.h>
+#include <dev/vmm/vmm_ktr.h>
+#include <dev/vmm/vmm_stat.h>
 
-#include "vmm_ktr.h"
-#include "vmm_stat.h"
 #include "arm64.h"
 #include "mmu.h"
 
@@ -239,6 +239,23 @@ static void vm_free_memmap(struct vm *vm, int ident);
 static bool sysmem_mapping(struct vm *vm, struct mem_map *mm);
 static void vcpu_notify_event_locked(struct vcpu *vcpu);
 
+/* global statistics */
+VMM_STAT(VMEXIT_COUNT, "total number of vm exits");
+VMM_STAT(VMEXIT_UNKNOWN, "number of vmexits for the unknown exception");
+VMM_STAT(VMEXIT_WFI, "number of times wfi was intercepted");
+VMM_STAT(VMEXIT_WFE, "number of times wfe was intercepted");
+VMM_STAT(VMEXIT_HVC, "number of times hvc was intercepted");
+VMM_STAT(VMEXIT_MSR, "number of times msr/mrs was intercepted");
+VMM_STAT(VMEXIT_DATA_ABORT, "number of vmexits for a data abort");
+VMM_STAT(VMEXIT_INSN_ABORT, "number of vmexits for an instruction abort");
+VMM_STAT(VMEXIT_UNHANDLED_SYNC, "number of vmexits for an unhandled synchronous exception");
+VMM_STAT(VMEXIT_IRQ, "number of vmexits for an irq");
+VMM_STAT(VMEXIT_FIQ, "number of vmexits for an interrupt");
+VMM_STAT(VMEXIT_BRK, "number of vmexits for a breakpoint exception");
+VMM_STAT(VMEXIT_SS, "number of vmexits for a single-step exception");
+VMM_STAT(VMEXIT_UNHANDLED_EL2, "number of vmexits for an unhandled EL2 exception");
+VMM_STAT(VMEXIT_UNHANDLED, "number of vmexits for an unhandled exception");
+
 /*
  * Upper limit on vm_maxcpu. We could increase this to 28 bits, but this
  * is a safe value for now.
@@ -345,7 +362,9 @@ vmm_handler(module_t mod, int what, void *arg)
 	switch (what) {
 	case MOD_LOAD:
 		/* TODO: if (vmm_is_hw_supported()) { */
-		vmmdev_init();
+		error = vmmdev_init();
+		if (error != 0)
+			break;
 		error = vmm_init();
 		if (error == 0)
 			vmm_initialized = true;
@@ -377,8 +396,9 @@ static moduledata_t vmm_kmod = {
  *
  * - HYP initialization requires smp_rendezvous() and therefore must happen
  *   after SMP is fully functional (after SI_SUB_SMP).
+ * - vmm device initialization requires an initialized devfs.
  */
-DECLARE_MODULE(vmm, vmm_kmod, SI_SUB_SMP + 1, SI_ORDER_ANY);
+DECLARE_MODULE(vmm, vmm_kmod, MAX(SI_SUB_SMP, SI_SUB_DEVFS) + 1, SI_ORDER_ANY);
 MODULE_VERSION(vmm, 1);
 
 static void
@@ -426,7 +446,8 @@ vm_alloc_vcpu(struct vm *vm, int vcpuid)
 	if (vcpuid >= vgic_max_cpu_count(vm->cookie))
 		return (NULL);
 
-	vcpu = atomic_load_ptr(&vm->vcpu[vcpuid]);
+	vcpu = (struct vcpu *)
+	    atomic_load_acq_ptr((uintptr_t *)&vm->vcpu[vcpuid]);
 	if (__predict_true(vcpu != NULL))
 		return (vcpu);
 

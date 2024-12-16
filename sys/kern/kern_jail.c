@@ -3085,8 +3085,7 @@ prison_proc_iterate(struct prison *pr, void (*cb)(struct proc *, void *),
 	FOREACH_PROC_IN_SYSTEM(p) {
 		PROC_LOCK(p);
 		if (p->p_state != PRS_NEW && p->p_ucred != NULL) {
-			for (ppr = p->p_ucred->cr_prison;
-			    ppr != &prison0;
+			for (ppr = p->p_ucred->cr_prison; ppr != NULL;
 			    ppr = ppr->pr_parent) {
 				if (ppr == pr) {
 					cb(p, cbarg);
@@ -3956,6 +3955,7 @@ prison_priv_check(struct ucred *cred, int priv)
 		 * Allow jailed processes to manipulate process UNIX
 		 * credentials in any way they see fit.
 		 */
+	case PRIV_CRED_SETCRED:
 	case PRIV_CRED_SETUID:
 	case PRIV_CRED_SETEUID:
 	case PRIV_CRED_SETGID:

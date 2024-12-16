@@ -97,13 +97,13 @@ r92c_get_txpower(struct rtwn_softc *sc, int chain,
 	/* XXX net80211 regulatory */
 
 	max_mcs = RTWN_RIDX_HT_MCS(sc->ntxchains * 8 - 1);
-	KASSERT(max_mcs <= RTWN_RIDX_COUNT, ("increase ridx limit\n"));
+	KASSERT(max_mcs <= RTWN_RIDX_LEGACY_HT_COUNT, ("increase ridx limit\n"));
 
 	if (rs->regulatory == 0) {
 		for (ridx = RTWN_RIDX_CCK1; ridx <= RTWN_RIDX_CCK11; ridx++)
 			power[ridx] = base[chain].pwr[0][ridx];
 	}
-	for (ridx = RTWN_RIDX_OFDM6; ridx < RTWN_RIDX_COUNT; ridx++) {
+	for (ridx = RTWN_RIDX_OFDM6; ridx < RTWN_RIDX_LEGACY_HT_COUNT; ridx++) {
 		if (rs->regulatory == 3) {
 			power[ridx] = base[chain].pwr[0][ridx];
 			/* Apply vendor limits. */
@@ -262,7 +262,8 @@ r92c_set_bw40(struct rtwn_softc *sc, uint8_t chan, int prichlo)
 	rtwn_bb_setbits(sc, R92C_FPGA0_ANAPARAM2,
 	    R92C_FPGA0_ANAPARAM2_CBW20, 0);
 
-	rtwn_bb_setbits(sc, 0x818, 0x0c000000, (prichlo ? 2 : 1) << 26);
+	rtwn_bb_setbits(sc, R92C_FPGA0_POWER_SAVE,
+	    R92C_FPGA0_POWER_SAVE_PS_MASK, (prichlo ? 2 : 1) << 26);
 
 	/* Select 40MHz bandwidth. */
 	rtwn_rf_write(sc, 0, R92C_RF_CHNLBW,

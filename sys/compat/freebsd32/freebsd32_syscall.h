@@ -67,7 +67,7 @@
 #define	FREEBSD32_SYS_umask	60
 #define	FREEBSD32_SYS_chroot	61
 				/* 62 is old freebsd32_fstat */
-				/* 63 is obsolete ogetkerninfo */
+				/* 63 is obsolete getkerninfo */
 				/* 64 is old getpagesize */
 #define	FREEBSD32_SYS_msync	65
 #define	FREEBSD32_SYS_vfork	66
@@ -140,7 +140,7 @@
 #define	FREEBSD32_SYS_mkdir	136
 #define	FREEBSD32_SYS_rmdir	137
 #define	FREEBSD32_SYS_freebsd32_utimes	138
-				/* 139 is obsolete sigreturn */
+				/* 139 is obsolete freebsd32_sigreturn */
 #define	FREEBSD32_SYS_freebsd32_adjtime	140
 				/* 141 is old getpeername */
 				/* 142 is old gethostid */
@@ -507,4 +507,7 @@
 #define	FREEBSD32_SYS_freebsd32_timerfd_gettime	586
 #define	FREEBSD32_SYS_freebsd32_timerfd_settime	587
 #define	FREEBSD32_SYS_kcmp	588
-#define	FREEBSD32_SYS_MAXSYSCALL	589
+#define	FREEBSD32_SYS_getrlimitusage	589
+#define	FREEBSD32_SYS_fchroot	590
+#define	FREEBSD32_SYS_freebsd32_setcred	591
+#define	FREEBSD32_SYS_MAXSYSCALL	592

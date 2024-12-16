@@ -1564,14 +1564,14 @@ vmbus_pcib_attach(device_t dev)
 
 	vmbus_pcib_prepopulate_bars(hbus);
 
-	hbus->pci_bus = device_add_child(dev, "pci", -1);
+	hbus->pci_bus = device_add_child(dev, "pci", DEVICE_UNIT_ANY);
 	if (!hbus->pci_bus) {
 		device_printf(dev, "failed to create pci bus\n");
 		ret = ENXIO;
 		goto vmbus_close;
 	}
 
-	bus_generic_attach(dev);
+	bus_attach_children(dev);
 
 	hbus->state = hv_pcibus_installed;
 

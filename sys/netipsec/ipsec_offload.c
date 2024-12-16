@@ -30,16 +30,21 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/ck.h>
+#include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/mbuf.h>
 #include <sys/pctrie.h>
 #include <sys/proc.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/protosw.h>
 #include <sys/taskqueue.h>
 
+#include <machine/stdarg.h>
+
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/vnet.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -65,6 +70,7 @@
 static struct mtx ipsec_accel_sav_tmp;
 static struct unrhdr *drv_spi_unr;
 static struct mtx ipsec_accel_cnt_lock;
+static struct taskqueue *ipsec_accel_tq;
 
 struct ipsec_accel_install_newkey_tq {
 	struct secasvar *sav;
@@ -93,8 +99,6 @@ struct ifp_handle_sav {
 
 #define	IFP_HS_HANDLED	0x00000001
 #define	IFP_HS_REJECTED	0x00000002
-#define	IFP_HS_INPUT	0x00000004
-#define	IFP_HS_OUTPUT	0x00000008
 #define	IFP_HS_MARKER	0x00000010
 
 static CK_LIST_HEAD(, ifp_handle_sav) ipsec_accel_all_sav_handles;
@@ -135,6 +139,8 @@ PCTRIE_DEFINE(DRVSPI_SA, ifp_handle_sav, drv_spi,
     drvspi_sa_trie_alloc, drvspi_sa_trie_free);
 static struct pctrie drv_spi_pctrie;
 
+static eventhandler_tag ipsec_accel_ifdetach_event_tag;
+
 static void ipsec_accel_sa_newkey_impl(struct secasvar *sav);
 static int ipsec_accel_handle_sav(struct secasvar *sav, struct ifnet *ifp,
     u_int drv_spi, void *priv, uint32_t flags, struct ifp_handle_sav **ires);
@@ -148,6 +154,12 @@ static void ipsec_accel_sa_recordxfer(struct secasvar *sav, struct mbuf *m);
 static void ipsec_accel_sync_imp(void);
 static bool ipsec_accel_is_accel_sav_impl(struct secasvar *sav);
 static struct mbuf *ipsec_accel_key_setaccelif_impl(struct secasvar *sav);
+static void ipsec_accel_on_ifdown_impl(struct ifnet *ifp);
+static void ipsec_accel_drv_sa_lifetime_update_impl(struct secasvar *sav,
+    if_t ifp, u_int drv_spi, uint64_t octets, uint64_t allocs);
+static int ipsec_accel_drv_sa_lifetime_fetch_impl(struct secasvar *sav,
+    if_t ifp, u_int drv_spi, uint64_t *octets, uint64_t *allocs);
+static void ipsec_accel_ifdetach_event(void *arg, struct ifnet *ifp);
 
 static void
 ipsec_accel_init(void *arg)
@@ -156,6 +168,11 @@ ipsec_accel_init(void *arg)
 	mtx_init(&ipsec_accel_cnt_lock, "ipascn", MTX_DEF, 0);
 	drv_spi_unr = new_unrhdr(IPSEC_ACCEL_DRV_SPI_MIN,
 	    IPSEC_ACCEL_DRV_SPI_MAX, &ipsec_accel_sav_tmp);
+	ipsec_accel_tq = taskqueue_create("ipsec_offload", M_WAITOK,
+	    taskqueue_thread_enqueue, &ipsec_accel_tq);
+	(void)taskqueue_start_threads(&ipsec_accel_tq,
+	    1 /* Must be single-threaded */, PWAIT,
+	    "ipsec_offload");
 	ipsec_accel_sa_newkey_p = ipsec_accel_sa_newkey_impl;
 	ipsec_accel_forget_sav_p = ipsec_accel_forget_sav_impl;
 	ipsec_accel_spdadd_p = ipsec_accel_spdadd_impl;
@@ -164,7 +181,15 @@ ipsec_accel_init(void *arg)
 	ipsec_accel_sync_p = ipsec_accel_sync_imp;
 	ipsec_accel_is_accel_sav_p = ipsec_accel_is_accel_sav_impl;
 	ipsec_accel_key_setaccelif_p = ipsec_accel_key_setaccelif_impl;
+	ipsec_accel_on_ifdown_p = ipsec_accel_on_ifdown_impl;
+	ipsec_accel_drv_sa_lifetime_update_p =
+	    ipsec_accel_drv_sa_lifetime_update_impl;
+	ipsec_accel_drv_sa_lifetime_fetch_p =
+	    ipsec_accel_drv_sa_lifetime_fetch_impl;
 	pctrie_init(&drv_spi_pctrie);
+	ipsec_accel_ifdetach_event_tag = EVENTHANDLER_REGISTER(
+	    ifnet_departure_event, ipsec_accel_ifdetach_event, NULL,
+	    EVENTHANDLER_PRI_ANY);
 }
 SYSINIT(ipsec_accel_init, SI_SUB_VNET_DONE, SI_ORDER_ANY,
     ipsec_accel_init, NULL);
@@ -172,6 +197,8 @@ SYSINIT(ipsec_accel_init, SI_SUB_VNET_DONE, SI_ORDER_ANY,
 static void
 ipsec_accel_fini(void *arg)
 {
+	EVENTHANDLER_DEREGISTER(ifnet_departure_event,
+	    ipsec_accel_ifdetach_event_tag);
 	ipsec_accel_sa_newkey_p = NULL;
 	ipsec_accel_forget_sav_p = NULL;
 	ipsec_accel_spdadd_p = NULL;
@@ -180,15 +207,41 @@ ipsec_accel_fini(void *arg)
 	ipsec_accel_sync_p = NULL;
 	ipsec_accel_is_accel_sav_p = NULL;
 	ipsec_accel_key_setaccelif_p = NULL;
+	ipsec_accel_on_ifdown_p = NULL;
+	ipsec_accel_drv_sa_lifetime_update_p = NULL;
+	ipsec_accel_drv_sa_lifetime_fetch_p = NULL;
 	ipsec_accel_sync_imp();
 	clean_unrhdr(drv_spi_unr);	/* avoid panic, should go later */
 	clear_unrhdr(drv_spi_unr);
 	delete_unrhdr(drv_spi_unr);
+	taskqueue_drain_all(ipsec_accel_tq);
+	taskqueue_free(ipsec_accel_tq);
 	mtx_destroy(&ipsec_accel_sav_tmp);
 	mtx_destroy(&ipsec_accel_cnt_lock);
 }
 SYSUNINIT(ipsec_accel_fini, SI_SUB_VNET_DONE, SI_ORDER_ANY,
     ipsec_accel_fini, NULL);
+
+SYSCTL_NODE(_net_inet_ipsec, OID_AUTO, offload, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "");
+
+static bool ipsec_offload_verbose = false;
+SYSCTL_BOOL(_net_inet_ipsec_offload, OID_AUTO, verbose, CTLFLAG_RW,
+    &ipsec_offload_verbose, 0,
+    "Verbose SA/SP offload install and deinstall");
+
+static void
+dprintf(const char *fmt, ...)
+{
+	va_list ap;
+
+	if (!ipsec_offload_verbose)
+		return;
+
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+}
 
 static void
 ipsec_accel_alloc_forget_tq(struct secasvar *sav)
@@ -209,7 +262,7 @@ ipsec_accel_sa_install_match(if_t ifp, void *arg)
 	if ((ifp->if_capenable2 & IFCAP2_BIT(IFCAP2_IPSEC_OFFLOAD)) == 0)
 		return (false);
 	if (ifp->if_ipsec_accel_m->if_sa_newkey == NULL) {
-		printf("driver bug ifp %s if_sa_newkey NULL\n",
+		dprintf("driver bug ifp %s if_sa_newkey NULL\n",
 		    if_name(ifp));
 		return (false);
 	}
@@ -226,7 +279,7 @@ ipsec_accel_sa_newkey_cb(if_t ifp, void *arg)
 
 	tq = arg;
 
-	printf("ipsec_accel_sa_newkey_act: ifp %s h %p spi %#x "
+	dprintf("ipsec_accel_sa_newkey_act: ifp %s h %p spi %#x "
 	    "flags %#x seq %d\n",
 	    if_name(ifp), ifp->if_ipsec_accel_m->if_sa_newkey,
 	    be32toh(tq->sav->spi), tq->sav->flags, tq->sav->seq);
@@ -240,7 +293,7 @@ ipsec_accel_sa_newkey_cb(if_t ifp, void *arg)
 	}
 	if (drv_spi == -1) {
 		/* XXXKIB */
-		printf("ipsec_accel_sa_install_newkey: cannot alloc "
+		dprintf("ipsec_accel_sa_install_newkey: cannot alloc "
 		    "drv_spi if %s spi %#x\n", if_name(ifp),
 		    be32toh(tq->sav->spi));
 		return (ENOMEM);
@@ -249,14 +302,14 @@ ipsec_accel_sa_newkey_cb(if_t ifp, void *arg)
 	    drv_spi, &priv);
 	if (error != 0) {
 		if (error == EOPNOTSUPP) {
-			printf("ipsec_accel_sa_newkey: driver "
+			dprintf("ipsec_accel_sa_newkey: driver "
 			    "refused sa if %s spi %#x\n",
 			    if_name(ifp), be32toh(tq->sav->spi));
 			error = ipsec_accel_handle_sav(tq->sav,
 			    ifp, drv_spi, priv, IFP_HS_REJECTED, NULL);
 			/* XXXKIB */
 		} else {
-			printf("ipsec_accel_sa_newkey: driver "
+			dprintf("ipsec_accel_sa_newkey: driver "
 			    "error %d if %s spi %#x\n",
 			    error, if_name(ifp), be32toh(tq->sav->spi));
 			/* XXXKIB */
@@ -266,7 +319,7 @@ ipsec_accel_sa_newkey_cb(if_t ifp, void *arg)
 		    drv_spi, priv, IFP_HS_HANDLED, NULL);
 		if (error != 0) {
 			/* XXXKIB */
-			printf("ipsec_accel_sa_newkey: handle_sav "
+			dprintf("ipsec_accel_sa_newkey: handle_sav "
 			    "err %d if %s spi %#x\n", error,
 			    if_name(ifp), be32toh(tq->sav->spi));
 		}
@@ -300,7 +353,7 @@ ipsec_accel_sa_newkey_act(void *context, int pending)
 		/*
 		 * If ipsec_accel_forget_sav() raced with us and set
 		 * the flag, do its work.  Its task cannot execute in
-		 * parallel since taskqueue_thread is single-threaded.
+		 * parallel since ipsec_accel taskqueue is single-threaded.
 		 */
 		if ((sav->accel_flags & SADB_KEY_ACCEL_DEINST) != 0) {
 			tqf = (void *)sav->accel_forget_tq;
@@ -324,13 +377,13 @@ ipsec_accel_sa_newkey_impl(struct secasvar *sav)
 	    SADB_KEY_ACCEL_DEINST)) != 0)
 		return;
 
-	printf(
+	dprintf(
 	    "ipsec_accel_sa_install_newkey: spi %#x flags %#x seq %d\n",
 	    be32toh(sav->spi), sav->flags, sav->seq);
 
 	tq = malloc(sizeof(*tq), M_TEMP, M_NOWAIT);
 	if (tq == NULL) {
-		printf("ipsec_accel_sa_install_newkey: no memory for tq, "
+		dprintf("ipsec_accel_sa_install_newkey: no memory for tq, "
 		    "spi %#x\n", be32toh(sav->spi));
 		/* XXXKIB */
 		return;
@@ -340,8 +393,8 @@ ipsec_accel_sa_newkey_impl(struct secasvar *sav)
 
 	TASK_INIT(&tq->install_task, 0, ipsec_accel_sa_newkey_act, tq);
 	tq->sav = sav;
-	tq->install_vnet = curthread->td_vnet;	/* XXXKIB liveness */
-	taskqueue_enqueue(taskqueue_thread, &tq->install_task);
+	tq->install_vnet = curthread->td_vnet;
+	taskqueue_enqueue(ipsec_accel_tq, &tq->install_task);
 }
 
 static int
@@ -359,8 +412,7 @@ ipsec_accel_handle_sav(struct secasvar *sav, struct ifnet *ifp,
 	ihs->drv_spi = drv_spi;
 	ihs->ifdata = priv;
 	ihs->flags = flags;
-	if ((flags & IFP_HS_OUTPUT) != 0)
-		ihs->hdr_ext_size = esp_hdrsiz(sav);
+	ihs->hdr_ext_size = esp_hdrsiz(sav);
 	mtx_lock(&ipsec_accel_sav_tmp);
 	CK_LIST_FOREACH(i, &sav->accel_ifps, sav_link) {
 		if (i->ifp == ifp) {
@@ -403,7 +455,7 @@ ipsec_accel_forget_handle_sav(struct ifp_handle_sav *i, bool freesav)
 	sav = i->sav;
 	if ((i->flags & (IFP_HS_HANDLED | IFP_HS_REJECTED)) ==
 	    IFP_HS_HANDLED) {
-		printf("sa deinstall %s %p spi %#x ifl %#x\n",
+		dprintf("sa deinstall %s %p spi %#x ifl %#x\n",
 		    if_name(ifp), sav, be32toh(sav->spi), i->flags);
 		ifp->if_ipsec_accel_m->if_sa_deinstall(ifp,
 		    i->drv_spi, i->ifdata);
@@ -465,7 +517,7 @@ ipsec_accel_forget_sav_impl(struct secasvar *sav)
 	TASK_INIT(&tq->forget_task, 0, ipsec_accel_forget_sav_act, tq);
 	tq->forget_vnet = curthread->td_vnet;
 	tq->sav = sav;
-	taskqueue_enqueue(taskqueue_thread, &tq->forget_task);
+	taskqueue_enqueue(ipsec_accel_tq, &tq->forget_task);
 }
 
 static void
@@ -597,18 +649,18 @@ ipsec_accel_spdadd_cb(if_t ifp, void *arg)
 
 	sp = arg;
 	inp = sp->ipsec_accel_add_sp_inp;
-	printf("ipsec_accel_spdadd_cb: ifp %s m %p sp %p inp %p\n",
+	dprintf("ipsec_accel_spdadd_cb: ifp %s m %p sp %p inp %p\n",
 	    if_name(ifp), ifp->if_ipsec_accel_m->if_spdadd, sp, inp);
 	error = ipsec_accel_remember_sp(sp, ifp, &i);
 	if (error != 0) {
-		printf("ipsec_accel_spdadd: %s if_spdadd %p remember res %d\n",
+		dprintf("ipsec_accel_spdadd: %s if_spdadd %p remember res %d\n",
 		    if_name(ifp), sp, error);
 		return (error);
 	}
 	error = ifp->if_ipsec_accel_m->if_spdadd(ifp, sp, inp, &i->ifdata);
 	if (error != 0) {
 		i->flags |= IFP_HP_REJECTED;
-		printf("ipsec_accel_spdadd: %s if_spdadd %p res %d\n",
+		dprintf("ipsec_accel_spdadd: %s if_spdadd %p res %d\n",
 		    if_name(ifp), sp, error);
 	}
 	return (error);
@@ -653,7 +705,7 @@ ipsec_accel_spdadd_impl(struct secpolicy *sp, struct inpcb *inp)
 		in_pcbref(inp);
 	TASK_INIT(&tq->adddel_task, 0, ipsec_accel_spdadd_act, sp);
 	key_addref(sp);
-	taskqueue_enqueue(taskqueue_thread, &tq->adddel_task);
+	taskqueue_enqueue(ipsec_accel_tq, &tq->adddel_task);
 }
 
 static void
@@ -676,11 +728,11 @@ ipsec_accel_spddel_act(void *arg, int pending)
 		NET_EPOCH_WAIT();
 		if ((i->flags & (IFP_HP_HANDLED | IFP_HP_REJECTED)) ==
 		    IFP_HP_HANDLED) {
-			printf("spd deinstall %s %p\n", if_name(i->ifp), sp);
+			dprintf("spd deinstall %s %p\n", if_name(i->ifp), sp);
 			error = i->ifp->if_ipsec_accel_m->if_spddel(i->ifp,
 			    sp, i->ifdata);
 			if (error != 0) {
-				printf(
+				dprintf(
 		    "ipsec_accel_spddel: %s if_spddel %p res %d\n",
 				    if_name(i->ifp), sp, error);
 			}
@@ -708,7 +760,7 @@ ipsec_accel_spddel_impl(struct secpolicy *sp)
 	tq->adddel_vnet = curthread->td_vnet;
 	TASK_INIT(&tq->adddel_task, 0, ipsec_accel_spddel_act, sp);
 	key_addref(sp);
-	taskqueue_enqueue(taskqueue_thread, &tq->adddel_task);
+	taskqueue_enqueue(ipsec_accel_tq, &tq->adddel_task);
 }
 
 static void
@@ -741,12 +793,12 @@ ipsec_accel_on_ifdown_sp(struct ifnet *ifp)
 		NET_EPOCH_WAIT();
 		if ((i->flags & (IFP_HP_HANDLED | IFP_HP_REJECTED)) ==
 		    IFP_HP_HANDLED) {
-			printf("spd deinstall %s %p\n", if_name(ifp), sp);
+			dprintf("spd deinstall %s %p\n", if_name(ifp), sp);
 			error = ifp->if_ipsec_accel_m->if_spddel(ifp,
 			    sp, i->ifdata);
 		}
 		if (error != 0) {
-			printf(
+			dprintf(
 		    "ipsec_accel_on_ifdown_sp: %s if_spddel %p res %d\n",
 			    if_name(ifp), sp, error);
 		}
@@ -760,11 +812,19 @@ ipsec_accel_on_ifdown_sp(struct ifnet *ifp)
 	free(marker, M_IPSEC_MISC);
 }
 
-void
-ipsec_accel_on_ifdown(struct ifnet *ifp)
+static void
+ipsec_accel_on_ifdown_impl(struct ifnet *ifp)
 {
 	ipsec_accel_on_ifdown_sp(ifp);
 	ipsec_accel_on_ifdown_sav(ifp);
+}
+
+static void
+ipsec_accel_ifdetach_event(void *arg __unused, struct ifnet *ifp)
+{
+	if ((ifp->if_flags & IFF_RENAMING) != 0)
+		return;
+	ipsec_accel_on_ifdown_impl(ifp);
 }
 
 static bool
@@ -822,7 +882,8 @@ ipsec_accel_output(struct ifnet *ifp, struct mbuf *m, struct inpcb *inp,
 	}
 
 	i = ipsec_accel_is_accel_sav_ptr(sav, ifp);
-	if (i == NULL)
+	if (i == NULL || (i->flags & (IFP_HS_HANDLED | IFP_HS_REJECTED)) !=
+	    IFP_HS_HANDLED)
 		goto out;
 
 	if ((m->m_pkthdr.csum_flags & CSUM_TSO) == 0) {
@@ -894,7 +955,7 @@ ipsec_accel_input(struct mbuf *m, int offset, int proto)
 
 	if (tag->drv_spi < IPSEC_ACCEL_DRV_SPI_MIN ||
 	    tag->drv_spi > IPSEC_ACCEL_DRV_SPI_MAX) {
-		printf("if %s mbuf %p drv_spi %d invalid, packet dropped\n",
+		dprintf("if %s mbuf %p drv_spi %d invalid, packet dropped\n",
 		    (m->m_flags & M_PKTHDR) != 0 ? if_name(m->m_pkthdr.rcvif) :
 		    "<unknwn>", m, tag->drv_spi);
 		m_freem(m);
@@ -925,8 +986,8 @@ ipsec_accel_sa_lifetime_update(struct seclifetime *lft_c,
 	lft_c->usetime = min(lft_c->usetime, lft_l->usetime);
 }
 
-void
-ipsec_accel_drv_sa_lifetime_update(struct secasvar *sav, if_t ifp,
+static void
+ipsec_accel_drv_sa_lifetime_update_impl(struct secasvar *sav, if_t ifp,
     u_int drv_spi, uint64_t octets, uint64_t allocs)
 {
 	struct epoch_tracker et;
@@ -966,6 +1027,30 @@ ipsec_accel_drv_sa_lifetime_update(struct secasvar *sav, if_t ifp,
 out:
 	mtx_unlock(&ipsec_accel_cnt_lock);
 	NET_EPOCH_EXIT(et);
+}
+
+static int
+ipsec_accel_drv_sa_lifetime_fetch_impl(struct secasvar *sav,
+    if_t ifp, u_int drv_spi, uint64_t *octets, uint64_t *allocs)
+{
+	struct ifp_handle_sav *i;
+	int error;
+
+	NET_EPOCH_ASSERT();
+	error = 0;
+
+	mtx_lock(&ipsec_accel_cnt_lock);
+	CK_LIST_FOREACH(i, &sav->accel_ifps, sav_link) {
+		if (i->ifp == ifp && i->drv_spi == drv_spi) {
+			*octets = i->cnt_octets;
+			*allocs = i->cnt_allocs;
+			break;
+		}
+	}
+	if (i == NULL)
+		error = ENOENT;
+	mtx_unlock(&ipsec_accel_cnt_lock);
+	return (error);
 }
 
 static void
@@ -1048,7 +1133,7 @@ ipsec_accel_sa_lifetime_op_impl(struct secasvar *sav,
 static void
 ipsec_accel_sync_imp(void)
 {
-	taskqueue_drain_all(taskqueue_thread);
+	taskqueue_drain_all(ipsec_accel_tq);
 }
 
 static struct mbuf *

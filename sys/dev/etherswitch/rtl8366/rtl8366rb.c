@@ -134,7 +134,7 @@ rtl8366rb_identify(driver_t *driver, device_t parent)
 	struct iicbus_ivar *devi;
 
 	if (device_find_child(parent, "rtl8366rb", -1) == NULL) {
-		child = BUS_ADD_CHILD(parent, 0, "rtl8366rb", -1);
+		child = BUS_ADD_CHILD(parent, 0, "rtl8366rb", DEVICE_UNIT_ANY);
 		devi = IICBUS_IVAR(child);
 		devi->addr = RTL8366_IIC_ADDR;
 	}
@@ -254,11 +254,9 @@ rtl8366rb_attach(device_t dev)
 		}
 	}
 
-	bus_generic_probe(dev);
+	bus_identify_children(dev);
 	bus_enumerate_hinted_children(dev);
-	err = bus_generic_attach(dev);
-	if (err != 0)
-		return (err);
+	bus_attach_children(dev);
 	
 	callout_init_mtx(&sc->callout_tick, &sc->callout_mtx, 0);
 	rtl8366rb_tick(sc);

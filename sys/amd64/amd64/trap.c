@@ -235,41 +235,20 @@ trap(struct trapframe *frame)
 	VM_CNT_INC(v_trap);
 	type = frame->tf_trapno;
 
-#ifdef SMP
-	/* Handler for NMI IPIs used for stopping CPUs. */
-	if (type == T_NMI && ipi_nmi_handler() == 0)
-		return;
-#endif
-
 #ifdef KDB
 	if (kdb_active) {
 		kdb_reenter();
 		return;
 	}
 #endif
+	if (type == T_NMI) {
+		nmi_handle_intr(frame);
+		return;
+	}
 
 	if (type == T_RESERVED) {
 		trap_fatal(frame, 0);
 		return;
-	}
-
-	if (type == T_NMI) {
-#ifdef HWT_HOOKS
-		if (hwt_intr != NULL && (*hwt_intr)(frame) != 0)
-			return;
-#endif
-
-#ifdef HWPMC_HOOKS
-		/*
-		 * CPU PMCs interrupt using an NMI.  If the PMC module is
-		 * active, pass the 'rip' value to the PMC module's interrupt
-		 * handler.  A non-zero return value from the handler means that
-		 * the NMI was consumed by it and we can return immediately.
-		 */
-		if (pmc_intr != NULL &&
-		    (*pmc_intr)(frame) != 0)
-			return;
-#endif
 	}
 
 	if ((frame->tf_rflags & PSL_I) == 0) {
@@ -401,10 +380,6 @@ trap(struct trapframe *frame)
 			ucode = FPE_INTDIV;
 			signo = SIGFPE;
 			break;
-
-		case T_NMI:
-			nmi_handle_intr(type, frame);
-			return;
 
 		case T_OFLOW:		/* integer overflow fault */
 			ucode = FPE_INTOVF;
@@ -609,6 +584,18 @@ trap(struct trapframe *frame)
 			 */
 		case T_BPTFLT:
 			/*
+			 * Most likely, EFI RT hitting INT3.  This
+			 * check prevents kdb from handling
+			 * breakpoints set on the BIOS text, if such
+			 * option is ever needed.
+			 */
+			if ((td->td_pflags & TDP_EFIRT) != 0 &&
+			    curpcb->pcb_onfault != NULL) {
+				frame->tf_rip = (long)curpcb->pcb_onfault;
+				return;
+			}
+
+			/*
 			 * If KDB is enabled, let it handle the debugger trap.
 			 * Otherwise, debugger traps "can't happen".
 			 */
@@ -617,10 +604,6 @@ trap(struct trapframe *frame)
 				return;
 #endif
 			break;
-
-		case T_NMI:
-			nmi_handle_intr(type, frame);
-			return;
 		}
 
 		trap_fatal(frame, 0);
@@ -733,7 +716,7 @@ trap_pfault(struct trapframe *frame, bool usermode, int *signo, int *ucode)
 		 * Due to both processor errata and lazy TLB invalidation when
 		 * access restrictions are removed from virtual pages, memory
 		 * accesses that are allowed by the physical mapping layer may
-		 * nonetheless cause one spurious page fault per virtual page. 
+		 * nonetheless cause one spurious page fault per virtual page.
 		 * When the thread is executing a "no faulting" section that
 		 * is bracketed by vm_fault_{disable,enable}_pagefaults(),
 		 * every page fault is treated as a spurious page fault,

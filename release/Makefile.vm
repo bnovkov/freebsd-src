@@ -26,7 +26,7 @@ CLOUDWARE_TYPES?= AZURE \
 		BASIC-CLOUDINIT \
 		EC2 \
 		GCE \
-		OCI \
+		ORACLE \
 		VAGRANT
 AZURE_FORMAT=	vhdf
 AZURE_FSLIST?=	ufs zfs
@@ -39,15 +39,16 @@ BASIC-CLOUDINIT_FSLIST?=	ufs zfs
 BASIC-CLOUDINIT_DESC?=	Images for VM with cloudinit disk config support
 EC2_FORMAT=	raw
 EC2_FSLIST?=	ufs zfs
-EC2_FLAVOURS?=	BASE CLOUD-INIT
+EC2_FLAVOURS?=	BASE CLOUD-INIT SMALL
 EC2-BASE_DESC=	Amazon EC2 image
 EC2-CLOUD-INIT_DESC=	Amazon EC2 Cloud-Init image
+EC2-SMALL_DESC=	Amazon EC2 small image
 GCE_FORMAT=	raw
 GCE_FSLIST?=	ufs zfs
 GCE_DESC=	Google Compute Engine image
-OCI_FORMAT=	qcow2
-OCI_FSLIST?=	ufs
-OCI_DESC=	Oracle Cloud Infrastructure image
+ORACLE_FORMAT=	raw
+ORACLE_FSLIST?=	ufs zfs
+ORACLE_DESC=	Oracle Cloud Infrastructure image
 OPENSTACK_FORMAT=qcow2
 OPENSTACK_FSLIST?=	ufs
 OPENSTACK_DESC=	OpenStack platform image
@@ -238,8 +239,8 @@ cloud-install-BASIC-CLOUDINIT:
 .for _FS in ${BASIC-CLOUDINIT_FSLIST}
 . for _FMT in ${BASIC-CLOUDINIT_FORMAT}
 	cp -p ${.OBJDIR}/${BASIC-CLOUDINIT${_FS:tu}${_FMT:tu}IMAGE} \
-		${DESTDIR}/vmimages/${OSRELEASE}-BASIC-CLOUDINIT.${_FS}.${_FMT}
-	${XZ_CMD} ${DESTDIR}/vmimages/${OSRELEASE}-BASIC-CLOUDINIT.${_FS}.${_FMT}
+		${DESTDIR}/vmimages/${OSRELEASE}-BASIC-CLOUDINIT-${_FS}.${_FMT}
+	${XZ_CMD} ${DESTDIR}/vmimages/${OSRELEASE}-BASIC-CLOUDINIT-${_FS}.${_FMT}
 . endfor
 .endfor
 	cd ${DESTDIR}/vmimages && sha512 ${OSRELEASE}* > \

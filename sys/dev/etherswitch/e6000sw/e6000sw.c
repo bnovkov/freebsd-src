@@ -205,7 +205,7 @@ e6000sw_identify(driver_t *driver, device_t parent)
 {
 
 	if (device_find_child(parent, "e6000sw", -1) == NULL)
-		BUS_ADD_CHILD(parent, 0, "e6000sw", -1);
+		BUS_ADD_CHILD(parent, 0, "e6000sw", DEVICE_UNIT_ANY);
 }
 
 static int
@@ -642,8 +642,8 @@ e6000sw_attach(device_t dev)
 		device_printf(dev, "switch is ready.\n");
 	E6000SW_UNLOCK(sc);
 
-	bus_generic_probe(dev);
-	bus_generic_attach(dev);
+	bus_identify_children(dev);
+	bus_attach_children(dev);
 
 	taskqueue_enqueue_timeout(sc->sc_tq, &sc->sc_tt, hz);
 

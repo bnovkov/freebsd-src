@@ -44,6 +44,7 @@
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
+#include <netinet/tcp.h>
 #include <net/pfvar.h>
 #include <arpa/inet.h>
 
@@ -58,6 +59,7 @@
 #include <errno.h>
 #include <err.h>
 #include <ifaddrs.h>
+#include <inttypes.h>
 #include <unistd.h>
 
 #include "pfctl_parser.h"
@@ -66,7 +68,7 @@
 void		 print_op (u_int8_t, const char *, const char *);
 void		 print_port (u_int8_t, u_int16_t, u_int16_t, const char *, int);
 void		 print_ugid (u_int8_t, unsigned, unsigned, const char *, unsigned);
-void		 print_flags (u_int8_t);
+void		 print_flags (uint16_t);
 void		 print_fromto(struct pf_rule_addr *, pf_osfp_t,
 		    struct pf_rule_addr *, sa_family_t, u_int8_t, int, int);
 int		 ifa_skip_if(const char *filter, struct node_host *p);
@@ -76,7 +78,7 @@ struct node_host	*host_v4(const char *, int);
 struct node_host	*host_v6(const char *, int);
 struct node_host	*host_dns(const char *, int, int);
 
-const char * const tcpflags = "FSRPAUEW";
+const char * const tcpflags = "FSRPAUEWe";
 
 static const struct icmptypeent icmp_type[] = {
 	{ "echoreq",	ICMP_ECHO },
@@ -364,7 +366,7 @@ print_ugid(u_int8_t op, unsigned u1, unsigned u2, const char *t, unsigned umax)
 }
 
 void
-print_flags(u_int8_t f)
+print_flags(uint16_t f)
 {
 	int	i;
 
@@ -488,6 +490,8 @@ print_pool(struct pfctl_pool *pool, u_int16_t p1, u_int16_t p2,
 	}
 	if (pool->opts & PF_POOL_STICKYADDR)
 		printf(" sticky-address");
+	if (pool->opts & PF_POOL_ENDPI)
+		printf(" endpoint-independent");
 	if (id == PF_NAT && p1 == 0 && p2 == 0)
 		printf(" static-port");
 	if (pool->mape.offset > 0)
@@ -646,10 +650,10 @@ print_running(struct pfctl_status *status)
 }
 
 void
-print_src_node(struct pf_src_node *sn, int opts)
+print_src_node(struct pfctl_src_node *sn, int opts)
 {
 	struct pf_addr_wrap aw;
-	int min, sec;
+	uint64_t min, sec;
 
 	memset(&aw, 0, sizeof(aw));
 	if (sn->af == AF_INET)
@@ -670,36 +674,32 @@ print_src_node(struct pf_src_node *sn, int opts)
 		sn->creation /= 60;
 		min = sn->creation % 60;
 		sn->creation /= 60;
-		printf("   age %.2u:%.2u:%.2u", sn->creation, min, sec);
+		printf("   age %.2" PRIu64 ":%.2" PRIu64 ":%.2" PRIu64,
+		    sn->creation, min, sec);
 		if (sn->states == 0) {
 			sec = sn->expire % 60;
 			sn->expire /= 60;
 			min = sn->expire % 60;
 			sn->expire /= 60;
-			printf(", expires in %.2u:%.2u:%.2u",
+			printf(", expires in %.2" PRIu64 ":%.2" PRIu64 ":%.2" PRIu64,
 			    sn->expire, min, sec);
 		}
-		printf(", %llu pkts, %llu bytes",
-#ifdef __FreeBSD__
-		    (unsigned long long)(sn->packets[0] + sn->packets[1]),
-		    (unsigned long long)(sn->bytes[0] + sn->bytes[1]));
-#else
+		printf(", %" PRIu64 " pkts, %" PRIu64 " bytes",
 		    sn->packets[0] + sn->packets[1],
 		    sn->bytes[0] + sn->bytes[1]);
-#endif
 		switch (sn->ruletype) {
 		case PF_NAT:
-			if (sn->rule.nr != -1)
-				printf(", nat rule %u", sn->rule.nr);
+			if (sn->rule != -1)
+				printf(", nat rule %u", sn->rule);
 			break;
 		case PF_RDR:
-			if (sn->rule.nr != -1)
-				printf(", rdr rule %u", sn->rule.nr);
+			if (sn->rule != -1)
+				printf(", rdr rule %u", sn->rule);
 			break;
 		case PF_PASS:
 		case PF_MATCH:
-			if (sn->rule.nr != -1)
-				printf(", filter rule %u", sn->rule.nr);
+			if (sn->rule != -1)
+				printf(", filter rule %u", sn->rule);
 			break;
 		}
 		printf("\n");
@@ -916,6 +916,8 @@ print_rule(struct pfctl_rule *r, const char *anchor_call, int verbose, int numer
 			printf(" (");
 			if (r->log & PF_LOG_ALL)
 				printf("%sall", count++ ? ", " : "");
+			if (r->log & PF_LOG_MATCHES)
+				printf("%smatches", count++ ? ", " : "");
 			if (r->log & PF_LOG_SOCKET_LOOKUP)
 				printf("%suser", count++ ? ", " : "");
 			if (r->logif)
@@ -958,6 +960,8 @@ print_rule(struct pfctl_rule *r, const char *anchor_call, int verbose, int numer
 	}
 	print_fromto(&r->src, r->os_fingerprint, &r->dst, r->af, r->proto,
 	    verbose, numeric);
+	if (r->rcv_ifname[0])
+		printf(" received-on %s", r->rcv_ifname);
 	if (r->uid.op)
 		print_ugid(r->uid.op, r->uid.uid[0], r->uid.uid[1], "user",
 		    UID_MAX);
@@ -1283,7 +1287,7 @@ int
 parse_flags(char *s)
 {
 	char		*p, *q;
-	u_int8_t	 f = 0;
+	uint16_t	 f = 0;
 
 	for (p = s; *p; p++) {
 		if ((q = strchr(tcpflags, *p)) == NULL)
@@ -1291,7 +1295,7 @@ parse_flags(char *s)
 		else
 			f |= 1 << (q - tcpflags);
 	}
-	return (f ? f : PF_TH_ALL);
+	return (f ? f : TH_FLAGS);
 }
 
 void

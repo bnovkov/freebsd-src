@@ -131,8 +131,8 @@ typedef void (*if_qflush_fn_t)(if_t);
 typedef int (*if_transmit_fn_t)(if_t, struct mbuf *);
 typedef	uint64_t (*if_get_counter_t)(if_t, ift_counter);
 typedef	void (*if_reassign_fn_t)(if_t, struct vnet *, char *);
-typedef int (*if_spdadd_fn_t)(if_t, void *sp, void *inp, void **priv);
-typedef int (*if_spddel_fn_t)(if_t, void *sp, void *priv);
+typedef int (*if_spdadd_fn_t)(if_t ifp, void *sp, void *inp, void **priv);
+typedef int (*if_spddel_fn_t)(if_t ifp, void *sp, void *priv);
 typedef int (*if_sa_newkey_fn_t)(if_t ifp, void *sav, u_int drv_spi,
     void **privp);
 typedef int (*if_sa_deinstall_fn_t)(if_t ifp, u_int drv_spi, void *priv);
@@ -643,7 +643,7 @@ void if_setrcvif(struct mbuf *m, if_t ifp);
 void if_setvtag(struct mbuf *m, u_int16_t tag);
 u_int16_t if_getvtag(struct mbuf *m);
 int if_vlantrunkinuse(if_t ifp);
-caddr_t if_getlladdr(const if_t ifp);
+char *if_getlladdr(const if_t ifp);
 struct vnet *if_getvnet(const if_t ifp);
 void *if_gethandle(u_char);
 void if_vlancap(if_t ifp);
@@ -675,7 +675,6 @@ u_int if_lladdr_count(if_t);
 u_int if_llmaddr_count(if_t);
 bool if_maddr_empty(if_t);
 
-int if_getamcount(const if_t ifp);
 struct ifaddr * if_getifaddr(const if_t ifp);
 typedef u_int if_addr_cb_t(void *, struct ifaddr *, u_int);
 u_int if_foreach_addr_type(if_t ifp, int type, if_addr_cb_t cb, void *cb_arg);
@@ -754,7 +753,6 @@ int    ether_poll_deregister(if_t ifp);
 
 #endif /* _KERNEL */
 
-#include <net/if_private.h>	/* XXX: temporary until drivers converted. */
 #include <net/ifq.h>	/* XXXAO: temporary unconditional include */
 
 #endif /* !_NET_IF_VAR_H_ */

@@ -58,7 +58,6 @@
 #include <sys/refcount.h>
 #include <sys/mbuf.h>
 #include <sys/priv.h>
-#include <sys/proc.h>
 #include <sys/sdt.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
@@ -139,16 +138,14 @@ VNET_DEFINE(int, tcp_mssdflt) = TCP_MSS;
 VNET_DEFINE(int, tcp_v6mssdflt) = TCP6_MSS;
 #endif
 
-uint32_t tcp_ack_war_time_window = 1000;
+VNET_DEFINE(uint32_t, tcp_ack_war_time_window) = 1000;
 SYSCTL_UINT(_net_inet_tcp, OID_AUTO, ack_war_timewindow,
-    CTLFLAG_RW,
-    &tcp_ack_war_time_window, 1000,
-   "If the tcp_stack does ack-war prevention how many milliseconds are in its time window?");
-uint32_t tcp_ack_war_cnt = 5;
-SYSCTL_UINT(_net_inet_tcp, OID_AUTO, ack_war_cnt,
-    CTLFLAG_RW,
-    &tcp_ack_war_cnt, 5,
-   "If the tcp_stack does ack-war prevention how many acks can be sent in its time window?");
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(tcp_ack_war_time_window), 0,
+   "Time interval in ms used to limit the number (ack_war_cnt) of challenge ACKs sent per TCP connection");
+VNET_DEFINE(uint32_t, tcp_ack_war_cnt) = 5;
+SYSCTL_UINT(_net_inet_tcp, OID_AUTO, ack_war_cnt, CTLFLAG_VNET | CTLFLAG_RW,
+    &VNET_NAME(tcp_ack_war_cnt), 0,
+   "Maximum number of challenge ACKs sent per TCP connection during the time interval (ack_war_timewindow)");
 
 struct rwlock tcp_function_lock;
 
@@ -359,6 +356,7 @@ static struct tcp_function_block tcp_def_funcblk = {
 	.tfb_tcp_fb_init = tcp_default_fb_init,
 	.tfb_tcp_fb_fini = tcp_default_fb_fini,
 	.tfb_switch_failed = tcp_default_switch_failed,
+	.tfb_flags = TCP_FUNC_DEFAULT_OK,
 };
 
 static int tcp_fb_cnt = 0;
@@ -674,6 +672,10 @@ sysctl_net_inet_default_tcp_functions(SYSCTL_HANDLER_ARGS)
 	if ((blk == NULL) ||
 	    (blk->tfb_flags & TCP_FUNC_BEING_REMOVED)) {
 		error = ENOENT;
+		goto done;
+	}
+	if ((blk->tfb_flags & TCP_FUNC_DEFAULT_OK) == 0) {
+		error = EINVAL;
 		goto done;
 	}
 	V_tcp_func_set_ptr = blk;
@@ -1462,6 +1464,7 @@ tcp_vnet_init(void *arg __unused)
 	VNET_PCPUSTAT_ALLOC(tcpstat, M_WAITOK);
 
 	V_tcp_msl = TCPTV_MSL;
+	arc4rand(&V_ts_offset_secret, sizeof(V_ts_offset_secret), 0);
 }
 VNET_SYSINIT(tcp_vnet_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_FOURTH,
     tcp_vnet_init, NULL);
@@ -1499,7 +1502,6 @@ tcp_init(void *arg __unused)
 	/* Initialize the TCP logging data. */
 	tcp_log_init();
 #endif
-	arc4rand(&V_ts_offset_secret, sizeof(V_ts_offset_secret), 0);
 
 	if (tcp_soreceive_stream) {
 #ifdef INET
@@ -1590,24 +1592,10 @@ SYSINIT(tcp_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_THIRD, tcp_init, NULL);
 static void
 tcp_destroy(void *unused __unused)
 {
-	int n;
 #ifdef TCP_HHOOK
 	int error;
 #endif
 
-	/*
-	 * All our processes are gone, all our sockets should be cleaned
-	 * up, which means, we should be past the tcp_discardcb() calls.
-	 * Sleep to let all tcpcb timers really disappear and cleanup.
-	 */
-	for (;;) {
-		INP_INFO_WLOCK(&V_tcbinfo);
-		n = V_tcbinfo.ipi_count;
-		INP_INFO_WUNLOCK(&V_tcbinfo);
-		if (n == 0)
-			break;
-		pause("tcpdes", hz / 10);
-	}
 	tcp_hc_destroy();
 	syncache_destroy();
 	in_pcbinfo_destroy(&V_tcbinfo);
@@ -2177,12 +2165,53 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 }
 
 /*
+ * Send a challenge ack (no data, no SACK option), but not more than
+ * V_tcp_ack_war_cnt per V_tcp_ack_war_time_window (per TCP connection).
+ */
+void
+tcp_send_challenge_ack(struct tcpcb *tp, struct tcphdr *th, struct mbuf *m)
+{
+	sbintime_t now;
+	bool send_challenge_ack;
+
+	if (V_tcp_ack_war_time_window == 0 || V_tcp_ack_war_cnt == 0) {
+		/* ACK war protection is disabled. */
+		send_challenge_ack = true;
+	} else {
+		/* Start new epoch, if the previous one is already over. */
+		now = getsbinuptime();
+		if (tp->t_challenge_ack_end < now) {
+			tp->t_challenge_ack_cnt = 0;
+			tp->t_challenge_ack_end = now +
+			    V_tcp_ack_war_time_window * SBT_1MS;
+		}
+		/*
+		 * Send a challenge ACK, if less than tcp_ack_war_cnt have been
+		 * sent in the current epoch.
+		 */
+		if (tp->t_challenge_ack_cnt < V_tcp_ack_war_cnt) {
+			send_challenge_ack = true;
+			tp->t_challenge_ack_cnt++;
+		} else {
+			send_challenge_ack = false;
+		}
+	}
+	if (send_challenge_ack) {
+		tcp_respond(tp, mtod(m, void *), th, m, tp->rcv_nxt,
+		    tp->snd_nxt, TH_ACK);
+		tp->last_ack_sent = tp->rcv_nxt;
+	}
+}
+
+/*
  * Create a new TCP control block, making an empty reassembly queue and hooking
  * it to the argument protocol control block.  The `inp' parameter must have
  * come from the zone allocator set up by tcpcbstor declaration.
+ * The caller can provide a pointer to a tcpcb of the listener to inherit the
+ * TCP function block from the listener.
  */
 struct tcpcb *
-tcp_newtcpcb(struct inpcb *inp)
+tcp_newtcpcb(struct inpcb *inp, struct tcpcb *listening_tcb)
 {
 	struct tcpcb *tp = intotcpcb(inp);
 #ifdef INET6
@@ -2197,17 +2226,38 @@ tcp_newtcpcb(struct inpcb *inp)
 	bzero(&tp->t_start_zero, t_zero_size);
 
 	/* Initialise cc_var struct for this tcpcb. */
-	tp->t_ccv.type = IPPROTO_TCP;
-	tp->t_ccv.ccvc.tcp = tp;
+	tp->t_ccv.tp = tp;
 	rw_rlock(&tcp_function_lock);
-	tp->t_fb = V_tcp_func_set_ptr;
+	if (listening_tcb != NULL) {
+		INP_LOCK_ASSERT(tptoinpcb(listening_tcb));
+		KASSERT(listening_tcb->t_fb != NULL,
+		    ("tcp_newtcpcb: listening_tcb->t_fb is NULL"));
+		if (listening_tcb->t_fb->tfb_flags & TCP_FUNC_BEING_REMOVED) {
+			rw_runlock(&tcp_function_lock);
+			return (NULL);
+		}
+		tp->t_fb = listening_tcb->t_fb;
+	} else {
+		tp->t_fb = V_tcp_func_set_ptr;
+	}
 	refcount_acquire(&tp->t_fb->tfb_refcnt);
+	KASSERT((tp->t_fb->tfb_flags & TCP_FUNC_BEING_REMOVED) == 0,
+	    ("tcp_newtcpcb: using TFB being removed"));
 	rw_runlock(&tcp_function_lock);
-	/*
-	 * Use the current system default CC algorithm.
-	 */
-	cc_attach(tp, CC_DEFAULT_ALGO());
-
+	CC_LIST_RLOCK();
+	if (listening_tcb != NULL) {
+		if (CC_ALGO(listening_tcb)->flags & CC_MODULE_BEING_REMOVED) {
+			CC_LIST_RUNLOCK();
+			if (tp->t_fb->tfb_tcp_fb_fini)
+				(*tp->t_fb->tfb_tcp_fb_fini)(tp, 1);
+			refcount_release(&tp->t_fb->tfb_refcnt);
+			return (NULL);
+		}
+		CC_ALGO(tp) = CC_ALGO(listening_tcb);
+	} else
+		CC_ALGO(tp) = CC_DEFAULT_ALGO();
+	cc_refer(CC_ALGO(tp));
+	CC_LIST_RUNLOCK();
 	if (CC_ALGO(tp)->cb_init != NULL)
 		if (CC_ALGO(tp)->cb_init(&tp->t_ccv, NULL) > 0) {
 			cc_detach(tp);
@@ -2244,7 +2294,8 @@ tcp_newtcpcb(struct inpcb *inp)
 	tp->t_hpts_cpu = HPTS_CPU_NONE;
 	tp->t_lro_cpu = HPTS_CPU_NONE;
 
-	callout_init_rw(&tp->t_callout, &inp->inp_lock, CALLOUT_RETURNUNLOCKED);
+	callout_init_rw(&tp->t_callout, &inp->inp_lock,
+	    CALLOUT_TRYLOCK | CALLOUT_RETURNUNLOCKED);
 	for (int i = 0; i < TT_N; i++)
 		tp->t_timers[i] = SBT_MAX;
 
@@ -2418,10 +2469,8 @@ tcp_discardcb(struct tcpcb *tp)
 	 * XXXRRS: Updating must be after the stack fini() since
 	 * that may be converting some internal representation of
 	 * say srtt etc into the general one used by other stacks.
-	 * Lets also at least protect against the so being NULL
-	 * as RW stated below.
 	 */
-	if ((tp->t_rttupdated >= 4) && (so != NULL)) {
+	if (tp->t_rttupdated >= 4) {
 		struct hc_metrics_lite metrics;
 		uint32_t ssthresh;
 
@@ -2431,9 +2480,6 @@ tcp_discardcb(struct tcpcb *tp)
 		 * are satisfied. This gives us better new start value
 		 * for the congestion avoidance for new connections.
 		 * ssthresh is only set if packet loss occurred on a session.
-		 *
-		 * XXXRW: 'so' may be NULL here, and/or socket buffer may be
-		 * being torn down.  Ideally this code would not use 'so'.
 		 */
 		ssthresh = tp->snd_ssthresh;
 		if (ssthresh != 0 && ssthresh < so->so_snd.sb_hiwat / 2) {
@@ -2456,13 +2502,13 @@ tcp_discardcb(struct tcpcb *tp)
 			    );
 		} else
 			ssthresh = 0;
-		metrics.rmx_ssthresh = ssthresh;
+		metrics.hc_ssthresh = ssthresh;
 
-		metrics.rmx_rtt = tp->t_srtt;
-		metrics.rmx_rttvar = tp->t_rttvar;
-		metrics.rmx_cwnd = tp->snd_cwnd;
-		metrics.rmx_sendpipe = 0;
-		metrics.rmx_recvpipe = 0;
+		metrics.hc_rtt = tp->t_srtt;
+		metrics.hc_rttvar = tp->t_rttvar;
+		metrics.hc_cwnd = tp->snd_cwnd;
+		metrics.hc_sendpipe = 0;
+		metrics.hc_recvpipe = 0;
 
 		tcp_hc_update(&inp->inp_inc, &metrics);
 	}
@@ -3280,7 +3326,7 @@ tcp_mtudisc(struct inpcb *inp, int mtuoffer)
 	tcp_mss_update(tp, -1, mtuoffer, NULL, NULL);
 
 	so = inp->inp_socket;
-	SOCKBUF_LOCK(&so->so_snd);
+	SOCK_SENDBUF_LOCK(so);
 	/* If the mss is larger than the socket buffer, decrease the mss. */
 	if (so->so_snd.sb_hiwat < tp->t_maxseg) {
 		tp->t_maxseg = so->so_snd.sb_hiwat;
@@ -3295,7 +3341,7 @@ tcp_mtudisc(struct inpcb *inp, int mtuoffer)
 			tp->t_flags2 &= ~TF2_PROC_SACK_PROHIBIT;
 		}
 	}
-	SOCKBUF_UNLOCK(&so->so_snd);
+	SOCK_SENDBUF_UNLOCK(so);
 
 	TCPSTAT_INC(tcps_mturesent);
 	tp->t_rtttime = 0;

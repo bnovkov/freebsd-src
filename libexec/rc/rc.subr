@@ -1409,8 +1409,8 @@ run_rc_command()
 
 		delete)
 			_files=
-			for _file in $(sysrc -lEs "$name"); do
-				_out=$(sysrc -Fif $_file "$rcvar") && _files="$_files $_file"
+			for _file in $(/usr/sbin/sysrc -lEs "$name"); do
+				_out=$(/usr/sbin/sysrc -Fif $_file "$rcvar") && _files="$_files $_file"
 			done
 			/usr/sbin/sysrc -x "$rcvar" && echo "$rcvar deleted in ${_files# }"
 				# delete file in rc.conf.d if desired and empty.
@@ -1798,9 +1798,6 @@ _run_rc_killcmd()
 #	return value from the script.
 #	If `file' ends with `.sh' and lives in /etc/rc.d, ignore it as it's
 #	an old-style startup file.
-#	If `file' ends with `.sh' and does not live in /etc/rc.d, it's sourced
-#	into the current environment if $rc_fast_and_loose is set; otherwise
-#	it is run as a child process.
 #	If `file' appears to be a backup or scratch file, ignore it.
 #	Otherwise if it is executable run as a child process.
 #
@@ -1836,15 +1833,13 @@ run_rc_script()
 
 			if [ -n "$rc_boottrace" ]; then
 				boottrace_fn "$_file" "$_arg"
-			elif [ -n "$rc_fast_and_loose" ]; then
-				set $_arg; . $_file
 			else
 				( trap "echo Script $_file interrupted >&2 ; kill -QUIT $$" 3
 				  trap "echo Script $_file interrupted >&2 ; exit 1" 2
 				  trap "echo Script $_file running >&2" 29
 				  set $_arg; . $_file )
 			fi
-			DebugOff $_file $_file:$_arg rc:${_file##*/} rc:${_file##*/}:$_arg ${_file##*/} ${_file##*/}:$_arg
+			DebugOff rc=$? $_file $_file:$_arg rc:${_file##*/} rc:${_file##*/}:$_arg ${_file##*/} ${_file##*/}:$_arg
 		fi
 		;;
 	esac
@@ -1909,19 +1904,8 @@ boottrace_fn()
 	_file=$1
 	_arg=$2
 
-	if [ -n "$rc_fast_and_loose" ]; then
-		boottrace_sysctl "$_file start"
-		set $_arg; . $_file
-		boottrace_sysctl "$_file done"
-	else
-		_boot="${_boot}" rc_fast="${rc_fast}" autoboot="${autoboot}" \
-		    $boottrace_cmd "$_file" "$_arg"
-	fi
-}
-
-boottrace_sysctl()
-{
-	${SYSCTL} kern.boottrace.boottrace="$1"
+	_boot="${_boot}" rc_fast="${rc_fast}" autoboot="${autoboot}" \
+	    $boottrace_cmd "$_file" "$_arg"
 }
 
 #
@@ -2767,13 +2751,21 @@ $_DEBUG_SH vdot /libexec/debug.sh
 
 # Ensure we can still operate if debug.sh and
 # safe_eval.sh are not found.
-if have DebugOn; then
-	# allow DEBUG_SH to be set from loader prompt
-	DEBUG_SH=${DEBUG_SH:-$(kenv -q DEBUG_SH)}
-else
+if ! have DebugOn; then
 	DebugOn() { return 0; }
-	DebugOff() { return 0; }
+	DebugOff() {
+		local _rc=0
+		while :
+		do
+			case "$1" in
+			-[eo]) shift;; # ignore it
+			rc=*) eval "_$1"; shift;;
+			*) break;;
+			esac
+		done
+		return $_rc
+	}
 fi
-if ! have save_dot; then
+if ! have safe_dot; then
 	safe_dot() { dot "$@"; }
 fi

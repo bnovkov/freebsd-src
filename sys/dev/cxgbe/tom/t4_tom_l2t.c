@@ -212,20 +212,18 @@ update_entry(struct adapter *sc, struct l2t_entry *e, uint8_t *lladdr,
 
 		e->state = L2T_STATE_STALE;
 
-	} else {
+	} else if (e->state == L2T_STATE_RESOLVING ||
+	    e->state == L2T_STATE_FAILED ||
+	    memcmp(e->dmac, lladdr, ETHER_ADDR_LEN)) {
 
-		if (e->state == L2T_STATE_RESOLVING ||
-		    e->state == L2T_STATE_FAILED ||
-		    memcmp(e->dmac, lladdr, ETHER_ADDR_LEN)) {
+		/* unresolved -> resolved; or dmac changed */
 
-			/* unresolved -> resolved; or dmac changed */
-
-			memcpy(e->dmac, lladdr, ETHER_ADDR_LEN);
-			e->vlan = vtag;
-			t4_write_l2e(e, 1);
-		}
+		memcpy(e->dmac, lladdr, ETHER_ADDR_LEN);
+		e->vlan = vtag;
+		if (t4_write_l2e(e, 1) == 0)
+			e->state = L2T_STATE_VALID;
+	} else
 		e->state = L2T_STATE_VALID;
-	}
 }
 
 static int
@@ -291,7 +289,10 @@ again:
 			mtx_unlock(&e->lock);
 			goto again;
 		}
-		arpq_enqueue(e, wr);
+		if (adapter_stopped(sc))
+			free(wr, M_CXGBE);
+		else
+			arpq_enqueue(e, wr);
 		mtx_unlock(&e->lock);
 
 		if (resolve_entry(sc, e) == EWOULDBLOCK)
@@ -380,6 +381,10 @@ t4_l2t_get(struct port_info *pi, if_t ifp, struct sockaddr *sa)
 
 	hash = l2_hash(d, sa, if_getindex(ifp));
 	rw_wlock(&d->lock);
+	if (__predict_false(d->l2t_stopped)) {
+		e = NULL;
+		goto done;
+	}
 	for (e = d->l2tab[hash].first; e; e = e->next) {
 		if (l2_cmp(sa, e) == 0 && e->ifp == ifp && e->vlan == vtag &&
 		    e->smt_idx == smt_idx) {
@@ -429,16 +434,20 @@ t4_l2_update(struct toedev *tod, if_t ifp, struct sockaddr *sa,
 
 	hash = l2_hash(d, sa, if_getindex(ifp));
 	rw_rlock(&d->lock);
+	if (__predict_false(d->l2t_stopped))
+		goto done;
 	for (e = d->l2tab[hash].first; e; e = e->next) {
 		if (l2_cmp(sa, e) == 0 && e->ifp == ifp) {
 			mtx_lock(&e->lock);
 			if (atomic_load_acq_int(&e->refcnt))
 				goto found;
-			e->state = L2T_STATE_STALE;
+			if (e->state == L2T_STATE_VALID)
+				e->state = L2T_STATE_STALE;
 			mtx_unlock(&e->lock);
 			break;
 		}
 	}
+done:
 	rw_runlock(&d->lock);
 
 	/*

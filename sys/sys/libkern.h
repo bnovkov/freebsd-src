@@ -227,10 +227,7 @@ ilog2_long_long(long long n)
 
 #define	ilog2(n) (__builtin_constant_p(n) ? ilog2_const(n) : ilog2_var(n))
 #define	rounddown_pow_of_two(n)	((__typeof(n))1 << ilog2(n))
-#define	order_base_2(n) ({			\
-	__typeof(n) _n = (n);			\
-	_n == 1 ? 0 : 1 + ilog2(_n - 1);	\
-})
+#define order_base_2(n) ilog2(2*(n)-1)
 #define	roundup_pow_of_two(n)	((__typeof(n))1 << order_base_2(n))
 
 #define	bitcount64(x)	__bitcount64((uint64_t)(x))
@@ -337,7 +334,7 @@ signed_extend32(uint32_t bitmap, int lsb, int width)
 #define	FNM_IGNORECASE	FNM_CASEFOLD
 #define	FNM_FILE_NAME	FNM_PATHNAME
 
-#if __has_include(<ssp/ssp.h>)
+#if !defined(_KERNEL) && __has_include(<ssp/ssp.h>)
 #include <ssp/ssp.h>	/* __ssp_real */
 #else
 #define __ssp_real(fun)		fun

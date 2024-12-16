@@ -132,7 +132,7 @@ qpi_probe_pcib(device_t dev, int bus)
 		return (ENXIO);
 	}
 
-	child = BUS_ADD_CHILD(dev, 0, "pcib", -1);
+	child = BUS_ADD_CHILD(dev, 0, "pcib", DEVICE_UNIT_ANY);
 	if (child == NULL)
 		panic("%s: failed to add pci bus %d", device_get_nameunit(dev),
 		    bus);
@@ -155,7 +155,8 @@ qpi_attach(device_t dev)
 	for (bus = PCI_BUSMAX; bus >= 0; bus--)
 		qpi_probe_pcib(dev, bus);
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 static int
@@ -226,8 +227,9 @@ static int
 qpi_pcib_attach(device_t dev)
 {
 
-	device_add_child(dev, "pci", -1);
-	return (bus_generic_attach(dev));
+	device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+	bus_attach_children(dev);
+	return (0);
 }
 
 static int

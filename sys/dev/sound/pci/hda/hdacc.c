@@ -358,6 +358,7 @@ static const struct {
 	{ HDA_CODEC_NVIDIAMCP78_3, 0,	"NVIDIA MCP78" },
 	{ HDA_CODEC_NVIDIAMCP78_4, 0,	"NVIDIA MCP78" },
 	{ HDA_CODEC_NVIDIAMCP7A, 0,	"NVIDIA MCP7A" },
+	{ HDA_CODEC_NVIDIAGM204, 0,	"NVIDIA GM204" },
 	{ HDA_CODEC_NVIDIAGT220, 0,	"NVIDIA GT220" },
 	{ HDA_CODEC_NVIDIAGT21X, 0,	"NVIDIA GT21x" },
 	{ HDA_CODEC_NVIDIAMCP89, 0,	"NVIDIA MCP89" },
@@ -521,7 +522,7 @@ hdacc_attach(device_t dev)
 		codec->fgs[n].subsystem_id = hda_command(dev,
 		    HDA_CMD_GET_SUBSYSTEM_ID(0, i));
 		hdacc_unlock(codec);
-		codec->fgs[n].dev = child = device_add_child(dev, NULL, -1);
+		codec->fgs[n].dev = child = device_add_child(dev, NULL, DEVICE_UNIT_ANY);
 		if (child == NULL) {
 			device_printf(dev, "Failed to add function device\n");
 			continue;
@@ -529,7 +530,7 @@ hdacc_attach(device_t dev)
 		device_set_ivars(child, &codec->fgs[n]);
 	}
 
-	bus_generic_attach(dev);
+	bus_attach_children(dev);
 
 	return (0);
 }
