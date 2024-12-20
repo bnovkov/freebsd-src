@@ -232,6 +232,7 @@ rtwn_attach(struct rtwn_softc *sc)
 		| IEEE80211_C_WME		/* 802.11e */
 		| IEEE80211_C_SWAMSDUTX		/* Do software A-MSDU TX */
 		| IEEE80211_C_FF		/* Atheros fast-frames */
+		| IEEE80211_C_TXPMGT		/* TX power control */
 		;
 
 	if (sc->sc_hwcrypto != RTWN_CRYPTO_SW) {
@@ -695,6 +696,14 @@ rtwn_ioctl_reset(struct ieee80211vap *vap, u_long cmd)
 	case IEEE80211_IOC_HTPROTMODE:
 	case IEEE80211_IOC_LDPC:
 		error = 0;
+		break;
+	case IEEE80211_IOC_TXPOWER:
+		{
+			struct rtwn_softc *sc = vap->iv_ic->ic_softc;
+			RTWN_LOCK(sc);
+			error = rtwn_set_tx_power(sc, vap);
+			RTWN_UNLOCK(sc);
+		}
 		break;
 	default:
 		error = ENETRESET;
@@ -1193,7 +1202,8 @@ rtwn_calc_basicrates(struct rtwn_softc *sc)
 		struct rtwn_vap *rvp;
 		struct ieee80211vap *vap;
 		struct ieee80211_node *ni;
-		uint32_t rates;
+		struct ieee80211_htrateset *rs_ht;
+		uint32_t rates = 0, htrates = 0;
 
 		rvp = sc->vaps[i];
 		if (rvp == NULL || rvp->curr_mode == R92C_MSR_NOLINK)
@@ -1204,15 +1214,45 @@ rtwn_calc_basicrates(struct rtwn_softc *sc)
 			continue;
 
 		ni = ieee80211_ref_node(vap->iv_bss);
-		rtwn_get_rates(sc, &ni->ni_rates, NULL, &rates, NULL, 1);
+		if (ni->ni_flags & IEEE80211_NODE_HT)
+			rs_ht = &ni->ni_htrates;
+		else
+			rs_ht = NULL;
+		/*
+		 * Only fetches basic rates; fetch 802.11abg and 11n basic
+		 * rates
+		 */
+		rtwn_get_rates(sc, &ni->ni_rates, rs_ht, &rates, &htrates,
+		    NULL, 1);
+
+		/*
+		 * We need at least /an/ OFDM and/or MCS rate for HT
+		 * operation, or the MAC will generate MCS7 ACK/Block-ACK
+		 * frames and thus performance will suffer.
+		 */
+		if (ni->ni_flags & IEEE80211_NODE_HT) {
+			htrates |= 0x01; /* MCS0 */
+			rates |= (1 << RTWN_RIDX_OFDM6);
+		}
+
 		basicrates |= rates;
+		basicrates |= (htrates << RTWN_RIDX_HT_MCS_SHIFT);
+
+		/* Filter out undesired high rates */
+		if (ni->ni_chan != IEEE80211_CHAN_ANYC &&
+		    IEEE80211_IS_CHAN_5GHZ(ni->ni_chan))
+			basicrates &= R92C_RRSR_RATE_MASK_5GHZ;
+		else
+			basicrates &= R92C_RRSR_RATE_MASK_2GHZ;
+
 		ieee80211_free_node(ni);
 	}
+
 
 	if (basicrates == 0)
 		return;
 
-	/* XXX initial RTS rate? */
+	/* XXX also set initial RTS rate? */
 	rtwn_set_basicrates(sc, basicrates);
 }
 
