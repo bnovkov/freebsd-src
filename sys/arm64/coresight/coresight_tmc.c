@@ -34,6 +34,8 @@
 #include <sys/rman.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
+#include <sys/mutex.h>
+
 #include <machine/bus.h>
 
 #include <vm/vm.h>

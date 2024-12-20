@@ -35,6 +35,8 @@
 #include <sys/rman.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
+#include <sys/sysctl.h>
+
 #include <machine/bus.h>
 
 #include <arm64/coresight/coresight.h>
