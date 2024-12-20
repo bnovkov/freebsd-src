@@ -6,4 +6,4 @@ nooptions	NFSD
 nooptions	NFSLOCKD
 nooptions	NFS_ROOT
 
-options 	ROOTDEVNAME=\"ufs:/dev/ada0p2\"
+options 	ROOTDEVNAME=\"ufs:/dev/ada0p3\"
