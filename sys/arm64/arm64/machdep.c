@@ -735,8 +735,8 @@ try_load_dtb(caddr_t kmdp)
 	 * In case the device tree blob was not retrieved (from metadata) try
 	 * to use the statically embedded one.
 	 */
-	if (dtbp == 0)
-		dtbp = (vm_offset_t)&fdt_static_dtb;
+	//if (dtbp == 0)
+	dtbp = (vm_offset_t)&fdt_static_dtb;
 #endif
 
 	if (dtbp == (vm_offset_t)NULL) {
