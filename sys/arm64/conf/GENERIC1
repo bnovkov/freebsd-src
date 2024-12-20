@@ -22,8 +22,12 @@ ident		GENERIC
 
 # makeoptions	NO_MODULES
 
+# FDT support needed for coresight
 options		FDT
-device		acpi
+options		FDT_DTB_STATIC
+makeoptions	FDT_DTS_FILE=arm/morello-soc.dts
+
+#device		acpi
 
 device		uart
 device		pl011
