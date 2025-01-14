@@ -533,6 +533,7 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 	uint32_t nrec;
 	uint32_t nlibs;
 	int sockpair[NSOCKPAIRFD];
+	int timeout;
 	int error;
 
 	nlibs = 0;
@@ -598,14 +599,17 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 	 * Also receive any records about threads that were created in the
 	 * meantime.
 	 */
+	timeout = 10;
 	tot_rec = 0;
 	do {
 		error = hwt_get_records(tc, &nrec, 0);
-		if (error != 0 || nrec == 0)
+		if (error != 0)
 			break;
+		if (nrec == 0)
+			timeout--;
 		tot_rec += nrec;
 		hwt_sleep(10);
-	} while (1);
+	} while (timeout);
 
 	if (tot_rec < nlibs) {
 		errx(EX_DATAERR,
