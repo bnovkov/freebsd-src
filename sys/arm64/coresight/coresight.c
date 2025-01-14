@@ -72,6 +72,9 @@ static struct hwt_backend backend = {
 };
 static struct coresight_pipeline cs_pipeline[MAXCPU];
 
+/* Coresight could not trace different contexts simultaneously. */
+static int init_counter;
+
 /*
  * Example pipeline (SoC-dependent).
  * https://people.freebsd.org/~br/coresight_diagram.png
@@ -185,6 +188,11 @@ static int
 coresight_backend_init(struct hwt_context *ctx)
 {
 	int error;
+	int count;
+
+	count = atomic_swap_32(&init_counter, 1);
+	if (count)
+		return (-1);
 
 	if (ctx->mode == HWT_MODE_THREAD)
 		error = coresight_backend_init_thread(ctx);
@@ -194,11 +202,18 @@ coresight_backend_init(struct hwt_context *ctx)
 	return (error);
 }
 
-static void
+static int
 coresight_backend_deinit(struct hwt_context *ctx)
 {
 	struct coresight_pipeline *pipeline;
 	int cpu_id;
+	int count;
+
+	count = atomic_swap_32(&init_counter, 0);
+	if (count == 0) {
+		/* Not inited? */
+		return (-1);
+	}
 
 	for (cpu_id = 0; cpu_id < mp_ncpus; cpu_id++) {
 		pipeline = &cs_pipeline[cpu_id];
@@ -213,6 +228,8 @@ coresight_backend_deinit(struct hwt_context *ctx)
 		pipeline = &cs_pipeline[cpu_id];
 		coresight_deinit_pipeline(pipeline);
 	}
+
+	return (0);
 }
 
 static int
@@ -237,7 +254,7 @@ coresight_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 	return (error);
 }
 
-static void
+static int
 coresight_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
 	struct coresight_pipeline *pipeline;
@@ -245,9 +262,11 @@ coresight_backend_enable(struct hwt_context *ctx, int cpu_id)
 	pipeline = &cs_pipeline[cpu_id];
 
 	coresight_enable(pipeline);
+
+	return (0);
 }
 
-static void
+static int
 coresight_backend_disable(struct hwt_context *ctx, int cpu_id)
 {
 	struct coresight_pipeline *pipeline;
@@ -255,6 +274,8 @@ coresight_backend_disable(struct hwt_context *ctx, int cpu_id)
 	pipeline = &cs_pipeline[cpu_id];
 
 	coresight_disable(pipeline);
+
+	return (0);
 }
 
 static int

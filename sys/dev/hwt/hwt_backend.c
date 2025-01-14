@@ -103,22 +103,28 @@ hwt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	return (error);
 }
 
-void
+int
 hwt_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
+	int error;
 
 	dprintf("%s\n", __func__);
 
-	ctx->hwt_backend->ops->hwt_backend_enable(ctx, cpu_id);
+	error = ctx->hwt_backend->ops->hwt_backend_enable(ctx, cpu_id);
+
+	return (error);
 }
 
-void
+int
 hwt_backend_disable(struct hwt_context *ctx, int cpu_id)
 {
+	int error;
 
 	dprintf("%s\n", __func__);
 
-	ctx->hwt_backend->ops->hwt_backend_disable(ctx, cpu_id);
+	error = ctx->hwt_backend->ops->hwt_backend_disable(ctx, cpu_id);
+
+	return (error);
 }
 
 void

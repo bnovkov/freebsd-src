@@ -215,7 +215,7 @@ static void hex_dump(uint8_t *buf, size_t len)
 }
 #endif
 
-static void
+static int
 spe_backend_deinit(struct hwt_context *ctx)
 {
 #ifdef ARM_SPE_DEBUG
@@ -235,6 +235,8 @@ spe_backend_deinit(struct hwt_context *ctx)
 	}
 
 	free(spe_info, M_ARM_SPE);
+
+	return (0);
 }
 
 static uint64_t

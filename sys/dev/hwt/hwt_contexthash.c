@@ -74,7 +74,7 @@ static LIST_HEAD(hwt_contexthash, hwt_context)	*hwt_contexthash;
 
 /*
  * To use by hwt_switch_in/out() and hwt_record() only.
- * This function returns mtx locked.
+ * This function returns with refcnt acquired.
  */
 struct hwt_context *
 hwt_contexthash_lookup(struct proc *p)

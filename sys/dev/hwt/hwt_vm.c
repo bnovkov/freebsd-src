@@ -208,24 +208,36 @@ hwt_vm_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 	return (0);
 }
 
-static void
+static int
 hwt_vm_start_cpu_mode(struct hwt_context *ctx)
 {
+	cpuset_t enable_cpus;
 	int cpu_id;
+	int error;
+
+	CPU_ZERO(&enable_cpus);
 
 	CPU_FOREACH_ISSET(cpu_id, &ctx->cpu_map) {
 		/* Ensure CPU is not halted. */
 		if (CPU_ISSET(cpu_id, &hlt_cpus_mask))
-			return;
+			continue;
 
-		hwt_backend_configure(ctx, cpu_id, cpu_id);
-		if (ctx->hwt_backend->ops->hwt_backend_enable_smp == NULL)
-			hwt_backend_enable(ctx, cpu_id);
+		error = hwt_backend_configure(ctx, cpu_id, cpu_id);
+		if (error)
+			return (error);
+
+		CPU_SET_ATOMIC(cpu_id, &enable_cpus);
 	}
 
-	/* Some backends require enabling all CPUs at once. */
-	if (ctx->hwt_backend->ops->hwt_backend_enable_smp != NULL)
+	if (ctx->hwt_backend->ops->hwt_backend_enable_smp == NULL) {
+		CPU_FOREACH_ISSET(cpu_id, &enable_cpus)
+			hwt_backend_enable(ctx, cpu_id);
+	} else {
+		/* Some backends require enabling all CPUs at once. */
 		hwt_backend_enable_smp(ctx);
+	}
+
+	return (0);
 }
 
 static int
@@ -266,6 +278,17 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case HWT_IOC_START:
 		dprintf("%s: start tracing\n", __func__);
 
+		if (ctx->mode == HWT_MODE_CPU) {
+			error = hwt_vm_start_cpu_mode(ctx);
+			if (error)
+				return (error);
+		} else {
+			/*
+			 * Tracing backend will be configured and enabled
+			 * during hook invocation. See hwt_hook.c.
+			 */
+		}
+
 		HWT_CTX_LOCK(ctx);
 		if (ctx->state == CTX_STATE_RUNNING) {
 			/* Already running ? */
@@ -274,15 +297,6 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		}
 		ctx->state = CTX_STATE_RUNNING;
 		HWT_CTX_UNLOCK(ctx);
-
-		if (ctx->mode == HWT_MODE_CPU)
-			hwt_vm_start_cpu_mode(ctx);
-		else {
-			/*
-			 * Tracing backend will be configured and enabled
-			 * during hook invocation. See hwt_hook.c.
-			 */
-		}
 
 		break;
 
