@@ -278,17 +278,6 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case HWT_IOC_START:
 		dprintf("%s: start tracing\n", __func__);
 
-		if (ctx->mode == HWT_MODE_CPU) {
-			error = hwt_vm_start_cpu_mode(ctx);
-			if (error)
-				return (error);
-		} else {
-			/*
-			 * Tracing backend will be configured and enabled
-			 * during hook invocation. See hwt_hook.c.
-			 */
-		}
-
 		HWT_CTX_LOCK(ctx);
 		if (ctx->state == CTX_STATE_RUNNING) {
 			/* Already running ? */
@@ -297,6 +286,21 @@ hwt_vm_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		}
 		ctx->state = CTX_STATE_RUNNING;
 		HWT_CTX_UNLOCK(ctx);
+
+		if (ctx->mode == HWT_MODE_CPU) {
+			error = hwt_vm_start_cpu_mode(ctx);
+			if (error) {
+				HWT_CTX_LOCK(ctx);
+				ctx->state = CTX_STATE_STOPPED;
+				HWT_CTX_UNLOCK(ctx);
+				return (error);
+			}
+		} else {
+			/*
+			 * Tracing backend will be configured and enabled
+			 * during hook invocation. See hwt_hook.c.
+			 */
+		}
 
 		break;
 
