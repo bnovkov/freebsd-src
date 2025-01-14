@@ -40,6 +40,7 @@
 #include <sys/mman.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/refcount.h>
 #include <sys/rwlock.h>
 #include <sys/smp.h>
 #include <sys/hwt.h>
@@ -135,7 +136,7 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
 {
 	struct thread **threads, *td1;
 	struct hwt_record_entry *entry;
-	struct hwt_context *ctx;
+	struct hwt_context *ctx, *ctx1;
 	struct hwt_thread *thr;
 	char path[MAXPATHLEN];
 	struct proc *p;
@@ -180,6 +181,15 @@ hwt_ioctl_alloc_mode_thread(struct thread *td, struct hwt_owner *ho,
 		PROC_UNLOCK(p);
 		hwt_ctx_free(ctx);
 		return (error);
+	}
+
+	/* Ensure it is not being traced already. */
+	ctx1 = hwt_contexthash_lookup(p);
+	if (ctx1) {
+		refcount_release(&ctx1->refcnt);
+		PROC_UNLOCK(p);
+		hwt_ctx_free(ctx);
+		return (EEXIST);
 	}
 
 	/* Allocate hwt threads and buffers. */
