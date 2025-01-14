@@ -635,7 +635,7 @@ hwt_coresight_fill_config(struct trace_context *tc, struct etmv4_config *config)
 	if (tc->mode == HWT_MODE_THREAD)
 		excp_level = 0; /* User mode. */
 	else
-		excp_level = 1; /* CPU mode. */
+		excp_level = 2; /* CPU mode. */
 
 	reg = TRCVICTLR_SSSTATUS;
 	reg |= (1 << EVENT_SEL_S);
