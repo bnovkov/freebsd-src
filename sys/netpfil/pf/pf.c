@@ -367,7 +367,9 @@ static u_int16_t	 pf_calc_mss(struct pf_addr *, sa_family_t,
 				int, u_int16_t);
 static int		 pf_check_proto_cksum(struct mbuf *, int, int,
 			    u_int8_t, sa_family_t);
-static int		 pf_walk_option6(struct mbuf *, int, int, uint32_t *,
+static int		 pf_walk_option6(struct pf_pdesc *, struct ip6_hdr *,
+			    int, int, u_short *);
+static int		 pf_walk_header6(struct pf_pdesc *, struct ip6_hdr *,
 			    u_short *);
 static void		 pf_print_state_parts(struct pf_kstate *,
 			    struct pf_state_key *, struct pf_state_key *);
@@ -774,7 +776,7 @@ pf_set_protostate(struct pf_kstate *s, int which, u_int8_t newstate)
 
 #ifdef INET6
 void
-pf_addrcpy(struct pf_addr *dst, struct pf_addr *src, sa_family_t af)
+pf_addrcpy(struct pf_addr *dst, const struct pf_addr *src, sa_family_t af)
 {
 	switch (af) {
 #ifdef INET
@@ -1706,12 +1708,10 @@ pf_state_key_setup(struct pf_pdesc *pd, u_int16_t sport, u_int16_t dport,
 		bzero(&(*nk)->addr[0], sizeof((*nk)->addr[0]));
 		bzero(&(*nk)->addr[1], sizeof((*nk)->addr[1]));
 
-		PF_ACPY(&(*nk)->addr[pd->af == pd->naf ? pd->sidx : pd->didx],
-		    &pd->nsaddr, pd->naf);
-		PF_ACPY(&(*nk)->addr[pd->af == pd->naf ? pd->didx : pd->sidx],
-		    &pd->ndaddr, pd->naf);
-		(*nk)->port[pd->af == pd->naf ? pd->sidx : pd->didx] = pd->nsport;
-		(*nk)->port[pd->af == pd->naf ? pd->didx : pd->sidx] = pd->ndport;
+		PF_ACPY(&(*nk)->addr[pd->didx], &pd->nsaddr, pd->naf);
+		PF_ACPY(&(*nk)->addr[pd->sidx], &pd->ndaddr, pd->naf);
+		(*nk)->port[pd->didx] = pd->nsport;
+		(*nk)->port[pd->sidx] = pd->ndport;
 		switch (pd->proto) {
 		case IPPROTO_ICMP:
 			(*nk)->proto = IPPROTO_ICMPV6;
@@ -4367,8 +4367,8 @@ pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, sa_family_t af,
  * are different.
  */
 int
-pf_match_addr(u_int8_t n, struct pf_addr *a, struct pf_addr *m,
-    struct pf_addr *b, sa_family_t af)
+pf_match_addr(u_int8_t n, const struct pf_addr *a, const struct pf_addr *m,
+    const struct pf_addr *b, sa_family_t af)
 {
 	int	match = 0;
 
@@ -4403,8 +4403,8 @@ pf_match_addr(u_int8_t n, struct pf_addr *a, struct pf_addr *m,
  * Return 1 if b <= a <= e, otherwise return 0.
  */
 int
-pf_match_addr_range(struct pf_addr *b, struct pf_addr *e,
-    struct pf_addr *a, sa_family_t af)
+pf_match_addr_range(const struct pf_addr *b, const struct pf_addr *e,
+    const struct pf_addr *a, sa_family_t af)
 {
 	switch (af) {
 #ifdef INET
@@ -5804,7 +5804,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 				pf_counter_u64_add_protected(&r->bytes[pd->dir == PF_OUT], pd->tot_len);
 				pf_counter_u64_critical_exit();
 				pf_rule_to_actions(r, &pd->act);
-				if (r->naf)
+				if (r->rule_flag & PFRULE_AFTO)
 					pd->naf = r->naf;
 				if (pd->af != pd->naf) {
 					if (pf_get_transaddr_af(r, pd) == -1) {
@@ -5844,7 +5844,7 @@ nextrule:
 
 	/* apply actions for last matching pass/block rule */
 	pf_rule_to_actions(r, &pd->act);
-	if (r->naf)
+	if (r->rule_flag & PFRULE_AFTO)
 		pd->naf = r->naf;
 	if (pd->af != pd->naf) {
 		if (pf_get_transaddr_af(r, pd) == -1) {
@@ -6902,17 +6902,10 @@ pf_test_state_tcp(struct pf_kstate **state, struct pf_pdesc *pd,
 	bzero(&key, sizeof(key));
 	key.af = pd->af;
 	key.proto = IPPROTO_TCP;
-	if (pd->dir == PF_IN)	{	/* wire side, straight */
-		PF_ACPY(&key.addr[0], pd->src, key.af);
-		PF_ACPY(&key.addr[1], pd->dst, key.af);
-		key.port[0] = th->th_sport;
-		key.port[1] = th->th_dport;
-	} else {			/* stack side, reverse */
-		PF_ACPY(&key.addr[1], pd->src, key.af);
-		PF_ACPY(&key.addr[0], pd->dst, key.af);
-		key.port[1] = th->th_sport;
-		key.port[0] = th->th_dport;
-	}
+	PF_ACPY(&key.addr[pd->sidx], pd->src, key.af);
+	PF_ACPY(&key.addr[pd->didx], pd->dst, key.af);
+	key.port[pd->sidx] = th->th_sport;
+	key.port[pd->didx] = th->th_dport;
 
 	STATE_LOOKUP(&key, *state, pd);
 
@@ -7012,17 +7005,10 @@ pf_test_state_udp(struct pf_kstate **state, struct pf_pdesc *pd)
 	bzero(&key, sizeof(key));
 	key.af = pd->af;
 	key.proto = IPPROTO_UDP;
-	if (pd->dir == PF_IN)	{	/* wire side, straight */
-		PF_ACPY(&key.addr[0], pd->src, key.af);
-		PF_ACPY(&key.addr[1], pd->dst, key.af);
-		key.port[0] = uh->uh_sport;
-		key.port[1] = uh->uh_dport;
-	} else {			/* stack side, reverse */
-		PF_ACPY(&key.addr[1], pd->src, key.af);
-		PF_ACPY(&key.addr[0], pd->dst, key.af);
-		key.port[1] = uh->uh_sport;
-		key.port[0] = uh->uh_dport;
-	}
+	PF_ACPY(&key.addr[pd->sidx], pd->src, key.af);
+	PF_ACPY(&key.addr[pd->didx], pd->dst, key.af);
+	key.port[pd->sidx] = uh->uh_sport;
+	key.port[pd->didx] = uh->uh_dport;
 
 	STATE_LOOKUP(&key, *state, pd);
 
@@ -7129,17 +7115,10 @@ pf_test_state_sctp(struct pf_kstate **state, struct pf_pdesc *pd,
 	bzero(&key, sizeof(key));
 	key.af = pd->af;
 	key.proto = IPPROTO_SCTP;
-	if (pd->dir == PF_IN)	{	/* wire side, straight */
-		PF_ACPY(&key.addr[0], pd->src, key.af);
-		PF_ACPY(&key.addr[1], pd->dst, key.af);
-		key.port[0] = sh->src_port;
-		key.port[1] = sh->dest_port;
-	} else {			/* stack side, reverse */
-		PF_ACPY(&key.addr[1], pd->src, key.af);
-		PF_ACPY(&key.addr[0], pd->dst, key.af);
-		key.port[1] = sh->src_port;
-		key.port[0] = sh->dest_port;
-	}
+	PF_ACPY(&key.addr[pd->sidx], pd->src, key.af);
+	PF_ACPY(&key.addr[pd->didx], pd->dst, key.af);
+	key.port[pd->sidx] = sh->src_port;
+	key.port[pd->didx] = sh->dest_port;
 
 	STATE_LOOKUP(&key, *state, pd);
 
@@ -7681,9 +7660,14 @@ pf_icmp_state_lookup(struct pf_state_key_cmp *key, struct pf_pdesc *pd,
 		return (-1);
 
 	/* Is this ICMP message flowing in right direction? */
+	if ((*state)->key[PF_SK_WIRE]->af != (*state)->key[PF_SK_STACK]->af)
+		direction = (pd->af == (*state)->key[PF_SK_WIRE]->af) ?
+		    PF_IN : PF_OUT;
+	else
+		direction = (*state)->direction;
 	if ((*state)->rule->type &&
-	    (((!inner && (*state)->direction == direction) ||
-	    (inner && (*state)->direction != direction)) ?
+	    (((!inner && direction == pd->dir) ||
+	    (inner && direction != pd->dir)) ?
 	    PF_IN : PF_OUT) != icmp_dir) {
 		if (V_pf_status.debug >= PF_DEBUG_MISC) {
 			printf("pf: icmp type %d in wrong direction (%d): ",
@@ -7738,8 +7722,8 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 	if (pf_icmp_mapping(pd, icmptype, &icmp_dir, &multi,
 	    &virtual_id, &virtual_type) == 0) {
 		/*
-		 * ICMP query/reply message not related to a TCP/UDP packet.
-		 * Search for an ICMP state.
+		 * ICMP query/reply message not related to a TCP/UDP/SCTP
+		 * packet. Search for an ICMP state.
 		 */
 		ret = pf_icmp_state_lookup(&key, pd, state, pd->dir,
 		    virtual_id, virtual_type, icmp_dir, &iidx,
@@ -7868,8 +7852,6 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 #endif /* INET */
 #ifdef INET6
 		struct ip6_hdr	h2_6;
-		int		fragoff2, extoff2;
-		u_int32_t	jumbolen;
 #endif /* INET6 */
 		int		ipoff2 = 0;
 
@@ -7922,9 +7904,7 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 				return (PF_DROP);
 			}
 			pd2.off = ipoff2;
-			if (pf_walk_header6(pd->m, &h2_6, &pd2.off, &extoff2,
-				&fragoff2, &pd2.proto, &jumbolen,
-				reason) != PF_PASS)
+			if (pf_walk_header6(&pd2, &h2_6, reason) != PF_PASS)
 				return (PF_DROP);
 
 			pd2.src = (struct pf_addr *)&h2_6.ip6_src;
@@ -8244,6 +8224,139 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 			break;
 		}
 #ifdef INET
+		case IPPROTO_SCTP: {
+			struct sctphdr		sh;
+			struct pf_state_peer	*src;
+			int			 copyback = 0;
+
+			if (! pf_pull_hdr(pd->m, pd2.off, &sh, sizeof(sh), NULL, reason,
+			    pd2.af)) {
+				DPFPRINTF(PF_DEBUG_MISC,
+				    ("pf: ICMP error message too short "
+				    "(sctp)\n"));
+				return (PF_DROP);
+			}
+
+			key.af = pd2.af;
+			key.proto = IPPROTO_SCTP;
+			PF_ACPY(&key.addr[pd2.sidx], pd2.src, key.af);
+			PF_ACPY(&key.addr[pd2.didx], pd2.dst, key.af);
+			key.port[pd2.sidx] = sh.src_port;
+			key.port[pd2.didx] = sh.dest_port;
+
+			STATE_LOOKUP(&key, *state, pd);
+
+			if (pd->dir == (*state)->direction) {
+				if (PF_REVERSED_KEY((*state)->key, pd->af))
+					src = &(*state)->src;
+				else
+					src = &(*state)->dst;
+			} else {
+				if (PF_REVERSED_KEY((*state)->key, pd->af))
+					src = &(*state)->dst;
+				else
+					src = &(*state)->src;
+			}
+
+			if (src->scrub->pfss_v_tag != sh.v_tag) {
+				DPFPRINTF(PF_DEBUG_MISC,
+				    ("pf: ICMP error message has incorrect "
+				    "SCTP v_tag\n"));
+				return (PF_DROP);
+			}
+
+			/* translate source/destination address, if necessary */
+			if ((*state)->key[PF_SK_WIRE] !=
+			    (*state)->key[PF_SK_STACK]) {
+
+				struct pf_state_key	*nk;
+
+				if (PF_REVERSED_KEY((*state)->key, pd->af))
+					nk = (*state)->key[pd->sidx];
+				else
+					nk = (*state)->key[pd->didx];
+
+#if defined(INET) && defined(INET6)
+				int	 afto, sidx, didx;
+
+				afto = pd->af != nk->af;
+				sidx = afto ? pd2.didx : pd2.sidx;
+				didx = afto ? pd2.sidx : pd2.didx;
+
+				if (afto) {
+					if (pf_translate_icmp_af(nk->af,
+					    &pd->hdr.icmp))
+						return (PF_DROP);
+					m_copyback(pd->m, pd->off,
+					    sizeof(struct icmp6_hdr),
+					    (c_caddr_t)&pd->hdr.icmp6);
+					if (pf_change_icmp_af(pd->m, ipoff2, pd,
+					    &pd2, &nk->addr[sidx],
+					    &nk->addr[didx], pd->af,
+					    nk->af))
+						return (PF_DROP);
+					if (nk->af == AF_INET)
+						pd->proto = IPPROTO_ICMP;
+					else
+						pd->proto = IPPROTO_ICMPV6;
+					sh.src_port = nk->port[sidx];
+					sh.dest_port = nk->port[didx];
+					m_copyback(pd2.m, pd2.off, sizeof(sh), (c_caddr_t)&sh);
+					PF_ACPY(pd->src,
+					    &nk->addr[pd2.sidx], nk->af);
+					PF_ACPY(pd->dst,
+					    &nk->addr[pd2.didx], nk->af);
+					pd->naf = nk->af;
+					return (PF_AFRT);
+				}
+#endif
+
+				if (PF_ANEQ(pd2.src,
+				    &nk->addr[pd2.sidx], pd2.af) ||
+				    nk->port[pd2.sidx] != sh.src_port)
+					pf_change_icmp(pd2.src, &sh.src_port,
+					    daddr, &nk->addr[pd2.sidx],
+					    nk->port[pd2.sidx], NULL,
+					    pd2.ip_sum, icmpsum,
+					    pd->ip_sum, 0, pd2.af);
+
+				if (PF_ANEQ(pd2.dst,
+				    &nk->addr[pd2.didx], pd2.af) ||
+				    nk->port[pd2.didx] != sh.dest_port)
+					pf_change_icmp(pd2.dst, &sh.dest_port,
+					    saddr, &nk->addr[pd2.didx],
+					    nk->port[pd2.didx], NULL,
+					    pd2.ip_sum, icmpsum,
+					    pd->ip_sum, 0, pd2.af);
+				copyback = 1;
+			}
+
+			if (copyback) {
+				switch (pd2.af) {
+#ifdef INET
+				case AF_INET:
+					m_copyback(pd->m, pd->off, ICMP_MINLEN,
+					    (caddr_t )&pd->hdr.icmp);
+					m_copyback(pd->m, ipoff2, sizeof(h2),
+					    (caddr_t )&h2);
+					break;
+#endif /* INET */
+#ifdef INET6
+				case AF_INET6:
+					m_copyback(pd->m, pd->off,
+					    sizeof(struct icmp6_hdr),
+					    (caddr_t )&pd->hdr.icmp6);
+					m_copyback(pd->m, ipoff2, sizeof(h2_6),
+					    (caddr_t )&h2_6);
+					break;
+#endif /* INET6 */
+				}
+				m_copyback(pd->m, pd2.off, sizeof(sh), (caddr_t)&sh);
+			}
+
+			return (PF_PASS);
+			break;
+		}
 		case IPPROTO_ICMP: {
 			struct icmp	*iih = &pd2.hdr.icmp;
 
@@ -8534,15 +8647,9 @@ pf_test_state_other(struct pf_kstate **state, struct pf_pdesc *pd)
 	bzero(&key, sizeof(key));
 	key.af = pd->af;
 	key.proto = pd->proto;
-	if (pd->dir == PF_IN)	{
-		PF_ACPY(&key.addr[0], pd->src, key.af);
-		PF_ACPY(&key.addr[1], pd->dst, key.af);
-		key.port[0] = key.port[1] = 0;
-	} else {
-		PF_ACPY(&key.addr[1], pd->src, key.af);
-		PF_ACPY(&key.addr[0], pd->dst, key.af);
-		key.port[1] = key.port[0] = 0;
-	}
+	PF_ACPY(&key.addr[pd->sidx], pd->src, key.af);
+	PF_ACPY(&key.addr[pd->didx], pd->dst, key.af);
+	key.port[0] = key.port[1] = 0;
 
 	STATE_LOOKUP(&key, *state, pd);
 
@@ -9546,16 +9653,15 @@ pf_dummynet_route(struct pf_pdesc *pd, struct pf_kstate *s,
 
 #ifdef INET6
 static int
-pf_walk_option6(struct mbuf *m, int off, int end, uint32_t *jumbolen,
+pf_walk_option6(struct pf_pdesc *pd, struct ip6_hdr *h, int off, int end,
     u_short *reason)
 {
 	struct ip6_opt		 opt;
 	struct ip6_opt_jumbo	 jumbo;
-	struct ip6_hdr		*h = mtod(m, struct ip6_hdr *);
 
 	while (off < end) {
-		if (!pf_pull_hdr(m, off, &opt.ip6o_type, sizeof(opt.ip6o_type),
-			NULL, reason, AF_INET6)) {
+		if (!pf_pull_hdr(pd->m, off, &opt.ip6o_type,
+		    sizeof(opt.ip6o_type), NULL, reason, AF_INET6)) {
 			DPFPRINTF(PF_DEBUG_MISC, ("IPv6 short opt type"));
 			return (PF_DROP);
 		}
@@ -9563,8 +9669,8 @@ pf_walk_option6(struct mbuf *m, int off, int end, uint32_t *jumbolen,
 			off++;
 			continue;
 		}
-		if (!pf_pull_hdr(m, off, &opt, sizeof(opt), NULL, reason,
-			AF_INET6)) {
+		if (!pf_pull_hdr(pd->m, off, &opt, sizeof(opt), NULL,
+		    reason, AF_INET6)) {
 			DPFPRINTF(PF_DEBUG_MISC, ("IPv6 short opt"));
 			return (PF_DROP);
 		}
@@ -9575,7 +9681,7 @@ pf_walk_option6(struct mbuf *m, int off, int end, uint32_t *jumbolen,
 		}
 		switch (opt.ip6o_type) {
 		case IP6OPT_JUMBO:
-			if (*jumbolen != 0) {
+			if (pd->jumbolen != 0) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 multiple jumbo"));
 				REASON_SET(reason, PFRES_IPOPTIONS);
 				return (PF_DROP);
@@ -9585,15 +9691,15 @@ pf_walk_option6(struct mbuf *m, int off, int end, uint32_t *jumbolen,
 				REASON_SET(reason, PFRES_IPOPTIONS);
 				return (PF_DROP);
 			}
-			if (!pf_pull_hdr(m, off, &jumbo, sizeof(jumbo), NULL,
+			if (!pf_pull_hdr(pd->m, off, &jumbo, sizeof(jumbo), NULL,
 				reason, AF_INET6)) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 short jumbo"));
 				return (PF_DROP);
 			}
-			memcpy(jumbolen, jumbo.ip6oj_jumbo_len,
-			    sizeof(*jumbolen));
-			*jumbolen = ntohl(*jumbolen);
-			if (*jumbolen < IPV6_MAXPACKET) {
+			memcpy(&pd->jumbolen, jumbo.ip6oj_jumbo_len,
+			    sizeof(pd->jumbolen));
+			pd->jumbolen = ntohl(pd->jumbolen);
+			if (pd->jumbolen < IPV6_MAXPACKET) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 short jumbolen"));
 				REASON_SET(reason, PFRES_IPOPTIONS);
 				return (PF_DROP);
@@ -9609,43 +9715,43 @@ pf_walk_option6(struct mbuf *m, int off, int end, uint32_t *jumbolen,
 }
 
 int
-pf_walk_header6(struct mbuf *m, struct ip6_hdr *h, int *off, int *extoff,
-    int *fragoff, uint8_t *nxt, uint32_t *jumbolen, u_short *reason)
+pf_walk_header6(struct pf_pdesc *pd, struct ip6_hdr *h, u_short *reason)
 {
 	struct ip6_frag		 frag;
 	struct ip6_ext		 ext;
 	struct ip6_rthdr	 rthdr;
+	uint32_t		 end;
 	int			 rthdr_cnt = 0;
 
-	*off += sizeof(struct ip6_hdr);
-	*extoff = *fragoff = 0;
-	*nxt = h->ip6_nxt;
-	*jumbolen = 0;
+	pd->off += sizeof(struct ip6_hdr);
+	end = pd->off + ntohs(h->ip6_plen);
+	pd->fragoff = pd->extoff = pd->jumbolen = 0;
+	pd->proto = h->ip6_nxt;
 	for (;;) {
-		switch (*nxt) {
+		switch (pd->proto) {
 		case IPPROTO_FRAGMENT:
-			if (*fragoff != 0) {
+			if (pd->fragoff != 0) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 multiple fragment"));
 				REASON_SET(reason, PFRES_FRAG);
 				return (PF_DROP);
 			}
 			/* jumbo payload packets cannot be fragmented */
-			if (*jumbolen != 0) {
+			if (pd->jumbolen != 0) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 fragmented jumbo"));
 				REASON_SET(reason, PFRES_FRAG);
 				return (PF_DROP);
 			}
-			if (!pf_pull_hdr(m, *off, &frag, sizeof(frag), NULL,
-				reason, AF_INET6)) {
+			if (!pf_pull_hdr(pd->m, pd->off, &frag, sizeof(frag),
+			    NULL, reason, AF_INET6)) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 short fragment"));
 				return (PF_DROP);
 			}
-			*fragoff = *off;
+			pd->fragoff = pd->off;
 			/* stop walking over non initial fragments */
-			if ((frag.ip6f_offlg & IP6F_OFF_MASK) != 0)
+			if (htons((frag.ip6f_offlg & IP6F_OFF_MASK)) != 0)
 				return (PF_PASS);
-			*off += sizeof(frag);
-			*nxt = frag.ip6f_nxt;
+			pd->off += sizeof(frag);
+			pd->proto = frag.ip6f_nxt;
 			break;
 		case IPPROTO_ROUTING:
 			if (rthdr_cnt++) {
@@ -9653,14 +9759,14 @@ pf_walk_header6(struct mbuf *m, struct ip6_hdr *h, int *off, int *extoff,
 				REASON_SET(reason, PFRES_IPOPTIONS);
 				return (PF_DROP);
 			}
-			if (!pf_pull_hdr(m, *off, &rthdr, sizeof(rthdr), NULL,
-				reason, AF_INET6)) {
-				/* fragments may be short */
-				if (*fragoff != 0) {
-					*off = *fragoff;
-					*nxt = IPPROTO_FRAGMENT;
-					return (PF_PASS);
-				}
+			/* fragments may be short */
+			if (pd->fragoff != 0 && end < pd->off + sizeof(rthdr)) {
+				pd->off = pd->fragoff;
+				pd->proto = IPPROTO_FRAGMENT;
+				return (PF_PASS);
+			}
+			if (!pf_pull_hdr(pd->m, pd->off, &rthdr, sizeof(rthdr),
+			    NULL, reason, AF_INET6)) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 short rthdr"));
 				return (PF_DROP);
 			}
@@ -9673,50 +9779,51 @@ pf_walk_header6(struct mbuf *m, struct ip6_hdr *h, int *off, int *extoff,
 		case IPPROTO_AH:
 		case IPPROTO_HOPOPTS:
 		case IPPROTO_DSTOPTS:
-			if (!pf_pull_hdr(m, *off, &ext, sizeof(ext), NULL,
-				reason, AF_INET6)) {
-				/* fragments may be short */
-				if (*fragoff != 0) {
-					*off = *fragoff;
-					*nxt = IPPROTO_FRAGMENT;
-					return (PF_PASS);
-				}
+			if (!pf_pull_hdr(pd->m, pd->off, &ext, sizeof(ext),
+			    NULL, reason, AF_INET6)) {
 				DPFPRINTF(PF_DEBUG_MISC, ("IPv6 short exthdr"));
 				return (PF_DROP);
 			}
+			/* fragments may be short */
+			if (pd->fragoff != 0 && end < pd->off + sizeof(ext)) {
+				pd->off = pd->fragoff;
+				pd->proto = IPPROTO_FRAGMENT;
+				return (PF_PASS);
+			}
 			/* reassembly needs the ext header before the frag */
-			if (*fragoff == 0)
-				*extoff = *off;
-			if (*nxt == IPPROTO_HOPOPTS && *fragoff == 0) {
-				if (pf_walk_option6(m, *off + sizeof(ext),
-					*off + (ext.ip6e_len + 1) * 8, jumbolen,
-					reason) != PF_PASS)
+			if (pd->fragoff == 0)
+				pd->extoff = pd->off;
+			if (pd->proto == IPPROTO_HOPOPTS && pd->fragoff == 0) {
+				if (pf_walk_option6(pd, h,
+				    pd->off + sizeof(ext),
+				    pd->off + (ext.ip6e_len + 1) * 8, reason)
+				    != PF_PASS)
 					return (PF_DROP);
-				if (ntohs(h->ip6_plen) == 0 && *jumbolen != 0) {
+				if (ntohs(h->ip6_plen) == 0 && pd->jumbolen != 0) {
 					DPFPRINTF(PF_DEBUG_MISC,
 					    ("IPv6 missing jumbo"));
 					REASON_SET(reason, PFRES_IPOPTIONS);
 					return (PF_DROP);
 				}
 			}
-			if (*nxt == IPPROTO_AH)
-				*off += (ext.ip6e_len + 2) * 4;
+			if (pd->proto == IPPROTO_AH)
+				pd->off += (ext.ip6e_len + 2) * 4;
 			else
-				*off += (ext.ip6e_len + 1) * 8;
-			*nxt = ext.ip6e_nxt;
+				pd->off += (ext.ip6e_len + 1) * 8;
+			pd->proto = ext.ip6e_nxt;
 			break;
 		case IPPROTO_TCP:
 		case IPPROTO_UDP:
 		case IPPROTO_SCTP:
 		case IPPROTO_ICMPV6:
 			/* fragments may be short, ignore inner header then */
-			if (*fragoff != 0 && ntohs(h->ip6_plen) < *off +
-			    (*nxt == IPPROTO_TCP ? sizeof(struct tcphdr) :
-			    *nxt == IPPROTO_UDP ? sizeof(struct udphdr) :
-			    *nxt == IPPROTO_SCTP ? sizeof(struct sctphdr) :
+			if (pd->fragoff != 0 && end < pd->off +
+			    (pd->proto == IPPROTO_TCP ? sizeof(struct tcphdr) :
+			    pd->proto == IPPROTO_UDP ? sizeof(struct udphdr) :
+			    pd->proto == IPPROTO_SCTP ? sizeof(struct sctphdr) :
 			    sizeof(struct icmp6_hdr))) {
-				*off = *fragoff;
-				*nxt = IPPROTO_FRAGMENT;
+				pd->off = pd->fragoff;
+				pd->proto = IPPROTO_FRAGMENT;
 			}
 			/* FALLTHROUGH */
 		default:
@@ -9804,9 +9911,6 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 #ifdef INET6
 	case AF_INET6: {
 		struct ip6_hdr *h;
-		int fragoff;
-		uint32_t jumbolen;
-		uint8_t nxt;
 
 		if (__predict_false((*m0)->m_len < sizeof(struct ip6_hdr)) &&
 		    (pd->m = *m0 = m_pullup(*m0, sizeof(struct ip6_hdr))) == NULL) {
@@ -9820,8 +9924,7 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 
 		h = mtod(pd->m, struct ip6_hdr *);
 		pd->off = 0;
-		if (pf_walk_header6(pd->m, h, &pd->off, &pd->extoff, &fragoff, &nxt,
-		    &jumbolen, reason) != PF_PASS) {
+		if (pf_walk_header6(pd, h, reason) != PF_PASS) {
 			*action = PF_DROP;
 			return (-1);
 		}
@@ -9836,7 +9939,7 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		pd->virtual_proto = pd->proto = h->ip6_nxt;
 		pd->act.rtableid = -1;
 
-		if (fragoff != 0)
+		if (pd->fragoff != 0)
 			pd->virtual_proto = PF_VPROTO_FRAGMENT;
 
 		/*
@@ -9849,7 +9952,7 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		}
 
 		/* We do IP header normalization and packet reassembly here */
-		if (pf_normalize_ip6(m0, fragoff, reason, pd) !=
+		if (pf_normalize_ip6(m0, pd->fragoff, reason, pd) !=
 		    PF_PASS) {
 			*action = PF_DROP;
 			return (-1);
@@ -9866,20 +9969,23 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		pd->src = (struct pf_addr *)&h->ip6_src;
 		pd->dst = (struct pf_addr *)&h->ip6_dst;
 
-		/*
-		 * Reassembly may have changed the next protocol from fragment
-		 * to something else, so update.
-		 */
-		pd->virtual_proto = pd->proto = h->ip6_nxt;
 		pd->off = 0;
 
-		if (pf_walk_header6(pd->m, h, &pd->off, &pd->extoff, &fragoff, &nxt,
-			&jumbolen, reason) != PF_PASS) {
+		if (pf_walk_header6(pd, h, reason) != PF_PASS) {
 			*action = PF_DROP;
 			return (-1);
 		}
 
-		if (fragoff != 0)
+		if (m_tag_find(pd->m, PACKET_TAG_PF_REASSEMBLED, NULL) != NULL) {
+			/*
+			 * Reassembly may have changed the next protocol from
+			 * fragment to something else, so update.
+			 */
+			pd->virtual_proto = pd->proto;
+			MPASS(pd->fragoff == 0);
+		}
+
+		if (pd->fragoff != 0)
 			pd->virtual_proto = PF_VPROTO_FRAGMENT;
 
 		break;
@@ -10308,28 +10414,16 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		break;
 	}
 
-	case IPPROTO_ICMP: {
-		if (af != AF_INET) {
+	case IPPROTO_ICMP:
+	case IPPROTO_ICMPV6: {
+		if (pd.virtual_proto == IPPROTO_ICMP && af != AF_INET) {
 			action = PF_DROP;
 			REASON_SET(&reason, PFRES_NORM);
 			DPFPRINTF(PF_DEBUG_MISC,
 			    ("dropping IPv6 packet with ICMPv4 payload"));
 			goto done;
 		}
-		action = pf_test_state_icmp(&s, &pd, &reason);
-		if (action == PF_PASS || action == PF_AFRT) {
-			if (V_pfsync_update_state_ptr != NULL)
-				V_pfsync_update_state_ptr(s);
-			r = s->rule;
-			a = s->anchor;
-		} else if (s == NULL)
-			action = pf_test_rule(&r, &s, &pd,
-			    &a, &ruleset, inp);
-		break;
-	}
-
-	case IPPROTO_ICMPV6: {
-		if (af != AF_INET6) {
+		if (pd.virtual_proto == IPPROTO_ICMPV6 && af != AF_INET6) {
 			action = PF_DROP;
 			REASON_SET(&reason, PFRES_NORM);
 			DPFPRINTF(PF_DEBUG_MISC,

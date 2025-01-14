@@ -1626,6 +1626,9 @@ struct pf_pdesc {
 	u_int32_t	 off;		/* protocol header offset */
 	u_int32_t	 hdrlen;	/* protocol header length */
 	u_int32_t	 p_len;		/* total length of protocol payload */
+	u_int32_t	 extoff;	/* extentsion header offset */
+	u_int32_t	 fragoff;	/* fragment header offset */
+	u_int32_t	 jumbolen;	/* length from v6 jumbo header */
 	u_int32_t	 badopts;	/* v4 options or v6 routing headers */
 
 	u_int16_t	*ip_sum;
@@ -1634,7 +1637,6 @@ struct pf_pdesc {
 #define PFDESC_TCP_NORM	0x0001		/* TCP shall be statefully scrubbed */
 	u_int16_t	 virtual_proto;
 #define PF_VPROTO_FRAGMENT	256
-	int		 extoff;
 	sa_family_t	 af;
 	sa_family_t	 naf;
 	u_int8_t	 proto;
@@ -2376,7 +2378,7 @@ VNET_DECLARE(struct ifnet *,		 sync_ifp);
 #define	V_sync_ifp		 	 VNET(sync_ifp);
 VNET_DECLARE(struct pf_krule,		 pf_default_rule);
 #define	V_pf_default_rule		  VNET(pf_default_rule)
-extern void			 pf_addrcpy(struct pf_addr *, struct pf_addr *,
+extern void			 pf_addrcpy(struct pf_addr *, const struct pf_addr *,
 				    sa_family_t);
 void				pf_free_rule(struct pf_krule *);
 
@@ -2391,8 +2393,6 @@ int	pf_normalize_ip(struct mbuf **, u_short *, struct pf_pdesc *);
 #endif /* INET */
 
 #ifdef INET6
-int	pf_walk_header6(struct mbuf *, struct ip6_hdr *, int *, int *, int *,
-	    uint8_t *, uint32_t *, u_short *);
 int	pf_normalize_ip6(struct mbuf **, int, u_short *, struct pf_pdesc *);
 void	pf_poolmask(struct pf_addr *, struct pf_addr*,
 	    struct pf_addr *, struct pf_addr *, sa_family_t);
@@ -2417,10 +2417,10 @@ void	pf_patch_16_unaligned(struct mbuf *, u_int16_t *, void *, u_int16_t,
 void	pf_patch_32_unaligned(struct mbuf *, u_int16_t *, void *, u_int32_t,
     bool, u_int8_t);
 void	pf_send_deferred_syn(struct pf_kstate *);
-int	pf_match_addr(u_int8_t, struct pf_addr *, struct pf_addr *,
-	    struct pf_addr *, sa_family_t);
-int	pf_match_addr_range(struct pf_addr *, struct pf_addr *,
-	    struct pf_addr *, sa_family_t);
+int	pf_match_addr(u_int8_t, const struct pf_addr *,
+	    const struct pf_addr *, const struct pf_addr *, sa_family_t);
+int	pf_match_addr_range(const struct pf_addr *, const struct pf_addr *,
+	    const struct pf_addr *, sa_family_t);
 int	pf_match_port(u_int8_t, u_int16_t, u_int16_t, u_int16_t);
 
 void	pf_normalize_init(void);
