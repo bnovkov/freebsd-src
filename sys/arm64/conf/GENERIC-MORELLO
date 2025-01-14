@@ -7,3 +7,5 @@ nooptions	NFSLOCKD
 nooptions	NFS_ROOT
 
 options 	ROOTDEVNAME=\"ufs:/dev/ada0p3\"
+
+makeoptions	MODULES_OVERRIDE="hwt coresight"
