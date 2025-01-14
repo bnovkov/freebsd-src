@@ -232,11 +232,10 @@ coresight_backend_deinit(struct hwt_context *ctx)
 	return (0);
 }
 
-static int
+static void
 coresight_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 {
 	struct coresight_pipeline *pipeline;
-	int error;
 
 	pipeline = &cs_pipeline[cpu_id];
 
@@ -249,12 +248,10 @@ coresight_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 	 */
 	pipeline->etm.trace_id = session_id + 1;
 
-	error = coresight_configure(pipeline, ctx);
-
-	return (error);
+	coresight_configure(pipeline, ctx);
 }
 
-static int
+static void
 coresight_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
 	struct coresight_pipeline *pipeline;
@@ -262,11 +259,9 @@ coresight_backend_enable(struct hwt_context *ctx, int cpu_id)
 	pipeline = &cs_pipeline[cpu_id];
 
 	coresight_enable(pipeline);
-
-	return (0);
 }
 
-static int
+static void
 coresight_backend_disable(struct hwt_context *ctx, int cpu_id)
 {
 	struct coresight_pipeline *pipeline;
@@ -274,8 +269,6 @@ coresight_backend_disable(struct hwt_context *ctx, int cpu_id)
 	pipeline = &cs_pipeline[cpu_id];
 
 	coresight_disable(pipeline);
-
-	return (0);
 }
 
 static int
