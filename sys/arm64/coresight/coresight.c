@@ -232,7 +232,7 @@ coresight_backend_deinit(struct hwt_context *ctx)
 	return (0);
 }
 
-static void
+static int
 coresight_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 {
 	struct coresight_pipeline *pipeline;
@@ -249,6 +249,8 @@ coresight_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 	pipeline->etm.trace_id = session_id + 1;
 
 	coresight_configure(pipeline, ctx);
+
+	return (0);
 }
 
 static void

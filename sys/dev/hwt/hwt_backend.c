@@ -90,13 +90,17 @@ hwt_backend_deinit(struct hwt_context *ctx)
 	ctx->hwt_backend->ops->hwt_backend_deinit(ctx);
 }
 
-void
+int
 hwt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 {
+	int error;
 
 	dprintf("%s\n", __func__);
 
-	ctx->hwt_backend->ops->hwt_backend_configure(ctx, cpu_id, thread_id);
+	error = ctx->hwt_backend->ops->hwt_backend_configure(ctx, cpu_id,
+	    thread_id);
+
+	return (error);
 }
 
 void
@@ -194,7 +198,7 @@ hwt_backend_register(struct hwt_backend *backend)
 	HWT_BACKEND_LOCK();
 	LIST_INSERT_HEAD(&hwt_backends, entry, next);
 	HWT_BACKEND_UNLOCK();
- 
+
 	return (0);
 }
 
