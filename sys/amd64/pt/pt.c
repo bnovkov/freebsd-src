@@ -172,6 +172,7 @@ static struct pt_cpu_info {
 } pt_info  __read_mostly;
 
 static bool initialized = false;
+static int cpu_mode_ctr = 0;
 
 static __inline enum pt_cpu_state
 pt_cpu_get_state(int cpu_id)
@@ -539,23 +540,30 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 /*
  * hwt backend trace start operation. CPU affine.
  */
-static void
+static int
 pt_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
+	if (ctx->mode == HWT_MODE_CPU)
+		return (-1);
 
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to start PT on another cpu", __func__));
 	pt_cpu_start(NULL);
 	CPU_SET(cpu_id, &ctx->cpu_map);
+
+	return (0);
 }
 
 /*
  * hwt backend trace stop operation. CPU affine.
  */
-static void
+static int
 pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 {
 	struct pt_cpu *cpu;
+
+	if (ctx->mode == HWT_MODE_CPU)
+		return (-1);
 
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to disable PT on another cpu", __func__));
@@ -563,34 +571,48 @@ pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 	CPU_CLR(cpu_id, &ctx->cpu_map);
 	cpu = &pt_pcpu[cpu_id];
 	cpu->ctx = NULL;
+
+	return (0);
 }
 
 /*
  * hwt backend trace start operation for remote CPUs.
  */
-static void
+static int
 pt_backend_enable_smp(struct hwt_context *ctx)
 {
 
 	dprintf("%s\n", __func__);
+	if (ctx->mode == HWT_MODE_CPU &&
+	    atomic_swap_32(&cpu_mode_ctr, 1) != 0)
+		return (-1);
+
 	KASSERT(ctx->mode == HWT_MODE_CPU,
 	    ("%s: should only be used for CPU mode", __func__));
 	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_start, NULL, NULL);
+
+	return (0);
 }
 
 /*
  * hwt backend trace stop operation for remote CPUs.
  */
-static void
+static int
 pt_backend_disable_smp(struct hwt_context *ctx)
 {
 
 	dprintf("%s\n", __func__);
+	if (ctx->mode == HWT_MODE_CPU &&
+	    atomic_swap_32(&cpu_mode_ctr, 0) == 0)
+		return (-1);
+
 	if (CPU_EMPTY(&ctx->cpu_map)) {
 		dprintf("%s: empty cpu map\n", __func__);
-		return;
+		return (-1);
 	}
 	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_stop, NULL, NULL);
+
+	return (0);
 }
 
 /*
@@ -624,7 +646,7 @@ pt_backend_init(struct hwt_context *ctx)
  * Removes the ToPA interrupt handler, stops tracing on all active CPUs,
  * and releases all previously allocated ToPA metadata.
  */
-static void
+static int
 pt_backend_deinit(struct hwt_context *ctx)
 {
 	struct pt_ctx *pt_ctx;
@@ -658,6 +680,8 @@ pt_backend_deinit(struct hwt_context *ctx)
 			memset(&pt_pcpu[cpu_id], 0, sizeof(struct pt_cpu));
 		}
 	}
+
+	return (0);
 }
 
 /*
