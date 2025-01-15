@@ -313,6 +313,8 @@ pt_cpu_stop(void *dummy)
 	pt_cpu_set_state(curcpu, PT_STOPPED);
 	pt_cpu_toggle_local(cpu->ctx->save_area, false);
 	pt_update_buffer(&ctx->buf);
+	taskqueue_enqueue_flags(taskqueue_pt, &ctx->task,
+	    TASKQUEUE_FAIL_IF_PENDING);
 }
 
 /*
@@ -921,13 +923,6 @@ pt_supported(void)
 		printf("pt: CPU does not support managing PT state using XSAVE\n");
 		return (false);
 	}
-/*
-	cpuid_count(0xd, 0x0, cp);
-	if ((cp[0] & PT_XSAVE_MASK) != PT_XSAVE_MASK) {
-		printf("pt: CPU does not support X87 or SSE: %x", cp[0]);
-		return (false);
-	}
-*/
 	if (!xsave_extension_supported(CPUID_EXTSTATE_XSAVEC)) {
 		printf("pt: XSAVE compaction is not supported\n");
 		return (false);
@@ -949,9 +944,9 @@ pt_supported(void)
 	}
 
 	pt_info.xstate_hdr_offset = xsave_area_hdr_offset();
-	pt_info.xsave_area_size = xsave_area_size(PT_XSTATE_BV, true);
+	pt_info.xsave_area_size = xsave_area_size(PT_XSTATE_BV, true, true);
 	pt_info.pt_xsave_offset = xsave_area_offset(PT_XSTATE_BV,
-	    XFEATURE_ENABLED_PT, true);
+	    XFEATURE_ENABLED_PT, true, true);
 
 	return (true);
 }
