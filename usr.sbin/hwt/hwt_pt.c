@@ -626,51 +626,8 @@ hwt_pt_process_buffer(struct trace_context *tc, int id, int curpage,
 	return (0);
 }
 
-/*
- * Fetch last valid trace offset for 'dev_fd'.
- */
-static int
-pt_get_offs(int dev_fd, uint64_t *offs)
-{
-	struct hwt_bufptr_get bget;
-	vm_offset_t offset;
-	int curpage;
-	int error;
-
-	bget.ident = &curpage;
-	bget.offset = &offset;
-	error = ioctl(dev_fd, HWT_IOC_BUFPTR_GET, &bget);
-	if (error)
-		return (error);
-	*offs = curpage * PAGE_SIZE + offset;
-
-	return (0);
-}
-
-static void
-pt_ctx_shutdown_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
-    void *arg __unused)
-{
-	int error;
-	uint64_t ts;
-
-	error = pt_get_offs(dctx->dev_fd, &ts);
-	if (error)
-		errx(EXIT_FAILURE, "pt_get_offs");
-	error = pt_process_data(tc, dctx, ts);
-	if (error)
-		errx(EXIT_FAILURE, "pt_process_data");
-}
-
-static void
-hwt_pt_shutdown(struct trace_context *tc)
-{
-	pt_foreach_ctx(tc, pt_ctx_shutdown_cb, NULL);
-}
-
 struct trace_dev_methods pt_methods = {
 	.init = hwt_pt_init,
-	.shutdown = hwt_pt_shutdown,
 	.mmap = hwt_pt_mmap,
 	.process_buffer = hwt_pt_process_buffer,
 	.set_config = hwt_pt_set_config,
