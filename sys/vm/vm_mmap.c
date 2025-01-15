@@ -597,7 +597,7 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 
 #ifdef HWT_HOOKS
 	struct hwt_record_entry ent;
-	if (rv == KERN_SUCCESS) {
+	if (HWT_HOOK_INSTALLED && rv == KERN_SUCCESS) {
 		ent.addr = (uintptr_t) addr;
 		ent.fullpath = NULL;
 		ent.record_type = HWT_RECORD_MUNMAP;

@@ -46,6 +46,8 @@ do {							\
 		(hwt_hook)((td), (func), (arg));	\
 } while (0)
 
+#define	HWT_HOOK_INSTALLED	(hwt_hook != NULL)
+
 extern void (*hwt_hook)(struct thread *td, int func, void *arg);
 
 void hwt_hook_load(void);

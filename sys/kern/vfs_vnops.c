@@ -2958,7 +2958,8 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	char *fullpath;
 	char *freepath;
 
-	if ((prot & VM_PROT_EXECUTE) != 0 && error == 0) {
+	if (HWT_HOOK_INSTALLED && (prot & VM_PROT_EXECUTE) != 0 &&
+	    error == 0) {
 		if (vn_fullpath(vp, &fullpath, &freepath) == 0) {
 			ent.fullpath = fullpath;
 			ent.addr = (uintptr_t) *addr;
