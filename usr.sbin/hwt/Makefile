@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG_CXX=	hwt
 MAN=
 
