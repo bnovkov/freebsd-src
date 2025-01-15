@@ -30,14 +30,11 @@
 
 #include <sys/param.h>
 #include <sys/bitstring.h>
-#include <sys/eventhandler.h>
-#include <sys/ioccom.h>
 #include <sys/conf.h>
 #include <sys/proc.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/mman.h>
-#include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/refcount.h>
 #include <sys/rwlock.h>
