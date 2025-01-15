@@ -66,7 +66,7 @@ struct pt_dec_ctx {
 	uint64_t ts;
 	uint64_t curip;
 	void *tracebuf;
-	struct pt_block_decoder *dec;
+	struct pt_insn_decoder *dec;
 
 	int id;
 	RB_ENTRY(pt_dec_ctx) entry;
@@ -163,7 +163,7 @@ pt_cpu_ctx_init_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		config.begin = dctx->tracebuf;
 		config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
 
-		dctx->dec = pt_blk_alloc_decoder(&config);
+		dctx->dec = pt_insn_alloc_decoder(&config);
 		if (dctx->dec == NULL) {
 			printf("%s: failed to allocate PT decoder for CPU %d\n",
 			    __func__, cpu_id);
@@ -186,7 +186,7 @@ pt_update_image_cb(struct trace_context *tc __unused, struct pt_dec_ctx *dctx,
 	struct pt_image *image;
 
 	isid = *(int *)arg;
-	image = pt_blk_get_image(dctx->dec);
+	image = pt_insn_get_image(dctx->dec);
 	error = pt_image_add_cached(image, pt_iscache, isid, NULL);
 	if (error)
 		errx(EXIT_FAILURE,
@@ -316,8 +316,8 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 			 */
 			if (!RB_EMPTY(&threads)) {
 				srcctx = RB_ROOT(&threads);
-				srcimg = pt_blk_get_image(srcctx->dec);
-				dstimg = pt_blk_get_image(dctx->dec);
+				srcimg = pt_insn_get_image(srcctx->dec);
+				dstimg = pt_insn_get_image(dctx->dec);
 				pt_image_copy(dstimg, srcimg);
 			}
 			memset(&config, 0, sizeof(config));
@@ -325,7 +325,7 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 			config.begin = dctx->tracebuf;
 			config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
 
-			dctx->dec = pt_blk_alloc_decoder(&config);
+			dctx->dec = pt_insn_alloc_decoder(&config);
 			if (dctx->dec == NULL) {
 				printf(
 				    "%s: failed to allocate PT decoder for thread\n",
@@ -431,53 +431,45 @@ hwt_pt_decode_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
 {
 	int ret;
 	int error = 0;
-	struct pt_block blk;
+	struct pt_insn insn;
 	struct pt_event event;
-	uint64_t oldoffs, offs;
-	struct pt_block_decoder *dec;
+	uint64_t offs;
+	struct pt_insn_decoder *dec;
+	struct pt_config *cfg;
 
 	dec = dctx->dec;
 	offs = start;
 	/* Set decoder to current offset. */
-	ret = pt_blk_sync_set(dec, start);
-	blk.ip = 0;
+	cfg = __DECONST(struct pt_config *, pt_insn_get_config(dec));
+	cfg->end = (uint8_t *)dctx->tracebuf + (start + len);
+	ret = pt_insn_sync_set(dec, start);
 	do {
 		/* Process any pending events. */
 		while (ret & pts_event_pending) {
-			ret = pt_blk_event(dec, &event, sizeof(event));
-			pt_blk_get_offset(dec, &offs);
-			if (offs >= (start + len))
-				break;
+			ret = pt_insn_event(dec, &event, sizeof(event));
 		}
-		ret = pt_blk_next(dec, &blk, sizeof(blk));
+		ret = pt_insn_next(dec, &insn, sizeof(insn));
 		if (ret < 0) {
 			if (ret == -pte_eos) {
-				/* Restore to last valid offset. */
-				pt_blk_sync_backward(dec);
 				error = 0;
 				break;
 			}
-
-			ret = pt_blk_sync_forward(dec);
-			oldoffs = offs;
-			pt_blk_get_offset(dec, &offs);
-			if (ret < 0 || offs >= (start + len) ||
-			    offs <= oldoffs) {
-				if (ret < 0 && ret != -pte_eos) {
-					error = ret;
-					printf("ip: %p\n", (void *)blk.ip);
+			ret = pt_insn_sync_forward(dec);
+			if (ret < 0) {
+				error = ret != -pte_eos ? ret : 0;
+				if (error == 0)
 					printf(
 					    "%s: error decoding next instruction: %s\n",
 					    __func__, pt_strerror(error));
-				}
 				break;
 			}
+			continue;
 		}
-		pt_blk_get_offset(dec, &offs);
-		/* Print new symbol offset. */
-		hwt_pt_print(tc, dctx, blk.ip);
+		pt_insn_get_offset(dec, &offs);
+		hwt_pt_print(tc, dctx, insn.ip);
 	} while (offs < (start + len));
-	pt_blk_get_offset(dec, &offs);
+
+	pt_insn_get_offset(dec, &offs);
 	*processed = offs - start;
 
 	return (error);
