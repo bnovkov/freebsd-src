@@ -206,7 +206,7 @@
 #define	CPUID2_HV	0x80000000
 
 /* Intel Processor Trace CPUID. */
-
+#define	CPUID_PT_LEAF		0x14
 /* Leaf 0 ebx. */
 #define	CPUPT_CR3		(1 << 0)	/* CR3 Filtering Support */
 #define	CPUPT_PSB		(1 << 1)	/* Configurable PSB and Cycle-Accurate Mode Supported */
