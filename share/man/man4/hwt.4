@@ -43,7 +43,7 @@ Alternatively, to compile the driver into the kernel:
 .Cd "device hwt"
 .Ed
 .Pp
-Additionally, on arm64 systems at least one of these drivers has to be loaded into kernel via module or compiled into kernel via configuration file:
+Additionally, on arm64 systems at least one of these drivers has to be loaded into kernel via module or compiled in via kernel configuration file:
 .Bd -ragged -offset indent
 .Cd "coresight"
 .Cd "spe"
@@ -63,7 +63,7 @@ The framework supports several tracing technologies found on
 .Cd arm64
 and
 .Cd amd64
-systems.
+systems:
 
 .Bl -bullet -compact
 .It
@@ -76,9 +76,20 @@ Intel Processor Trace (PT)
 
 When loaded into kernel, the
 .Nm
-provides
+framework provides
 .Cd /dev/hwt
-character device for tracing contexts (CTX) management. The only request is accepts is HWT_IOC_ALLOC, which is needed to allocate a CTX.
+character device for tracing contexts (CTX) management. The only request it accepts is HWT_IOC_ALLOC.
+
+The HWT_IOC_ALLOC request allocates kernel tracing context (CTX) based on requested mode of operation, set of CPUs and/or pid.
+
+The hwt framework supports two methods of operation:
+
+.Bl -tag -width ".Em Thread mode"
+.It Em CPU mode
+In this mode HWT captures whatever CPU activity in kernel mode
+.It Em Thread mode
+In this mode HWT captures activity of a process (every of its thread) in user mode
+.El
 
 .Sh HISTORY
 The
