@@ -1,0 +1,68 @@
+.\" Copyright (c) 2025 Ruslan Bukin <br@bsdpad.com>
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd Jan 20, 2025
+.Dt HWT 4
+.Os
+.Sh NAME
+.Nm hwt
+.Nd "Hardware Trace Framework"
+.Sh SYNOPSIS
+The following option must be present in the kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "options HWT_HOOKS"
+.Ed
+.Pp
+To load the driver as a module at boot time:
+.Bd -literal -offset indent
+sysrc kld_list+=hwt
+.Ed
+.Pp
+Alternatively, to compile the driver into the kernel:
+.Bd -ragged -offset indent
+.Cd "device hwt"
+.Ed
+.Pp
+Additionally, on arm64 systems at least one of these drivers has to be loaded into kernel via module or compiled into kernel via configuration file:
+.Bd -ragged -offset indent
+.Cd "coresight"
+.Cd "spe"
+.Ed
+.Pp
+On amd64 systems:
+.Bd -ragged -offset indent
+.Cd "pt"
+.Ed
+.Pp
+.Sh DESCRIPTION
+The
+.Nm
+framework manages hardware tracing units that collect information about software execution and store it as events in highly compressed format into DRAM. The events cover information about control flow changes of a program, whether branches taken or not, exceptions taken, timing information, cycles elapsed and more. The information collected allows to restore the entire program flow of a given application without performance impact.
+.Pp
+The driver supports multi-processor systems.
+
+.Sh HISTORY
+The
+.Nm
+framework first appeared in
+.Fx 15.0 .
