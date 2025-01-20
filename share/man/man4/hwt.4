@@ -57,9 +57,15 @@ On amd64 systems:
 .Sh DESCRIPTION
 The
 .Nm
-framework manages hardware tracing units that collect information about software execution and store it as events in highly compressed format into DRAM. The events cover information about control flow changes of a program, whether branches taken or not, exceptions taken, timing information, cycles elapsed and more. The information collected allows to restore the entire program flow of a given application without performance impact.
+framework provides a set of kernel interfaces to manage hardware tracing units of a CPU (if provided by an architecture). The HW trace units collect information about software execution and store it as events in highly compressed format into DRAM. The events cover information about control flow changes of a program, whether branches taken or not, exceptions taken, timing information, cycles elapsed and more. The information collected allows to restore the entire program flow of a given application without noticeable performance impact.
 .Pp
-The driver supports multi-processor systems.
+The framework supports multi-processor systems.
+
+When loaded into kernel, the
+.Nm
+provides
+.Cd /dev/hwt
+character device for tracing contexts (CTX) management. The only request is accepts is HWT_IOC_ALLOC, which is needed to allocate a CTX.
 
 .Sh HISTORY
 The
