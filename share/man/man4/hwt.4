@@ -59,7 +59,20 @@ The
 .Nm
 framework provides a set of kernel interfaces to manage hardware tracing units of a CPU (if provided by an architecture). The HW trace units collect information about software execution and store it as events in highly compressed format into DRAM. The events cover information about control flow changes of a program, whether branches taken or not, exceptions taken, timing information, cycles elapsed and more. The information collected allows to restore the entire program flow of a given application without noticeable performance impact.
 .Pp
-The framework supports multi-processor systems.
+The framework supports several tracing technologies found on
+.Cd arm64
+and
+.Cd amd64
+systems.
+
+.Bl -bullet -compact
+.It
+ARM Coresight
+.It
+ARM Statistical Profiling Extension (SPE)
+.It
+Intel Processor Trace (PT)
+.El
 
 When loaded into kernel, the
 .Nm
