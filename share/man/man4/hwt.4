@@ -86,10 +86,17 @@ The hwt framework supports two methods of operation:
 
 .Bl -tag -width ".Em Thread mode"
 .It Em CPU mode
-In this mode HWT captures whatever CPU activity in kernel mode
+In this mode HWT captures whatever CPU activity in kernel mode.
 .It Em Thread mode
-In this mode HWT captures activity of a process (every of its thread) in user mode
+In this mode HWT captures activity of a process (every of its thread) in user mode.
 .El
+
+Upon successfull CTX allocation, the
+.Nm
+framework returns a CTX identification number (ident) that is needed for CTX management.
+Each CTX is managed using its own dedicated character device found at
+.Cd /dev/hwt_${ident}_${d},
+where d is either CPU ID in HWT CPU mode or process's tid in HWT Thread mode.
 
 .Sh HISTORY
 The
