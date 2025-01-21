@@ -98,6 +98,24 @@ Each CTX is managed using its own dedicated character device found at
 .Cd /dev/hwt_${ident}_${d},
 where d is either CPU ID in HWT CPU mode or process's tid in HWT Thread mode.
 
+CTX management character devices accepts several IOC requests:
+.Bl -bullet -compact
+.It
+HWT_IOC_START
+.It
+HWT_IOC_STOP
+.It
+HWT_IOC_RECORD_GET
+.It
+HWT_IOC_BUFPTR_GET
+.It
+HWT_IOC_SET_CONFIG
+.It
+HWT_IOC_WAKEUP
+.It
+HWT_IOC_SVC_BUF
+.El
+
 .Sh HISTORY
 The
 .Nm
