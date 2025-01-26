@@ -62,13 +62,13 @@
  *
  */
 
-#include <sys/cdefs.h>
-#include <sys/types.h>
-#include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/domainset.h>
+#include <sys/errno.h>
 #include <sys/event.h>
 #include <sys/hwt.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
@@ -76,36 +76,31 @@
 #include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/smp.h>
-#include <sys/lock.h>
-#include <sys/errno.h>
 #include <sys/taskqueue.h>
-#include <sys/domainset.h>
-#include <sys/sleepqueue.h>
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
 
-#include <machine/cpufunc.h>
-#include <machine/param.h>
 #include <machine/atomic.h>
-#include <machine/smp.h>
+#include <machine/cpufunc.h>
 #include <machine/fpu.h>
+#include <machine/param.h>
+#include <machine/smp.h>
 #include <machine/specialreg.h>
 
+#include <amd64/pt/pt.h>
 #include <x86/apicvar.h>
 #include <x86/x86_var.h>
 
-#include <dev/hwt/hwt_vm.h>
-#include <dev/hwt/hwt_thread.h>
-#include <dev/hwt/hwt_cpu.h>
+#include <dev/hwt/hwt_backend.h>
 #include <dev/hwt/hwt_config.h>
 #include <dev/hwt/hwt_context.h>
-#include <dev/hwt/hwt_backend.h>
+#include <dev/hwt/hwt_cpu.h>
 #include <dev/hwt/hwt_hook.h>
 #include <dev/hwt/hwt_intr.h>
 #include <dev/hwt/hwt_record.h>
-
-#include <amd64/pt/pt.h>
+#include <dev/hwt/hwt_thread.h>
+#include <dev/hwt/hwt_vm.h>
 
 #ifdef PT_DEBUG
 #define dprintf(fmt, ...) printf(fmt, ##__VA_ARGS__)
@@ -169,7 +164,7 @@ static struct pt_cpu_info {
 	size_t xsave_area_size;
 	size_t xstate_hdr_offset;
 	size_t pt_xsave_offset;
-} pt_info  __read_mostly;
+} pt_info __read_mostly;
 
 static bool initialized = false;
 static int cpu_mode_ctr = 0;
@@ -247,8 +242,8 @@ pt_cpu_toggle_local(uint8_t *save_area, bool enable)
 	u_long xss;
 
 	cr0 = rcr0();
-	if (cr0 & CR0_TS)
-		clts();
+	if ((cr0 & CR0_TS) != 0)
+		fpu_enable();
 	xcr0 = rxcr(XCR0);
 	if ((xcr0 & PT_XSAVE_MASK) != PT_XSAVE_MASK)
 		load_xcr(XCR0, xcr0 | PT_XSAVE_MASK);
@@ -267,8 +262,8 @@ pt_cpu_toggle_local(uint8_t *save_area, bool enable)
 	wrmsr(MSR_IA32_XSS, xss);
 	if ((xcr0 & PT_XSAVE_MASK) != PT_XSAVE_MASK)
 		load_xcr(XCR0, xcr0);
-	if (cr0 & CR0_TS)
-		load_cr0(cr0);
+	if ((cr0 & CR0_TS) != 0)
+		fpu_disable(cr0);
 }
 
 /*
