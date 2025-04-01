@@ -98,6 +98,7 @@ main(int argc, char *argv[])
 	fsinfo_t	 fsoptions;
 	fsnode		*root;
 	int		 ch, i, len;
+	const char	*env;
 	const char	*subtree;
 	const char	*specfile;
 
@@ -126,6 +127,9 @@ main(int argc, char *argv[])
 	if (ch == -1)
 		err(1, "Unable to get system time");
 
+	env = getenv("SOURCE_DATE_EPOCH");
+	if (env != NULL && get_tstamp(env, &stampst) == -1)
+		errx(1, "Cannot get timestamp from SOURCE_DATE_EPOCH");
 
 	while ((ch = getopt(argc, argv, "B:b:Dd:f:F:M:m:N:O:o:pR:s:S:t:T:xZ")) != -1) {
 		switch (ch) {
