@@ -1,0 +1,117 @@
+.\"-
+.\" Copyright (c) 2025 Bojan Novković <bnovkov@FreeBSD.org>
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd April 06, 2025
+.Dt hwt 8
+.Os
+.Sh NAME
+.Nm hwt
+.Nd "hardware-accelerated program tracing"
+.Sh SYNOPSIS
+.Op Fl ghr
+.Op Fl b Ar bufsize
+.Op Fl c Ar devname
+.Op Fl f Ar name
+.Op Fl i Ar name
+.Op Fl P Ar pid
+.Op Fl R Ar fsroot
+.Op Fl t Ar tid
+.Op Fl s Ar cpuid
+.Op Fl w Ar path
+.Op Ar path
+.Sh DESCRIPTION
+The
+.Nm
+uses the facilities
+provided by the
+.Xr hwt 4
+framework to launch and trace the executable specified by
+.Pa path
+and decode the resulting program execution traces.
+The options are as follows:
+.Bl -tag -width indent
+.It Fl b Ar size
+Specify the size of the tracing buffer in bytes. Must be a multiple of the system's page size.
+.It Fl c Ar name
+Name of the tracing backend to be used. Currently supported tracing backends are:
+.Pp
+.Bl -bullet -compact
+.It
+coresight (aarch64)
+.It
+spe (aarch64)
+.It
+pt (amd64)
+.El
+.Nm
+will select the first available backend if this flag is not passed.
+.Pp
+.It Fl f Ar fname
+Filter trace by function name.
+.It Fl i Ar obj
+Filter trace by dynamic library, executable, kernel module, or 'kernel'.
+.It Fl P Ar pid
+Attach to process specified by
+.Ar pid .
+.It Fl r
+Do not decode the generated execution trace.
+.It Fl s Ar cpuid
+Filter trace by CPU core when tracing in CPU mode.
+.It Fl t Ar tid
+Filter trace by thread id
+.Ar tid
+when tracing in thread mode.
+.It Fl w Ar path
+Store decoded trace to file specified by
+.Ar path.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+Launch and trace a userspace program:
+.Pp
+.Dl "hwt /usr/bin/uname"
+.Pp
+Dump raw execution trace to
+.Ar trace.out :
+.Pp
+.Dl "hwt -r -w trace.out /usr/bin/uname"
+.Pp
+Launch program and trace execution of
+.Xr getenv 3 :
+.Pp
+.Dl "hwt -i /usr/lib/libc.so -f getenv /usr/bin/uname"
+.Pp
+Trace execution of a kernel function on CPU core 0:
+.Pp
+.Dl "hwt -s 0 -i kernel -f cpu_switch"
+.Pp
+.Sh SEE ALSO
+.Xr hwt 4 .
+.Sh HISTORY
+The
+.Nm
+utility first appeared in FreeBSD 15.0.
+.Sh AUTHORS
+.An Bojan Novković Aq Mt bnovkov@freebsd.org
