@@ -96,7 +96,7 @@ Upon successfull CTX allocation, the
 framework returns a CTX identification number (ident) that is needed for CTX management.
 Each CTX is managed using its own dedicated character device found at
 .Cd /dev/hwt_${ident}_${d},
-where d is either CPU ID in HWT CPU mode or process's tid in HWT Thread mode.
+where d is either CPU ID in HWT CPU mode or process's tid in HWT Thread mode, ident is a unique identification number of tracing context.
 
 CTX management character devices accepts several IOC requests:
 .Bl -bullet -compact
@@ -115,6 +115,9 @@ HWT_IOC_WAKEUP
 .It
 HWT_IOC_SVC_BUF
 .El
+
+.Sh SEE ALSO
+.Xr hwt 8
 
 .Sh HISTORY
 The
