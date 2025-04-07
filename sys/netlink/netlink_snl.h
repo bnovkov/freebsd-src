@@ -240,14 +240,13 @@ snl_clear_lb(struct snl_state *ss)
 static void
 snl_free(struct snl_state *ss)
 {
-	if (ss->init_done) {
+	if (ss->init_done)
 		close(ss->fd);
-		if (ss->buf != NULL)
-			free(ss->buf);
-		if (ss->lb != NULL) {
-			snl_clear_lb(ss);
-			lb_free(ss->lb);
-		}
+	if (ss->buf != NULL)
+		free(ss->buf);
+	if (ss->lb != NULL) {
+		snl_clear_lb(ss);
+		lb_free(ss->lb);
 	}
 }
 
@@ -288,6 +287,16 @@ snl_init(struct snl_state *ss, int netlink_family)
 	}
 
 	return (true);
+}
+
+static inline bool
+snl_clone(struct snl_state *ss, const struct snl_state *orig)
+{
+	*ss = (struct snl_state){
+		.fd = orig->fd,
+		.init_done = false,
+	};
+	return ((ss->lb = lb_init(SCRATCH_BUFFER_SIZE)) != NULL);
 }
 
 static inline bool
@@ -1109,20 +1118,22 @@ snl_reserve_msg_data_raw(struct snl_writer *nw, size_t sz)
 #define snl_reserve_msg_object(_ns, _t)	((_t *)snl_reserve_msg_data_raw(_ns, sizeof(_t)))
 #define snl_reserve_msg_data(_ns, _sz, _t)	((_t *)snl_reserve_msg_data_raw(_ns, _sz))
 
-static inline void *
-_snl_reserve_msg_attr(struct snl_writer *nw, uint16_t nla_type, uint16_t sz)
+static inline struct nlattr *
+snl_reserve_msg_attr_raw(struct snl_writer *nw, uint16_t nla_type, uint16_t sz)
 {
-	sz += sizeof(struct nlattr);
+	struct nlattr *nla;
 
-	struct nlattr *nla = snl_reserve_msg_data(nw, sz, struct nlattr);
+	sz += sizeof(struct nlattr);
+	nla = snl_reserve_msg_data(nw, sz, struct nlattr);
 	if (__predict_false(nla == NULL))
 		return (NULL);
 	nla->nla_type = nla_type;
 	nla->nla_len = sz;
 
-	return ((void *)(nla + 1));
+	return (nla);
 }
-#define	snl_reserve_msg_attr(_ns, _at, _t)	((_t *)_snl_reserve_msg_attr(_ns, _at, sizeof(_t)))
+#define	snl_reserve_msg_attr(_ns, _at, _t)	\
+	((_t *)(snl_reserve_msg_attr_raw(_ns, _at, sizeof(_t)) + 1))
 
 static inline bool
 snl_add_msg_attr(struct snl_writer *nw, int attr_type, int attr_len, const void *data)

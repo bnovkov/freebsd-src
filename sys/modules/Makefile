@@ -202,6 +202,7 @@ SUBDIR=	\
 	${_iwm} \
 	${_iwn} \
 	${_iwnfw} \
+	${_iwx} \
 	${_ix} \
 	${_ixv} \
 	${_ixl} \
@@ -424,6 +425,7 @@ SUBDIR=	\
 	wlan_acl \
 	wlan_amrr \
 	wlan_ccmp \
+	wlan_gcmp \
 	wlan_rssadapt \
 	wlan_tkip \
 	wlan_wep \
@@ -844,6 +846,7 @@ _ccp=		ccp
 _enic=		enic
 _iavf=		iavf
 _ioat=		ioat
+_iwx=		iwx
 _ixl=		ixl
 _nvdimm=	nvdimm
 _pt=		pt
