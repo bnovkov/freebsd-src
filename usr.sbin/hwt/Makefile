@@ -6,6 +6,7 @@ CFLAGS+= -I${SRCTOP}/lib/libpmcstat -I${SRCTOP}/sys
 LIBADD= elf pmcstat xo util
 
 SRCS=	hwt.c			\
+	hwt_fmt.c		\
 	hwt_elf.c		\
 	hwt_process.c		\
 	hwt_record.c		\

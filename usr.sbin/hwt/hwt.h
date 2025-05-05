@@ -30,6 +30,7 @@
 #ifndef	_HWTVAR_H_
 #define	_HWTVAR_H_
 
+#include "hwt_fmt.h"
 #define	TC_MAX_ADDR_RANGES	16
 
 struct trace_context;
@@ -120,6 +121,7 @@ struct trace_context {
 
 	int mode;
 	const char *fs_root;
+	enum hwt_fmt_column fmt;
 };
 
 struct pmcstat_process *hwt_process_alloc(void);
