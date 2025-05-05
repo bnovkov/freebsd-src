@@ -101,7 +101,7 @@ hwt_record_to_elf_img(struct trace_context *tc,
 		return (0);
 	}
 	addr = (unsigned long)entry->addr & ~1;
-	if (entry->record_type != HWT_RECORD_KERNEL)
+	if (tc->mode == HWT_MODE_THREAD)
 		addr -= (image->pi_start - image->pi_vaddr);
 
 	pmcstat_image_link(tc->pp, image, addr);
@@ -109,6 +109,8 @@ hwt_record_to_elf_img(struct trace_context *tc,
 		" pi_end %lx pi_entry %lx\n",
 	    (unsigned long)image->pi_vaddr, (unsigned long)image->pi_start,
 	    (unsigned long)image->pi_end, (unsigned long)image->pi_entry);
+	if (tc->mode == HWT_MODE_CPU)
+		addr = image->pi_start;
 
 	if (hwt_elf_get_text_offs(imagepath, &img->offs))
 		return (-1);
@@ -154,7 +156,8 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 		case HWT_RECORD_EXECUTABLE:
 		case HWT_RECORD_INTERP:
 		case HWT_RECORD_KERNEL:
-			hwt_record_to_elf_img(tc, entry, &img);
+			if (hwt_record_to_elf_img(tc, entry, &img) != 0)
+				continue;
 			/* Invoke backend callback, if any. */
 			if (tc->trace_dev->methods->image_load_cb != NULL &&
 			    (error = tc->trace_dev->methods->image_load_cb(tc,
