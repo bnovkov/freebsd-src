@@ -65,6 +65,8 @@
 #endif
 
 #if defined(__amd64__)
+#include <sys/tree.h>
+
 #include "hwt_pt.h"
 #endif
 
@@ -90,7 +92,7 @@ static struct trace_dev trace_devs[] = {
 	{ "spe",	"ARM Statistical Profiling Extension", &spe_methods },
 #endif
 #if defined(__amd64__)
-	{ "pt", "Intel PT", &pt_methods},
+	{ "pt",		"Intel Processor Trace", &pt_methods},
 #endif
 	{ NULL, NULL, NULL }
 };

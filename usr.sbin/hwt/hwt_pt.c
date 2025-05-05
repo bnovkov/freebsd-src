@@ -49,35 +49,16 @@
 #include <amd64/pt/pt.h>
 #include <libipt/intel-pt.h>
 
-#include "libpmcstat_stubs.h"
-#include <libpmcstat.h>
-
 #include "hwt.h"
 #include "hwt_elf.h"
 #include "hwt_pt.h"
 
-#define pt_strerror(errcode) pt_errstr(pt_errcode((errcode)))
-
-/*
- * Trace decoder state.
- */
-struct pt_dec_ctx {
-	size_t curoff;
-	uint64_t ts;
-	uint64_t curip;
-	void *tracebuf;
-	struct pt_insn_decoder *dec;
-
-	int id;
-	RB_ENTRY(pt_dec_ctx) entry;
-
-	xo_handle_t *xop;
-	int dev_fd;
-};
-
-typedef void (
-    *pt_ctx_iter_cb)(struct trace_context *, struct pt_dec_ctx *, void *);
+typedef void (*pt_ctx_iter_cb)(struct trace_context *, struct pt_dec_ctx *,
+    void *);
 static int pt_ctx_compare(const void *n1, const void *n2);
+
+/* Active decoder ops. */
+static struct pt_decode_ops pt_decode_ops;
 
 /*
  * Active decoder states.
@@ -199,7 +180,7 @@ pt_update_image_cb(struct trace_context *tc __unused, struct pt_dec_ctx *dctx,
  * Invoked as a callback from 'pt_foreach_ctx'.
  */
 static int
-hwt_pt_image_load_cb(struct trace_context *tc, struct hwt_exec_img *img)
+pt_image_load_cb(struct trace_context *tc, struct hwt_exec_img *img)
 {
 	int isid;
 
@@ -212,28 +193,22 @@ hwt_pt_image_load_cb(struct trace_context *tc, struct hwt_exec_img *img)
 		    __func__, img->path, pt_strerror(isid));
 		return (-1);
 	}
-
 	pt_foreach_ctx(tc, pt_update_image_cb, &isid);
 
 	return (0);
 }
 
 static int
-hwt_pt_init(struct trace_context *tc)
+pt_init(struct trace_context *tc)
 {
 
 	/* Buffer size must be power of two. */
 	assert((tc->bufsize & (tc->bufsize - 1)) == 0);
 
-	if (tc->raw) {
-		/* No decoder needed, just a file for raw data. */
-		tc->raw_f = fopen(tc->filename, "w");
-		if (tc->raw_f == NULL) {
-			printf("%s: could not open file %s\n", __func__,
-			    tc->filename);
-			return (ENXIO);
-		}
-	}
+	if (tc->raw)
+		pt_decode_ops = pt_dump_ops;
+	else
+		pt_decode_ops = pt_decode_generic_ops;
 
 	pt_iscache = pt_iscache_alloc(tc->image_name);
 	if (pt_iscache == NULL)
@@ -265,7 +240,7 @@ hwt_pt_init(struct trace_context *tc)
  * when HWT_MODE_CPU tracing is started.
  */
 static int
-hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
+pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 {
 	int tid, fd;
 	char filename[32];
@@ -298,7 +273,6 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 		dctx = calloc(1, sizeof(*dctx));
 		if (dctx == NULL)
 			return (ENOMEM);
-		dctx->dev_fd = fd;
 		dctx->tracebuf = mmap(NULL, tc->bufsize, PROT_READ, MAP_SHARED,
 		    fd, 0);
 		if (dctx->tracebuf == MAP_FAILED) {
@@ -309,30 +283,33 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 			return (ENOMEM);
 		}
 		dctx->id = tid;
-		if (!tc->raw) {
-			/*
-			 * Grab another context, if any, and copy its decoder
-			 * image.
-			 */
-			if (!RB_EMPTY(&threads)) {
-				srcctx = RB_ROOT(&threads);
-				srcimg = pt_insn_get_image(srcctx->dec);
-				dstimg = pt_insn_get_image(dctx->dec);
-				pt_image_copy(dstimg, srcimg);
-			}
-			memset(&config, 0, sizeof(config));
-			config.size = sizeof(config);
-			config.begin = dctx->tracebuf;
-			config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
+		if (tc->raw) {
+			RB_INSERT(threads, &threads, dctx);
+			break;
+		}
 
-			dctx->dec = pt_insn_alloc_decoder(&config);
-			if (dctx->dec == NULL) {
-				printf(
-				    "%s: failed to allocate PT decoder for thread\n",
-				    __func__);
-				free(dctx);
-				return (ENOMEM);
-			}
+		/*
+		 * Grab another context, if any, and copy its decoder
+		 * image.
+		 */
+		if (!RB_EMPTY(&threads)) {
+			srcctx = RB_ROOT(&threads);
+			srcimg = pt_insn_get_image(srcctx->dec);
+			dstimg = pt_insn_get_image(dctx->dec);
+			pt_image_copy(dstimg, srcimg);
+		}
+		memset(&config, 0, sizeof(config));
+		config.size = sizeof(config);
+		config.begin = dctx->tracebuf;
+		config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
+
+		dctx->dec = pt_insn_alloc_decoder(&config);
+		if (dctx->dec == NULL) {
+			printf(
+			    "%s: failed to allocate PT decoder for thread\n",
+			    __func__);
+			free(dctx);
+			return (ENOMEM);
 		}
 		RB_INSERT(threads, &threads, dctx);
 		break;
@@ -344,7 +321,7 @@ hwt_pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 }
 
 static int
-hwt_pt_set_config(struct trace_context *tc)
+pt_set_config(struct trace_context *tc)
 {
 	struct hwt_set_config sconf;
 	struct pt_cpu_config *config;
@@ -366,7 +343,6 @@ hwt_pt_set_config(struct trace_context *tc)
 			config->ip_ranges[i].end = tc->addr_ranges[i * 2 + 1];
 		}
 	}
-
 	rtit_ctl |= RTIT_CTL_BRANCHEN;
 
 	config->rtit_ctl = rtit_ctl;
@@ -382,139 +358,16 @@ hwt_pt_set_config(struct trace_context *tc)
 	return (error);
 }
 
-static void
-hwt_pt_print(struct trace_context *tc, struct pt_dec_ctx *dctx, uint64_t ip)
-{
-	uint64_t newpc;
-	unsigned long offset;
-	struct pmcstat_symbol *sym;
-	struct pmcstat_image *image;
-	const char *piname;
-	const char *psname;
-
-	sym = hwt_sym_lookup(tc, ip, &image, &newpc);
-	if (sym || image) {
-		xo_emit_h(dctx->xop, "{:type/%s} {:id/%d}\t",
-		    tc->mode == HWT_MODE_CPU ? "CPU" : "thr", dctx->id);
-		xo_emit_h(dctx->xop, "{:pc/pc 0x%08lx/%x}", ip);
-		xo_emit_h(dctx->xop, " ");
-	}
-
-	if (image) {
-		if (tc->mode == HWT_MODE_THREAD) {
-			xo_emit_h(dctx->xop, "{:newpc/(%lx)/%x}", newpc);
-			xo_emit_h(dctx->xop, "\t");
-		}
-
-		piname = pmcstat_string_unintern(image->pi_name);
-		xo_emit_h(dctx->xop, "{:piname/%12s/%s}", piname);
-	}
-
-	if (sym) {
-		psname = pmcstat_string_unintern(sym->ps_name);
-		offset = newpc -
-		    (sym->ps_start + (image != NULL ? image->pi_vaddr : 0));
-		xo_emit_h(dctx->xop, "\t");
-		xo_emit_h(dctx->xop, "{:psname/%s/%s}", psname);
-		xo_emit_h(dctx->xop, "{:offset/+0x%lx/%ju}", offset);
-	}
-
-	if (sym || image) {
-		xo_emit_h(dctx->xop, "\n");
-		xo_close_instance("entry");
-	}
-}
-
-static int
-hwt_pt_decode_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
-    uint64_t start, size_t len, uint64_t *processed)
-{
-	int ret;
-	int error = 0;
-	struct pt_insn insn;
-	struct pt_event event;
-	uint64_t offs;
-	struct pt_insn_decoder *dec;
-	struct pt_config *cfg;
-
-	dec = dctx->dec;
-	offs = start;
-	/* Set decoder to current offset. */
-	cfg = __DECONST(struct pt_config *, pt_insn_get_config(dec));
-	cfg->end = (uint8_t *)dctx->tracebuf + (start + len);
-	ret = pt_insn_sync_set(dec, start);
-	do {
-		/* Process any pending events. */
-		while (ret & pts_event_pending) {
-			ret = pt_insn_event(dec, &event, sizeof(event));
-		}
-		ret = pt_insn_next(dec, &insn, sizeof(insn));
-		if (ret < 0) {
-			if (ret == -pte_eos) {
-				error = 0;
-				break;
-			}
-			ret = pt_insn_sync_forward(dec);
-			if (ret < 0) {
-				error = ret != -pte_eos ? ret : 0;
-				if (error == 0)
-					printf(
-					    "%s: error decoding next instruction: %s\n",
-					    __func__, pt_strerror(error));
-				break;
-			}
-			continue;
-		}
-		pt_insn_get_offset(dec, &offs);
-		hwt_pt_print(tc, dctx, insn.ip);
-	} while (offs < (start + len));
-
-	pt_insn_get_offset(dec, &offs);
-	*processed = offs - start;
-
-	return (error);
-}
-
-/*
- * Dumps raw packet bytes into tc->raw_f.
- */
-static int
-hwt_pt_dump_chunk(struct pt_dec_ctx *dctx, FILE *raw_f, uint64_t offs,
-    size_t len, uint64_t *processed)
-{
-	void *base;
-
-	base = (void *)((uintptr_t)dctx->tracebuf + (uintptr_t)offs);
-	fwrite(base, len, 1, raw_f);
-	fflush(raw_f);
-
-	*processed = len;
-
-	return (0);
-}
-
-static int
-pt_process_chunk(struct trace_context *tc, struct pt_dec_ctx *dctx,
-    uint64_t offs, size_t len, uint64_t *processed)
-{
-	if (tc->raw) {
-		return (
-		    hwt_pt_dump_chunk(dctx, tc->raw_f, offs, len, processed));
-	} else {
-		return (hwt_pt_decode_chunk(tc, dctx, offs, len, processed));
-	}
-}
-
 static struct pt_dec_ctx *
-pt_get_decoder_ctx(struct trace_context *tc, int ctxid)
+pt_get_decoder_ctx(struct trace_context *tc, int id)
 {
 	switch (tc->mode) {
 	case HWT_MODE_CPU:
-		assert(ctxid < hwt_ncpu());
-		return (&cpus[ctxid]);
+		assert(id < hwt_ncpu());
+		return (&cpus[id]);
 	case HWT_MODE_THREAD: {
 		struct pt_dec_ctx srch;
-		srch.id = ctxid;
+		srch.id = id;
 		return (RB_FIND(threads, &threads, &srch));
 	}
 	default:
@@ -525,40 +378,39 @@ pt_get_decoder_ctx(struct trace_context *tc, int ctxid)
 }
 
 /*
- * Re-sync buffer when wrap is detected.
+ * Decode part of the tracing buffer.
  */
-static void
-pt_ctx_sync_ts(struct trace_context *tc, struct pt_dec_ctx *dctx,
-    uint64_t newts)
-{
-	size_t newoff;
-
-	newoff = (newts - dctx->ts) & (tc->bufsize - 1);
-
-	dctx->ts = newts;
-	dctx->curoff = newoff;
-}
-
 static int
-pt_process_data(struct trace_context *tc, struct pt_dec_ctx *dctx, uint64_t ts)
+pt_process_buffer(struct trace_context *tc, int id, int curpage,
+    vm_offset_t offset)
 {
 	int error;
+	uint64_t ts;
 	uint64_t processed;
+	struct pt_dec_ctx *dctx;
 	size_t newoff, curoff, len;
+
+	dctx = pt_get_decoder_ctx(tc, id);
+	if (dctx == NULL) {
+		printf("%s: unable to find decoder context for ID %d\n",
+		    __func__, id);
+		return (-1);
+	}
 
 	/*
 	 * Check if the buffer wrapped since
 	 * the last time we processed it
 	 * and try to resync.
 	 */
+	ts = (curpage * PAGE_SIZE) + offset;
 	if ((ts - dctx->ts) > tc->bufsize) {
 		printf(
 		    "%s: WARNING: buffer wrapped - re-syncing to last known offset\n",
 		    __func__);
-		pt_ctx_sync_ts(tc, dctx, ts);
+		dctx->curoff = (ts - dctx->ts) & (tc->bufsize - 1);
+		dctx->ts = ts;
 		return (0);
 	}
-
 	len = ts - dctx->ts;
 	curoff = dctx->curoff;
 	newoff = (curoff + len) % tc->bufsize;
@@ -566,30 +418,30 @@ pt_process_data(struct trace_context *tc, struct pt_dec_ctx *dctx, uint64_t ts)
 	if (newoff > curoff) {
 		/* New entries in the trace buffer. */
 		len = newoff - curoff;
-		error = pt_process_chunk(tc, dctx, curoff, len, &processed);
-		if (error != 0) {
+		error = pt_decode_ops.decode_chunk(tc, dctx, curoff, len,
+		    &processed);
+		if (error != 0)
 			return (error);
-		}
+
 		dctx->curoff += processed;
 		dctx->ts += processed;
-
 	} else if (newoff < curoff) {
 		/* New entries in the trace buffer. Buffer wrapped. */
 		len = tc->bufsize - curoff;
-		error = pt_process_chunk(tc, dctx, curoff, len, &processed);
-		if (error != 0) {
+		error = pt_decode_ops.decode_chunk(tc, dctx, curoff, len,
+		    &processed);
+		if (error != 0)
 			return (error);
-		}
 
 		dctx->curoff += processed;
 		dctx->ts += processed;
 
 		curoff = 0;
 		len = newoff;
-		error = pt_process_chunk(tc, dctx, curoff, len, &processed);
-		if (error != 0) {
+		error = pt_decode_ops.decode_chunk(tc, dctx, curoff, len,
+		    &processed);
+		if (error != 0)
 			return (error);
-		}
 
 		dctx->curoff = processed;
 		dctx->ts += processed;
@@ -598,38 +450,10 @@ pt_process_data(struct trace_context *tc, struct pt_dec_ctx *dctx, uint64_t ts)
 	return (0);
 }
 
-/*
- * Decode part of the tracing buffer.
- */
-static int
-hwt_pt_process_buffer(struct trace_context *tc, int id, int curpage,
-    vm_offset_t offset)
-{
-	int error;
-	uint64_t ts;
-	struct pt_dec_ctx *dctx;
-
-	dctx = pt_get_decoder_ctx(tc, id);
-	if (dctx == NULL) {
-		printf("%s: unable to find decorder context for ID %d\n",
-		    __func__, id);
-
-		return (-1);
-	}
-
-	ts = (curpage * PAGE_SIZE) + offset;
-	error = pt_process_data(tc, dctx, ts);
-	if (error) {
-		return (error);
-	}
-
-	return (0);
-}
-
 struct trace_dev_methods pt_methods = {
-	.init = hwt_pt_init,
-	.mmap = hwt_pt_mmap,
-	.process_buffer = hwt_pt_process_buffer,
-	.set_config = hwt_pt_set_config,
-	.image_load_cb = hwt_pt_image_load_cb
+	.init = pt_init,
+	.mmap = pt_mmap,
+	.process_buffer = pt_process_buffer,
+	.set_config = pt_set_config,
+	.image_load_cb = pt_image_load_cb
 };

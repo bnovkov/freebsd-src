@@ -42,7 +42,7 @@ struct trace_dev_methods {
 	void (*shutdown)(struct trace_context *tc);
 
 	/*
-	 * Called whenever a tracing buffer needs to mapped into hwt.
+	 * Called whenever a tracing buffer is mapped into hwt.
 	 */
 	int (*mmap)(struct trace_context *tc,
 	    struct hwt_record_user_entry *entry);

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * Copyright (c) 2025 Bojan Novković  <bnovkov@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,38 +24,12 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _HWT_PT_H_
-#define _HWT_PT_H_
+#ifndef _PT_FMT_H_
+#define _PT_FMT_H_
 
-#include <amd64/pt/pt.h>
+void pt_print_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
+    struct pt_insn *insn, uint64_t offs);
+void pt_print_event(struct trace_context *tc, struct pt_dec_ctx *dctx,
+    struct pt_event *ev, uint64_t offs);
 
-#define pt_strerror(errcode) pt_errstr(pt_errcode((errcode)))
-
-/*
- * Trace decoder state.
- */
-struct pt_dec_ctx {
-	size_t curoff;
-	uint64_t ts;
-	uint64_t curip;
-	void *tracebuf;
-	struct pt_insn_decoder *dec;
-
-	int id;
-	RB_ENTRY(pt_dec_ctx) entry;
-
-	/* Variables for various decode ops. */
-	xo_handle_t *xop;
-	FILE *out;
-};
-
-struct pt_decode_ops {
-	int (*decode_chunk)(struct trace_context *, struct pt_dec_ctx *,
-	    uint64_t, size_t, uint64_t *);
-	int (*init)(struct trace_context *, struct pt_dec_ctx *);
-};
-extern struct pt_decode_ops pt_decode_generic_ops;
-extern struct pt_decode_ops pt_dump_ops;
-
-extern struct trace_dev_methods pt_methods;
-#endif /* !_HWT_PT_H_ */
+#endif /* _PT_FMT_H_ */
