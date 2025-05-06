@@ -74,9 +74,9 @@ VOLUME_LABEL=	${REVISION:C/[.-]/_/g}_${BRANCH:C/[.-]/_/g}_${TARGET_ARCH}
 # For installing packages into the release media.
 .if defined(NO_ROOT)
 PKG_ENV+=	INSTALL_AS_USER=yes
-PKG_ARGS+=	-o METALOG=METALOG
 .endif
 PKG_ENV+=	ASSUME_ALWAYS_YES=yes
+PKG_ARGS+=	-o METALOG=METALOG
 PKG_ARGS+=	-r ${.TARGET} -o REPOS_DIR=${.CURDIR}/pkg_repos
 PKG_INSTALL=	env ${PKG_ENV} ${PKG_CMD} ${PKG_ARGS} install
 PKG_CLEAN=	env ${PKG_ENV} ${PKG_CMD} ${PKG_ARGS} clean -a
@@ -193,6 +193,7 @@ disc1: packagesystem
 .endif
 .if ${.MAKE.OS} == "FreeBSD" && (!defined(NOPKG) || empty(NOPKG))
 # Install packages onto release media.
+	${PKG_INSTALL} pkg || true
 	${PKG_INSTALL} wifi-firmware-kmod-release || true
 	${PKG_CLEAN} || true
 .endif
@@ -231,6 +232,11 @@ bootonly: packagesystem
 	cp MANIFEST ${.TARGET}/usr/freebsd-dist
 	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
 	echo "./usr/freebsd-dist/MANIFEST type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
+.if ${.MAKE.OS} == "FreeBSD" && (!defined(NOPKG) || empty(NOPKG))
+# Install packages onto release media.
+	${PKG_INSTALL} pkg || true
+	${PKG_CLEAN} || true
+.endif
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo sendmail_enable=\"NONE\" > ${.TARGET}/etc/rc.conf
@@ -266,6 +272,7 @@ dvd: packagesystem
 .endif
 .if ${.MAKE.OS} == "FreeBSD" && (!defined(NOPKG) || empty(NOPKG))
 # Install packages onto release media.
+	${PKG_INSTALL} pkg || true
 	${PKG_INSTALL} wifi-firmware-kmod-release || true
 	${PKG_CLEAN} || true
 .endif
@@ -320,6 +327,9 @@ packagesystem: ${DISTRIBUTIONS}
 pkg-stage: dvd
 # TODO: Support for -DNO_ROOT
 .if !defined(NOPKG) || empty(NOPKG)
+.if defined(NO_ROOT)
+.warning pkg-stage does not yet support NO_ROOT.
+.endif
 	env PORTSDIR=${PORTSDIR} REPOS_DIR=${.CURDIR}/pkg_repos/ \
 		sh ${.CURDIR}/scripts/pkg-stage.sh
 	mkdir -p ${.OBJDIR}/dvd/packages/repos/

@@ -1269,7 +1269,6 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 				errc(1, ret, "DIOCGETRULESETS");
 		}
 
-		pfctl_print_rule_counters(&rule, opts);
 		for (nr = 0; nr < mnr; ++nr) {
 			if ((ret = pfctl_get_ruleset(pfh, npath, nr, &prs)) != 0)
 				errc(1, ret, "DIOCGETRULESET");
@@ -1490,7 +1489,6 @@ pfctl_show_nat(int dev, const char *path, int opts, char *anchorname, int depth,
 				errc(1, ret, "DIOCGETRULESETS");
 		}
 
-		pfctl_print_rule_counters(&rule, opts);
 		for (nr = 0; nr < mnr; ++nr) {
 			if ((ret = pfctl_get_ruleset(pfh, npath, nr, &prs)) != 0)
 				errc(1, ret, "DIOCGETRULESET");
@@ -1741,7 +1739,6 @@ pfctl_add_pool(struct pfctl *pf, struct pfctl_pool *p, sa_family_t af, int which
 void
 pfctl_init_rule(struct pfctl_rule *r)
 {
-
 	memset(r, 0, sizeof(struct pfctl_rule));
 	TAILQ_INIT(&(r->rdr.list));
 	TAILQ_INIT(&(r->nat.list));

@@ -1040,6 +1040,7 @@ _rtld_bind(Obj_Entry *obj, Elf_Size reloff)
 	Elf_Addr target;
 	RtldLockState lockstate;
 
+relock:
 	rlock_acquire(rtld_bind_lock, &lockstate);
 	if (sigsetjmp(lockstate.env, 0) != 0)
 		lock_upgrade(rtld_bind_lock, &lockstate);
@@ -1053,10 +1054,15 @@ _rtld_bind(Obj_Entry *obj, Elf_Size reloff)
 	    NULL, &lockstate);
 	if (def == NULL)
 		rtld_die();
-	if (ELF_ST_TYPE(def->st_info) == STT_GNU_IFUNC)
+	if (ELF_ST_TYPE(def->st_info) == STT_GNU_IFUNC) {
+		if (lockstate_wlocked(&lockstate)) {
+			lock_release(rtld_bind_lock, &lockstate);
+			goto relock;
+		}
 		target = (Elf_Addr)rtld_resolve_ifunc(defobj, def);
-	else
+	} else {
 		target = (Elf_Addr)(defobj->relocbase + def->st_value);
+	}
 
 	dbg("\"%s\" in \"%s\" ==> %p in \"%s\"", defobj->strtab + def->st_name,
 	    obj->path == NULL ? NULL : basename(obj->path), (void *)target,
@@ -3437,12 +3443,12 @@ resolve_object_ifunc(Obj_Entry *obj, bool bind_now, int flags,
 	if (obj_disable_relro(obj) == -1 ||
 	    (obj->irelative && reloc_iresolve(obj, lockstate) == -1) ||
 	    (obj->irelative_nonplt &&
-		reloc_iresolve_nonplt(obj, lockstate) == -1) ||
+	    reloc_iresolve_nonplt(obj, lockstate) == -1) ||
 	    ((obj->bind_now || bind_now) && obj->gnu_ifunc &&
-		reloc_gnu_ifunc(obj, flags, lockstate) == -1) ||
+	    reloc_gnu_ifunc(obj, flags, lockstate) == -1) ||
 	    (obj->non_plt_gnu_ifunc &&
-		reloc_non_plt(obj, &obj_rtld, flags | SYMLOOK_IFUNC,
-		    lockstate) == -1) ||
+	    reloc_non_plt(obj, &obj_rtld, flags | SYMLOOK_IFUNC,
+	    lockstate) == -1) ||
 	    obj_enforce_relro(obj) == -1)
 		return (-1);
 	return (0);
@@ -3809,7 +3815,7 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 		obj = load_object(name, fd, refobj, lo_flags);
 	}
 
-	if (obj) {
+	if (obj != NULL) {
 		obj->dl_refcount++;
 		if (mode & RTLD_GLOBAL &&
 		    objlist_find(&list_global, obj) == NULL)
@@ -3821,33 +3827,31 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 			if ((lo_flags & RTLD_LO_DEEPBIND) != 0)
 				obj->deepbind = true;
 			result = 0;
-			if ((lo_flags & (RTLD_LO_EARLY | RTLD_LO_IGNSTLS)) ==
-				0 &&
+			if ((lo_flags & (RTLD_LO_EARLY |
+			    RTLD_LO_IGNSTLS)) == 0 &&
 			    obj->static_tls && !allocate_tls_offset(obj)) {
-				_rtld_error("%s: No space available "
-					    "for static Thread Local Storage",
+				_rtld_error(
+		    "%s: No space available for static Thread Local Storage",
 				    obj->path);
 				result = -1;
 			}
 			if (result != -1)
 				result = load_needed_objects(obj,
-				    lo_flags &
-					(RTLD_LO_DLOPEN | RTLD_LO_EARLY |
-					    RTLD_LO_IGNSTLS | RTLD_LO_TRACE));
+				    lo_flags & (RTLD_LO_DLOPEN | RTLD_LO_EARLY |
+				    RTLD_LO_IGNSTLS | RTLD_LO_TRACE));
 			init_dag(obj);
 			ref_dag(obj);
 			if (result != -1)
 				result = rtld_verify_versions(&obj->dagmembers);
 			if (result != -1 && ld_tracing)
 				goto trace;
-			if (result == -1 ||
-			    relocate_object_dag(obj,
-				(mode & RTLD_MODEMASK) == RTLD_NOW, &obj_rtld,
-				(lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
-				lockstate) == -1) {
+			if (result == -1 || relocate_object_dag(obj,
+			    (mode & RTLD_MODEMASK) == RTLD_NOW, &obj_rtld,
+			    (lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
+			    lockstate) == -1) {
 				dlopen_cleanup(obj, lockstate);
 				obj = NULL;
-			} else if (lo_flags & RTLD_LO_EARLY) {
+			} else if ((lo_flags & RTLD_LO_EARLY) != 0) {
 				/*
 				 * Do not call the init functions for early
 				 * loaded filtees.  The image is still not
@@ -3902,10 +3906,9 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 			distribute_static_tls(&initlist, lockstate);
 	}
 
-	if (initlist_objects_ifunc(&initlist,
-		(mode & RTLD_MODEMASK) == RTLD_NOW,
-		(lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
-		lockstate) == -1) {
+	if (initlist_objects_ifunc(&initlist, (mode & RTLD_MODEMASK) ==
+	    RTLD_NOW, (lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
+	    lockstate) == -1) {
 		objlist_clear(&initlist);
 		dlopen_cleanup(obj, lockstate);
 		if (lockstate == &mlockstate)
@@ -3913,7 +3916,7 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 		return (NULL);
 	}
 
-	if (!(lo_flags & RTLD_LO_EARLY)) {
+	if ((lo_flags & RTLD_LO_EARLY) == 0) {
 		/* Call the init functions. */
 		objlist_call_init(&initlist, lockstate);
 	}
@@ -4679,12 +4682,13 @@ symlook_default(SymLook *req, const Obj_Entry *refobj)
 	 */
 	res = symlook_obj(&req1, refobj);
 	if (res == 0 && (refobj->symbolic ||
-	    ELF_ST_VISIBILITY(req1.sym_out->st_other) == STV_PROTECTED)) {
+	    ELF_ST_VISIBILITY(req1.sym_out->st_other) == STV_PROTECTED ||
+	    refobj->deepbind)) {
 		req->sym_out = req1.sym_out;
 		req->defobj_out = req1.defobj_out;
 		assert(req->defobj_out != NULL);
 	}
-	if (refobj->symbolic || req->defobj_out != NULL)
+	if (refobj->symbolic || req->defobj_out != NULL || refobj->deepbind)
 		donelist_check(&donelist, refobj);
 
 	if (!refobj->deepbind)

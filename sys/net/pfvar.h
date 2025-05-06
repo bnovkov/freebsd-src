@@ -330,6 +330,7 @@ MALLOC_DECLARE(M_PFHASH);
 MALLOC_DECLARE(M_PF_RULE_ITEM);
 
 SDT_PROVIDER_DECLARE(pf);
+SDT_PROBE_DECLARE(pf, , test, reason_set);
 
 struct pfi_dynaddr {
 	TAILQ_ENTRY(pfi_dynaddr)	 entry;
@@ -345,14 +346,6 @@ struct pfi_dynaddr {
 	sa_family_t			 pfid_af;	/* rule af */
 	u_int8_t			 pfid_iflags;	/* PFI_AFLAG_* */
 };
-
-/*
- * Address manipulation macros
- */
-#define	HTONL(x)	(x) = htonl((__uint32_t)(x))
-#define	HTONS(x)	(x) = htons((__uint16_t)(x))
-#define	NTOHL(x)	(x) = ntohl((__uint32_t)(x))
-#define	NTOHS(x)	(x) = ntohs((__uint16_t)(x))
 
 #define	PF_NAME		"pf"
 
@@ -1759,6 +1752,7 @@ struct pf_sctp_multihome_job {
 
 #define REASON_SET(a, x) \
 	do { \
+		SDT_PROBE2(pf, , test, reason_set, x, __LINE__); \
 		if ((a) != NULL) \
 			*(a) = (x); \
 		if (x < PFRES_MAX) \
@@ -2331,7 +2325,7 @@ extern void			 pf_unload_vnet_purge(void);
 extern void			 pf_intr(void *);
 extern void			 pf_purge_expired_src_nodes(void);
 
-extern int			 pf_unlink_state(struct pf_kstate *);
+extern int			 pf_remove_state(struct pf_kstate *);
 extern int			 pf_state_insert(struct pfi_kkif *,
 				    struct pfi_kkif *,
 				    struct pf_state_key *,
@@ -2459,10 +2453,8 @@ void	pf_change_a(void *, u_int16_t *, u_int32_t, u_int8_t);
 void	pf_change_proto_a(struct mbuf *, void *, u_int16_t *, u_int32_t,
 	    u_int8_t);
 void	pf_change_tcp_a(struct mbuf *, void *, u_int16_t *, u_int32_t);
-void	pf_patch_16_unaligned(struct mbuf *, u_int16_t *, void *, u_int16_t,
-	    bool, u_int8_t);
-void	pf_patch_32_unaligned(struct mbuf *, u_int16_t *, void *, u_int32_t,
-    bool, u_int8_t);
+int	pf_patch_16(struct pf_pdesc *, void *, u_int16_t, bool);
+int	pf_patch_32(struct pf_pdesc *, void *, u_int32_t, bool);
 void	pf_send_deferred_syn(struct pf_kstate *);
 int	pf_match_addr(u_int8_t, const struct pf_addr *,
 	    const struct pf_addr *, const struct pf_addr *, sa_family_t);
@@ -2475,7 +2467,7 @@ void	pf_normalize_cleanup(void);
 int	pf_normalize_tcp(struct pf_pdesc *);
 void	pf_normalize_tcp_cleanup(struct pf_kstate *);
 int	pf_normalize_tcp_init(struct pf_pdesc *,
-	    struct tcphdr *, struct pf_state_peer *, struct pf_state_peer *);
+	    struct tcphdr *, struct pf_state_peer *);
 int	pf_normalize_tcp_stateful(struct pf_pdesc *,
 	    u_short *, struct tcphdr *, struct pf_kstate *,
 	    struct pf_state_peer *, struct pf_state_peer *, int *);
@@ -2719,6 +2711,13 @@ u_short			 pf_get_translation(struct pf_pdesc *,
 			    int, struct pf_state_key **, struct pf_state_key **,
 			    struct pf_kanchor_stackframe *, struct pf_krule **,
 			    struct pf_udp_mapping **udp_mapping);
+u_short			 pf_get_transaddr(struct pf_pdesc *,
+			    struct pf_state_key **, struct pf_state_key **,
+			    struct pf_krule *, struct pf_udp_mapping **,
+			    u_int8_t, struct pf_kpool *);
+int			 pf_translate_compat(struct pf_pdesc *,
+			    struct pf_state_key *, struct pf_state_key *,
+			    struct pf_krule *, u_int16_t);
 
 int			 pf_state_key_setup(struct pf_pdesc *,
 			    u_int16_t, u_int16_t,
