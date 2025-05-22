@@ -1681,11 +1681,12 @@ uipc_sopoll_stream_or_seqpacket(struct socket *so, int events,
 					    (POLLOUT | POLLWRNORM);
 				if (sb->sb_state & SBS_CANTRCVMORE)
 					revents |= POLLHUP;
-				if (!(revents & (POLLOUT | POLLWRNORM)))
+				if (!(revents & (POLLOUT | POLLWRNORM))) {
 					so2->so_rcv.uxst_flags |= UXST_PEER_SEL;
+					selrecord(td, &so->so_wrsel);
+				}
 				SOCK_RECVBUF_UNLOCK(so2);
-			}
-			if (!(revents & (POLLOUT | POLLWRNORM)))
+			} else
 				selrecord(td, &so->so_wrsel);
 		}
 	}
@@ -1766,16 +1767,26 @@ uipc_filt_sowrite(struct knote *kn, long hint)
 	struct socket *so = kn->kn_fp->f_data, *so2;
 	struct unpcb *unp = sotounpcb(so), *unp2 = unp->unp_conn;
 
-	if (SOLISTENING(so) || unp2 == NULL)
+	if (SOLISTENING(so))
 		return (0);
+
+	if (unp2 == NULL) {
+		if (so->so_state & SS_ISDISCONNECTED) {
+			kn->kn_flags |= EV_EOF;
+			kn->kn_fflags = so->so_error;
+			return (1);
+		} else
+			return (0);
+	}
 
 	so2 = unp2->unp_socket;
 	SOCK_RECVBUF_LOCK_ASSERT(so2);
 	kn->kn_data = uipc_stream_sbspace(&so2->so_rcv);
 
 	if (so2->so_rcv.sb_state & SBS_CANTRCVMORE) {
-		kn->kn_flags |= EV_EOF;
-		kn->kn_fflags = so->so_error;
+		/*
+		 * XXXGL: maybe kn->kn_flags |= EV_EOF ?
+		 */
 		return (1);
 	} else if (kn->kn_sfflags & NOTE_LOWAT)
 		return (kn->kn_data >= kn->kn_sdata);
@@ -2436,8 +2447,11 @@ uipc_sendfile(struct socket *so, int flags, struct mbuf *m,
 			sb->sb_acc += mc.mc_len;
 			wakeup = true;
 		}
-	} else
+	} else {
+		STAILQ_FOREACH(m, &mc.mc_q, m_stailq)
+			m->m_flags |= M_BLOCKED;
 		wakeup = false;
+	}
 	STAILQ_CONCAT(&sb->uxst_mbq, &mc.mc_q);
 	UIPC_STREAM_SBCHECK(sb);
 	if (wakeup)
@@ -4213,10 +4227,9 @@ unp_dispose(struct socket *so)
 			while (m != NULL && m->m_flags & M_NOTREADY)
 				m = m->m_next;
 			for (prev = n = m; n != NULL; n = n->m_next) {
-				if (n->m_flags & M_NOTREADY) {
-					n = n->m_next;
-					prev->m_next = n;
-				} else
+				if (n->m_flags & M_NOTREADY)
+					prev->m_next = n->m_next;
+				else
 					prev = n;
 			}
 			sb->uxst_fnrdy = NULL;
