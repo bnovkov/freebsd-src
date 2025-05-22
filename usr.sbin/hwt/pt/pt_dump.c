@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * Copyright (c) 2025 Bojan Novković  <bnovkov@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,38 +24,63 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _HWT_PT_H_
-#define _HWT_PT_H_
-
 #include <amd64/pt/pt.h>
+#include <sys/errno.h>
+#include <sys/hwt.h>
+#include <sys/hwt_record.h>
+#include <sys/param.h>
+#include <sys/tree.h>
 
-#define pt_strerror(errcode) pt_errstr(pt_errcode((errcode)))
+#include <err.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <libxo/xo.h>
+#include <libipt/intel-pt.h>
+
+#include "../libpmcstat_stubs.h"
+#include <libpmcstat.h>
+
+#include "../hwt.h"
+#include "../hwt_pt.h"
+
+static int
+pt_dump_init(struct trace_context *tc, struct pt_dec_ctx *dctx)
+{
+	char filename[MAXPATHLEN];
+
+	/* No decoder needed, just a file for raw data. */
+	snprintf(filename, MAXPATHLEN, "%s%d", tc->filename,
+	    dctx->id);
+	dctx->out = fopen(filename, "w");
+	if (dctx->out == NULL) {
+		printf("%s: could not open file %s\n", __func__,
+		    filename);
+		return (ENXIO);
+	}
+	return (0);
+}
 
 /*
- * Trace decoder state.
+ * Dumps raw packet bytes.
  */
-struct pt_dec_ctx {
-	size_t curoff;
-	uint64_t ts;
-	uint64_t curip;
-	void *tracebuf;
-	struct pt_insn_decoder *dec;
+static int
+pt_dump_chunk(struct trace_context *tc __unused, struct pt_dec_ctx *dctx,
+    uint64_t offs, size_t len, uint64_t *processed)
+{
+	void *base;
 
-	int id;
-	RB_ENTRY(pt_dec_ctx) entry;
+	base = (void *)((uintptr_t)dctx->tracebuf + (uintptr_t)offs);
+	fwrite(base, len, 1, dctx->out);
+	fflush(dctx->out);
+	*processed = len;
 
-	/* Variables for various decode ops. */
-	xo_handle_t *xop;
-	FILE *out;
+	return (0);
+}
+
+struct pt_decode_ops pt_dump_ops = {
+	.init = pt_dump_init,
+	.decode_chunk = pt_dump_chunk
 };
-
-struct pt_decode_ops {
-	int (*decode_chunk)(struct trace_context *, struct pt_dec_ctx *,
-	    uint64_t, size_t, uint64_t *);
-	int (*init)(struct trace_context *, struct pt_dec_ctx *);
-};
-extern struct pt_decode_ops pt_decode_generic_ops;
-extern struct pt_decode_ops pt_dump_ops;
-
-extern struct trace_dev_methods pt_methods;
-#endif /* !_HWT_PT_H_ */

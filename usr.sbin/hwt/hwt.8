@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd April 06, 2025
+.Dd May 05, 2025
 .Dt hwt 8
 .Os
 .Sh NAME
@@ -34,10 +34,11 @@
 .Op Fl c Ar devname
 .Op Fl f Ar name
 .Op Fl i Ar name
+.Op Fl o Ar format
 .Op Fl P Ar pid
 .Op Fl R Ar fsroot
-.Op Fl t Ar tid
 .Op Fl s Ar cpuid
+.Op Fl t Ar tid
 .Op Fl w Ar path
 .Op Ar path
 .Sh DESCRIPTION
@@ -71,6 +72,9 @@ will select the first available backend if this flag is not passed.
 Filter trace by function name.
 .It Fl i Ar obj
 Filter trace by dynamic library, executable, kernel module, or 'kernel'.
+.It Fl o Ar format
+Print information specified by a list of comma separated keywords when decoding
+an execution trace.
 .It Fl P Ar pid
 Attach to process specified by
 .Ar pid .
@@ -86,6 +90,24 @@ when tracing in thread mode.
 Store decoded trace to file specified by
 .Ar path.
 .El
+.Pp
+.Nm
+currently supports the following format keywords:
+.Bl -tag -width lockname
+.It Cm offset
+The trace file offset.
+.It Cm id
+CPU core or thread ID.
+.It Cm image
+Executable program associated with the decoded program counter.
+.It Cm symbol
+Function symbol associated with the decoded program counter.
+.It Cm pc
+Program counter value.
+.It Cm event_type
+Tracing event type.
+.It Cm event_payload
+Payload associated with a generated tracing event.
 .Sh EXIT STATUS
 .Ex -std
 .Sh EXAMPLES

@@ -30,6 +30,7 @@
 #ifndef	_HWTVAR_H_
 #define	_HWTVAR_H_
 
+#include "hwt_fmt.h"
 #define	TC_MAX_ADDR_RANGES	16
 
 struct trace_context;
@@ -41,7 +42,7 @@ struct trace_dev_methods {
 	void (*shutdown)(struct trace_context *tc);
 
 	/*
-	 * Called whenever a tracing buffer needs to mapped into hwt.
+	 * Called whenever a tracing buffer is mapped into hwt.
 	 */
 	int (*mmap)(struct trace_context *tc,
 	    struct hwt_record_user_entry *entry);
@@ -120,6 +121,7 @@ struct trace_context {
 
 	int mode;
 	const char *fs_root;
+	enum hwt_fmt_column fmt;
 };
 
 struct pmcstat_process *hwt_process_alloc(void);

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * Copyright (c) 2025 Bojan Novković  <bnovkov@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,38 +24,29 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _HWT_PT_H_
-#define _HWT_PT_H_
+#ifndef _HWT_FMT_H_
+#define _HWT_FMT_H_
 
-#include <amd64/pt/pt.h>
-
-#define pt_strerror(errcode) pt_errstr(pt_errcode((errcode)))
-
-/*
- * Trace decoder state.
- */
-struct pt_dec_ctx {
-	size_t curoff;
-	uint64_t ts;
-	uint64_t curip;
-	void *tracebuf;
-	struct pt_insn_decoder *dec;
-
-	int id;
-	RB_ENTRY(pt_dec_ctx) entry;
-
-	/* Variables for various decode ops. */
-	xo_handle_t *xop;
-	FILE *out;
+#include <libxo/xo.h>
+enum hwt_fmt_column {
+	HWT_FMT_OFFSET = 0x1,
+	HWT_FMT_ID = 0x2,
+	HWT_FMT_IMAGE_NAME = 0x4,
+	HWT_FMT_SYM_NAME = 0x8,
+	HWT_FMT_PC = 0x10,
+	HWT_FMT_EV_TYPE = 0x20,
+	HWT_FMT_EV_PAYLOAD = 0x40,
+	HWT_FMT_DISAS = 0x80,
 };
 
-struct pt_decode_ops {
-	int (*decode_chunk)(struct trace_context *, struct pt_dec_ctx *,
-	    uint64_t, size_t, uint64_t *);
-	int (*init)(struct trace_context *, struct pt_dec_ctx *);
-};
-extern struct pt_decode_ops pt_decode_generic_ops;
-extern struct pt_decode_ops pt_dump_ops;
+#define HWT_FMT_SHOULD_PRINT_COLS(flags, cols) ((flags & (cols)) != 0)
+#define HWT_FMT_SHOULD_PRINT(flags, col) ((flags & HWT_FMT_##col) != 0)
+#define HWT_FMT_DEFAULT_COLS (HWT_FMT_OFFSET | HWT_FMT_ID | HWT_FMT_SYM_NAME | \
+	    HWT_FMT_PC)
 
-extern struct trace_dev_methods pt_methods;
-#endif /* !_HWT_PT_H_ */
+struct trace_context;
+void hwt_fmt_print_generic(struct trace_context *tc, xo_handle_t *xop, int id,
+    uint64_t pc, uint64_t offs);
+
+enum hwt_fmt_column hwt_fmt_parse_cols(const char *args);
+#endif /* _HWT_FMT_H_ */

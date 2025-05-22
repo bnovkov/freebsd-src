@@ -65,6 +65,8 @@
 #endif
 
 #if defined(__amd64__)
+#include <sys/tree.h>
+
 #include "hwt_pt.h"
 #endif
 
@@ -90,7 +92,7 @@ static struct trace_dev trace_devs[] = {
 	{ "spe",	"ARM Statistical Profiling Extension", &spe_methods },
 #endif
 #if defined(__amd64__)
-	{ "pt", "Intel PT", &pt_methods},
+	{ "pt",		"Intel Processor Trace", &pt_methods},
 #endif
 	{ NULL, NULL, NULL }
 };
@@ -309,6 +311,7 @@ usage(void)
 		"\t -b\tbufsize\t\tSize of trace buffer (per each thread/cpu)\n"
 		"\t\t\t\tin bytes. Must be a multiple of page size\n"
 		"\t\t\t\te.g. 4096.\n"
+		"\t -o\tkeywords\t\tList of decoder output keywords.\n"
 		"\t -t\tid\t\tThread index of application passed to decoder.\n"
 		"\t -r\t\t\tRaw flag. Do not decode results.\n"
 		"\t -w\tfilename\tStore results into file.\n"
@@ -675,13 +678,14 @@ main(int argc, char **argv, char **env)
 	tc->fs_root = "/";
 	tc->thread_id = 0;
 	tc->attach = 0;
+	tc->fmt = HWT_FMT_DEFAULT_COLS;
 	thread_id_specified = 0;
 
 	argc = xo_parse_args(argc, argv);
 	if (argc < 0)
 		exit(EXIT_FAILURE);
 
-	while ((option = getopt(argc, argv, "P:R:gs:hc:b:rw:t:i:f:")) != -1)
+	while ((option = getopt(argc, argv, "P:R:gs:hc:b:rw:t:i:f:o:")) != -1)
 		switch (option) {
 		case 'P':
 			tc->attach = 1;
@@ -713,6 +717,9 @@ main(int argc, char **argv, char **env)
 			break;
 		case 'b':
 			tc->bufsize = atol(optarg);
+			break;
+		case 'o':
+			tc->fmt = hwt_fmt_parse_cols(optarg);
 			break;
 		case 'r':
 			/* Do not decode trace. */
