@@ -97,7 +97,7 @@ TESTS_SUBDIRS=	execve
 TESTS_SUBDIRS+=	posix_spawn
 
 # Tests that require blocks support
-.for t in fts_blocks_test
+.for t in fts_blocks_test glob2_test
 CFLAGS.${t}.c+=		-fblocks
 LIBADD.${t}+=		BlocksRuntime
 .endfor

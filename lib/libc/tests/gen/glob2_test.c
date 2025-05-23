@@ -25,6 +25,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
@@ -35,6 +36,8 @@
 #include <unistd.h>
 
 #include <atf-c.h>
+
+static int glob_callback_invoked;
 
 /*
  * Derived from Russ Cox' pathological case test program used for the
@@ -102,10 +105,74 @@ ATF_TC_BODY(glob_pathological_test, tc)
 	}
 }
 
+static int
+errfunc(const char *path, int err)
+{
+	ATF_REQUIRE_STREQ(path, "test/");
+	ATF_REQUIRE(err == EACCES);
+	glob_callback_invoked = 1;
+	/* Suppress EACCES errors. */
+	return (0);
+}
+
+ATF_TC_WITHOUT_HEAD(glob_callback_test);
+ATF_TC_BODY(glob_callback_test, tc)
+{
+	int rv;
+	glob_t g;
+
+	glob_callback_invoked = 0;
+	ATF_REQUIRE_EQ(0, mkdir("test", 0007));
+	rv = glob("test/*", 0, errfunc, &g);
+	ATF_REQUIRE_MSG(glob_callback_invoked == 1,
+	    "glob(3) failed to invoke callback function");
+	ATF_REQUIRE_MSG(rv == GLOB_NOMATCH,
+	    "error callback function failed to suppress EACCES");
+
+	/* GLOB_ERR should ignore the suppressed error. */
+	rv = glob("test/*", GLOB_ERR, errfunc, &g);
+	ATF_REQUIRE_MSG(rv == GLOB_ABORTED,
+	    "GLOB_ERR didn't override error callback function");
+}
+
+#ifdef __BLOCKS__
+ATF_TC_WITHOUT_HEAD(glob_b_callback_test);
+ATF_TC_BODY(glob_b_callback_test, tc)
+{
+	int rv;
+	glob_t g;
+
+	glob_callback_invoked = 0;
+	ATF_REQUIRE_EQ(0, mkdir("test", 0007));
+	int (^errblk)(const char *, int) =
+	    ^(const char *path, int err) {
+		ATF_REQUIRE_STREQ(path, "test/");
+		ATF_REQUIRE(err == EACCES);
+		glob_callback_invoked = 1;
+		/* Suppress EACCES errors. */
+		return (0);
+	};
+
+	rv = glob_b("test/*", 0, errblk, &g);
+	ATF_REQUIRE_MSG(glob_callback_invoked == 1,
+	    "glob(3) failed to invoke callback block");
+	ATF_REQUIRE_MSG(rv == GLOB_NOMATCH,
+	    "error callback function failed to suppress EACCES");
+
+	/* GLOB_ERR should ignore the suppressed error. */
+	rv = glob_b("test/*", GLOB_ERR, errblk, &g);
+	ATF_REQUIRE_MSG(rv == GLOB_ABORTED,
+	    "GLOB_ERR didn't override error callback block");
+}
+#endif
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, glob_pathological_test);
-
+	ATF_TP_ADD_TC(tp, glob_callback_test);
+#ifdef __BLOCKS__
+	ATF_TP_ADD_TC(tp, glob_b_callback_test);
+#endif
 	return (atf_no_error());
 }
