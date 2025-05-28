@@ -21,6 +21,7 @@ SRCS+=  hwt_pt.c	 \
 	 pt/pt_dump.c 	 \
 	 pt/pt_fmt.c
 LIBADD+= ipt
+CFLAGS+= -I/usr/local/include -L/usr/local/lib -lZydis -lZycore
 .endif
 
 .include <bsd.prog.mk>

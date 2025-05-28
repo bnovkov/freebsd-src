@@ -39,6 +39,7 @@
 
 #include <libipt/intel-pt.h>
 #include <libxo/xo.h>
+#include <Zydis/Zydis.h>
 
 #include "../hwt.h"
 #include "../hwt_fmt.h"
@@ -46,16 +47,7 @@
 
 #include "pt_fmt.h"
 
-void
-pt_print_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
-    struct pt_insn *insn, uint64_t offs)
-{
-	xo_open_instance("entry");
-	hwt_fmt_print_generic(tc, dctx->xop, dctx->id, insn->ip, offs);
-
-	xo_emit_h(dctx->xop, "\n");
-	xo_close_instance("entry");
-}
+#define DISAS_BUF_SIZE 128
 
 void
 pt_print_event(struct trace_context *tc, struct pt_dec_ctx *dctx,
@@ -78,18 +70,77 @@ pt_print_event(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		ip = ev->variant.disabled.ip;
 		break;
 	default:
+		// TODO: add more event types
 		evname = "?";
 		ip = 0;
 		break;
 	}
 
 	xo_open_instance("entry");
-	hwt_fmt_print_generic(tc, dctx->xop, dctx->id, ip, offs);
 
+	hwt_fmt_print_generic(tc, dctx->xop, dctx->id, ip, offs);
 	if (HWT_FMT_SHOULD_PRINT(tc->fmt, EV_TYPE))
 		xo_emit_h(dctx->xop, "{:event_type}", evname);
 	if (HWT_FMT_SHOULD_PRINT(tc->fmt, EV_PAYLOAD))
 		xo_emit_h(dctx->xop, "{:event_payload/+0x%lx/%ju}", ip);
+
+	xo_emit_h(dctx->xop, "\n");
+	xo_close_instance("entry");
+}
+
+static void
+pt_print_disas(struct pt_dec_ctx *dctx, struct pt_insn *insn)
+{
+	ZydisDecoder zdec;
+	ZydisFormatter zfmt;
+	ZydisMachineMode zmode;
+	ZydisStackWidth zwidth;
+	ZydisDecodedInstruction zinsn;
+	ZydisDecodedOperand zops[ZYDIS_MAX_OPERAND_COUNT];
+	ZyanStatus zstatus;
+	char buf[DISAS_BUF_SIZE];
+
+	switch (insn->mode) {
+	case ptem_16bit:
+		zmode = ZYDIS_MACHINE_MODE_LEGACY_16;
+		zwidth = ZYDIS_STACK_WIDTH_16;
+		break;
+	case ptem_32bit:
+		zmode = ZYDIS_MACHINE_MODE_LEGACY_32;
+		zwidth = ZYDIS_STACK_WIDTH_32;
+		break;
+	case ptem_64bit:
+		zmode = ZYDIS_MACHINE_MODE_LONG_64;
+		zwidth = ZYDIS_STACK_WIDTH_64;
+		break;
+	case ptem_unknown:
+	default:
+		zmode = 0;
+		zwidth = 0;
+		break;
+	}
+	ZydisDecoderInit(&zdec, zmode, zwidth);
+	ZydisFormatterInit(&zfmt, ZYDIS_FORMATTER_STYLE_INTEL);
+	zstatus = ZydisDecoderDecodeFull(&zdec, insn->raw, insn->size, &zinsn, zops);
+	if (!ZYAN_SUCCESS(zstatus)) {
+		printf("%s: zydis decode error: %d", __func__, zstatus);
+		return;
+	}
+	ZydisFormatterFormatInstruction(&zfmt, &zinsn, zops,
+	    zinsn.operand_count_visible, buf, sizeof(buf), insn->ip, ZYAN_NULL);
+
+	xo_emit_h(dctx->xop, "{:disas}", buf);
+}
+
+void
+pt_print_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
+    struct pt_insn *insn, uint64_t offs)
+{
+	xo_open_instance("entry");
+
+	hwt_fmt_print_generic(tc, dctx->xop, dctx->id, insn->ip, offs);
+	if (HWT_FMT_SHOULD_PRINT(tc->fmt, DISAS))
+		pt_print_disas(dctx, insn);
 
 	xo_emit_h(dctx->xop, "\n");
 	xo_close_instance("entry");
