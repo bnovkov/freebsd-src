@@ -17,6 +17,8 @@ struct vmctx {
 		vm_paddr_t base;
 		vm_size_t size;
 	} memsegs[VM_MEMSEG_COUNT];
+	size_t lowmem_size;
+	size_t highmem_size;
 	int	memflags;
 	char	*baseaddr;
 	char	*name;

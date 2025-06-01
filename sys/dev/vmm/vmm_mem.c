@@ -9,6 +9,7 @@
 #include <sys/lock.h>
 #include <sys/sx.h>
 #include <sys/systm.h>
+#include <sys/malloc.h>
 
 #include <machine/vmm.h>
 
@@ -159,10 +160,12 @@ int
 vm_alloc_memseg(struct vm *vm, int ident, size_t len, int ds_policy,
     domainset_t *ds_mask, size_t mask_size, bool sysmem)
 {
-	int error;
+	struct domainset domain, *obj_domainset;
 	struct vm_mem *mem;
 	struct vm_mem_seg *seg;
+	domainset_t *mask;
 	vm_object_t obj;
+	int error;
 
 	mem = vm_mem(vm);
 	vm_assert_memseg_xlocked(vm);
@@ -198,8 +201,8 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, int ds_policy,
 			    "error: %d\n", __func__, error);
 			goto out;
 		}
-		obj_ds_policy = domainset_create(&domain);
-		if (obj_ds_policy == NULL) {
+		obj_domainset = domainset_create(&domain);
+		if (obj_domainset == NULL) {
 			error = EINVAL;
 			goto out;
 		}
@@ -211,7 +214,7 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, int ds_policy,
 	seg->len = len;
 	seg->object = obj;
 	if (ds_policy != DOMAINSET_POLICY_INVALID)
-		seg->object->domain.dr_policy = obj_ds_policy;
+		seg->object->domain.dr_policy = obj_domainset;
 	seg->sysmem = sysmem;
 out:
 	free(mask, M_TEMP);

@@ -43,7 +43,6 @@
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/vnode.h>
-#include <sys/domainset.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>

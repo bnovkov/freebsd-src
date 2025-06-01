@@ -31,6 +31,11 @@ struct vm_mem_map {
 	int		flags;
 };
 
+
+/* Maximum number of NUMA domains in a guest. */
+#define VM_MAXMEMDOM 8
+#define VM_MAXSYSMEM VM_MAXMEMDOM
+
 /*
  * Identifiers for memory segments.
  * Each guest NUMA domain is represented by a single system
@@ -47,10 +52,6 @@ enum {
 
 #define	VM_MAX_MEMSEGS	VM_MEMSEG_END
 #define	VM_MAX_MEMMAPS	(VM_MAX_MEMSEGS * 2)
-
-/* Maximum number of NUMA domains in a guest. */
-#define VM_MAXMEMDOM 8
-#define VM_MAXSYSMEM VM_MAXMEMDOM
 
 struct vm_mem {
 	struct vm_mem_map	mem_maps[VM_MAX_MEMMAPS];
