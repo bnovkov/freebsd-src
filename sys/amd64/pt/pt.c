@@ -313,8 +313,6 @@ pt_cpu_stop(void *dummy)
 	pt_cpu_set_state(curcpu, PT_STOPPED);
 	pt_cpu_toggle_local(cpu->ctx->save_area, false);
 	pt_update_buffer(&ctx->buf);
-	taskqueue_enqueue_flags(taskqueue_pt, &ctx->task,
-	    TASKQUEUE_FAIL_IF_PENDING);
 }
 
 /*
