@@ -92,7 +92,7 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 			break;
 		}
 		pt_insn_get_offset(dec, &offs);
-	} while (offs < (start + len));
+	} while (1);
 	pt_insn_get_offset(dec, &offs);
 	*processed = offs - start;
 
