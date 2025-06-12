@@ -84,7 +84,7 @@ hwt_fmt_print_generic(struct trace_context *tc, xo_handle_t *xop, int id,
 				piname = "?";
 			else
 				piname = pmcstat_string_unintern(image->pi_name);
-			xo_emit_h(xop, "{:image_name/%s}\t", piname);
+			xo_emit_h(xop, "{:image_name/%s}{:image_offset/+%#lx}\t", piname, newpc);
 		}
 
 		if (HWT_FMT_SHOULD_PRINT(tc->fmt, SYM_NAME))  {

@@ -40,6 +40,7 @@ struct pt_dec_ctx {
 	uint64_t curip;
 	void *tracebuf;
 	struct pt_insn_decoder *dec;
+	int dev_fd;
 
 	int id;
 	RB_ENTRY(pt_dec_ctx) entry;
