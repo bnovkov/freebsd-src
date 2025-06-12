@@ -53,8 +53,8 @@ static struct column {
 	{ "image", HWT_FMT_IMAGE_NAME },
 	{ "symbol", HWT_FMT_SYM_NAME },
 	{ "pc", HWT_FMT_PC },
-	{ "event_type", HWT_FMT_EV_TYPE },
-	{ "event_payload", HWT_FMT_EV_PAYLOAD },
+	{ "event", HWT_FMT_EV_TYPE },
+	{ "payload", HWT_FMT_EV_PAYLOAD },
 	{ "disas", HWT_FMT_DISAS },
 };
 
