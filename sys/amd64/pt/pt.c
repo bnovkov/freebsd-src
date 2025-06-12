@@ -117,6 +117,10 @@
 #define PT_XSTATE_BV (PT_XSAVE_MASK | XFEATURE_ENABLED_PT)
 #define PT_MAX_IP_RANGES 2
 
+#define PT_TOPA_MASK_PTRS 0x7f
+#define PT_TOPA_PAGE_MASK 0xffffff80
+#define PT_TOPA_PAGE_SHIFT 7
+
 MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
 SDT_PROVIDER_DEFINE(pt);
@@ -213,7 +217,7 @@ pt_update_buffer(struct pt_buffer *buf)
 
 	/* Update buffer offset. */
 	reg = rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS);
-	curpage = (reg & 0xffffff80) >> 7;
+	curpage = (reg & PT_TOPA_PAGE_MASK) >> PT_TOPA_PAGE_SHIFT;
 	mtx_lock_spin(&buf->lock);
 	/* Check if the output wrapped. */
 	if (buf->curpage > curpage)
@@ -526,7 +530,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	pt_ctx->hwt_ctx = ctx;
 	pt_ext->rtit_ctl |= RTIT_CTL_TOPA;
 	pt_ext->rtit_output_base = (uint64_t)vtophys(pt_ctx->buf.topa_hw);
-	pt_ext->rtit_output_mask_ptrs = 0x7f;
+	pt_ext->rtit_output_mask_ptrs = PT_TOPA_MASK_PTRS;
 	hdr->xstate_bv = XFEATURE_ENABLED_PT;
 	hdr->xstate_xcomp_bv = XFEATURE_ENABLED_PT |
 	    XSTATE_XCOMP_BV_COMPACT;
