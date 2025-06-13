@@ -62,48 +62,43 @@
  *
  */
 
-#include <sys/cdefs.h>
-#include <sys/types.h>
-#include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/errno.h>
 #include <sys/event.h>
 #include <sys/hwt.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
-#include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/smp.h>
-#include <sys/lock.h>
-#include <sys/errno.h>
 #include <sys/taskqueue.h>
-#include <sys/domainset.h>
-#include <sys/sleepqueue.h>
+#include <sys/queue.h>
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
 
-#include <machine/cpufunc.h>
-#include <machine/param.h>
 #include <machine/atomic.h>
-#include <machine/smp.h>
+#include <machine/cpufunc.h>
 #include <machine/fpu.h>
+#include <machine/param.h>
+#include <machine/smp.h>
 #include <machine/specialreg.h>
 
 #include <x86/apicvar.h>
 #include <x86/x86_var.h>
 
+#include <dev/hwt/hwt_context.h>
 #include <dev/hwt/hwt_vm.h>
-#include <dev/hwt/hwt_thread.h>
+#include <dev/hwt/hwt_backend.h>
 #include <dev/hwt/hwt_cpu.h>
 #include <dev/hwt/hwt_config.h>
-#include <dev/hwt/hwt_context.h>
-#include <dev/hwt/hwt_backend.h>
 #include <dev/hwt/hwt_hook.h>
 #include <dev/hwt/hwt_intr.h>
 #include <dev/hwt/hwt_record.h>
+#include <dev/hwt/hwt_thread.h>
 
 #include <amd64/pt/pt.h>
 
@@ -112,7 +107,9 @@
 #else
 #define dprintf(fmt, ...)
 #endif
-
+#define PT_SUPPORTED_FLAGS						\
+	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT |	\
+	    RTIT_CTL_USER | RTIT_CTL_OS | RTIT_CTL_BRANCHEN)
 #define PT_XSAVE_MASK (XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
 #define PT_XSTATE_BV (PT_XSAVE_MASK | XFEATURE_ENABLED_PT)
 #define PT_MAX_IP_RANGES 2
@@ -892,6 +889,11 @@ pt_init(void)
 
 	nmi_register_handler(pt_topa_intr);
 	if (!lapic_enable_pcint()) {
+		nmi_remove_handler(pt_topa_intr);
+		free(pt_pcpu, M_PT);
+		free(pt_pcpu_ctx, M_PT);
+		pt_pcpu = NULL;
+		pt_pcpu_ctx = NULL;
 		printf("pt: failed to setup interrupt line\n");
 		return (error);
 	}
