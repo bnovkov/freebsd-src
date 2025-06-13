@@ -63,19 +63,14 @@
  */
 
 #include <sys/systm.h>
-#include <sys/errno.h>
-#include <sys/event.h>
 #include <sys/hwt.h>
 #include <sys/kernel.h>
-#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
-#include <sys/proc.h>
 #include <sys/sdt.h>
 #include <sys/smp.h>
 #include <sys/taskqueue.h>
-#include <sys/queue.h>
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
@@ -83,7 +78,6 @@
 #include <machine/atomic.h>
 #include <machine/cpufunc.h>
 #include <machine/fpu.h>
-#include <machine/param.h>
 #include <machine/smp.h>
 #include <machine/specialreg.h>
 
@@ -93,10 +87,8 @@
 #include <dev/hwt/hwt_context.h>
 #include <dev/hwt/hwt_vm.h>
 #include <dev/hwt/hwt_backend.h>
-#include <dev/hwt/hwt_cpu.h>
 #include <dev/hwt/hwt_config.h>
-#include <dev/hwt/hwt_hook.h>
-#include <dev/hwt/hwt_intr.h>
+#include <dev/hwt/hwt_cpu.h>
 #include <dev/hwt/hwt_record.h>
 #include <dev/hwt/hwt_thread.h>
 
@@ -890,6 +882,7 @@ pt_init(void)
 	nmi_register_handler(pt_topa_intr);
 	if (!lapic_enable_pcint()) {
 		nmi_remove_handler(pt_topa_intr);
+		hwt_backend_unregister(&backend);
 		free(pt_pcpu, M_PT);
 		free(pt_pcpu_ctx, M_PT);
 		pt_pcpu = NULL;
