@@ -333,7 +333,7 @@ hwt_process_loop(struct trace_context *tc)
 	xo_open_container("trace");
 	xo_open_list("entries");
 
-	printf("Decoder started. Press ctrl+c to stop.\n");
+	printf("Decoder started. Press ctrl+C to stop.\n");
 
 	while (1) {
 		waitpid(tc->pid, &status, WNOHANG);
@@ -347,11 +347,11 @@ hwt_process_loop(struct trace_context *tc)
 				break;
 		}
 		if (errno == EINTR || tc->terminate) {
-			printf("%s: tracing terminated - exiting\n", __func__);
 			/* Fetch any remaining records */
 			hwt_record_fetch(tc, &nrec, 0);
 			if (tc->trace_dev->methods->shutdown != NULL)
 				tc->trace_dev->methods->shutdown(tc);
+			printf("%s: tracing terminated - exiting\n", __func__);
 			return (0);
 		}
 	}
