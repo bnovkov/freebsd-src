@@ -405,6 +405,7 @@ SUBDIR=	\
 	udf \
 	udf_iconv \
 	ufs \
+	${_ufshci} \
 	uinput \
 	unionfs \
 	usb \
@@ -433,7 +434,7 @@ SUBDIR=	\
 	wlan_xauth \
 	${_wpi} \
 	${_wpifw} \
-	wtap \
+	${_wtap} \
 	${_x86bios} \
 	xdr \
 	xl \
@@ -835,6 +836,9 @@ _wpi=		wpi
 .if ${MK_SOURCELESS_UCODE} != "no"
 _wpifw=		wpifw
 .endif
+.if ${KERN_OPTS:MVIMAGE}
+_wtap=		wtap
+.endif
 _x86bios=	x86bios
 .endif
 
@@ -924,6 +928,10 @@ _bcm283x_pwm=  bcm283x_pwm
 # LLVM 10 crashes when building if_malo_pci.c, fixed in LLVM11:
 # https://bugs.llvm.org/show_bug.cgi?id=44351
 _malo=	malo
+.endif
+
+.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
+_ufshci=ufshci
 .endif
 
 SUBDIR+=${MODULES_EXTRA}

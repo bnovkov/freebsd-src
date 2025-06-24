@@ -765,7 +765,7 @@ dmu_objset_hold_flags(const char *name, boolean_t decrypt, const void *tag,
 
 	err = dmu_objset_from_ds(ds, osp);
 	if (err != 0) {
-		dsl_dataset_rele(ds, tag);
+		dsl_dataset_rele_flags(ds, flags, tag);
 		dsl_pool_rele(dp, tag);
 	}
 
@@ -1377,112 +1377,6 @@ dmu_objset_create(const char *name, dmu_objset_type_t type, uint64_t flags,
 
 	if (rv == 0)
 		zvol_create_minor(name);
-
-	crfree(cr);
-
-	return (rv);
-}
-
-typedef struct dmu_objset_clone_arg {
-	const char *doca_clone;
-	const char *doca_origin;
-	cred_t *doca_cred;
-} dmu_objset_clone_arg_t;
-
-static int
-dmu_objset_clone_check(void *arg, dmu_tx_t *tx)
-{
-	dmu_objset_clone_arg_t *doca = arg;
-	dsl_dir_t *pdd;
-	const char *tail;
-	int error;
-	dsl_dataset_t *origin;
-	dsl_pool_t *dp = dmu_tx_pool(tx);
-
-	if (strchr(doca->doca_clone, '@') != NULL)
-		return (SET_ERROR(EINVAL));
-
-	if (strlen(doca->doca_clone) >= ZFS_MAX_DATASET_NAME_LEN)
-		return (SET_ERROR(ENAMETOOLONG));
-
-	error = dsl_dir_hold(dp, doca->doca_clone, FTAG, &pdd, &tail);
-	if (error != 0)
-		return (error);
-	if (tail == NULL) {
-		dsl_dir_rele(pdd, FTAG);
-		return (SET_ERROR(EEXIST));
-	}
-
-	error = dsl_fs_ss_limit_check(pdd, 1, ZFS_PROP_FILESYSTEM_LIMIT, NULL,
-	    doca->doca_cred);
-	if (error != 0) {
-		dsl_dir_rele(pdd, FTAG);
-		return (SET_ERROR(EDQUOT));
-	}
-
-	error = dsl_dataset_hold(dp, doca->doca_origin, FTAG, &origin);
-	if (error != 0) {
-		dsl_dir_rele(pdd, FTAG);
-		return (error);
-	}
-
-	/* You can only clone snapshots, not the head datasets. */
-	if (!origin->ds_is_snapshot) {
-		dsl_dataset_rele(origin, FTAG);
-		dsl_dir_rele(pdd, FTAG);
-		return (SET_ERROR(EINVAL));
-	}
-
-	dsl_dataset_rele(origin, FTAG);
-	dsl_dir_rele(pdd, FTAG);
-
-	return (0);
-}
-
-static void
-dmu_objset_clone_sync(void *arg, dmu_tx_t *tx)
-{
-	dmu_objset_clone_arg_t *doca = arg;
-	dsl_pool_t *dp = dmu_tx_pool(tx);
-	dsl_dir_t *pdd;
-	const char *tail;
-	dsl_dataset_t *origin, *ds;
-	uint64_t obj;
-	char namebuf[ZFS_MAX_DATASET_NAME_LEN];
-
-	VERIFY0(dsl_dir_hold(dp, doca->doca_clone, FTAG, &pdd, &tail));
-	VERIFY0(dsl_dataset_hold(dp, doca->doca_origin, FTAG, &origin));
-
-	obj = dsl_dataset_create_sync(pdd, tail, origin, 0,
-	    doca->doca_cred, NULL, tx);
-
-	VERIFY0(dsl_dataset_hold_obj(pdd->dd_pool, obj, FTAG, &ds));
-	dsl_dataset_name(origin, namebuf);
-	spa_history_log_internal_ds(ds, "clone", tx,
-	    "origin=%s (%llu)", namebuf, (u_longlong_t)origin->ds_object);
-	dsl_dataset_rele(ds, FTAG);
-	dsl_dataset_rele(origin, FTAG);
-	dsl_dir_rele(pdd, FTAG);
-}
-
-int
-dmu_objset_clone(const char *clone, const char *origin)
-{
-	dmu_objset_clone_arg_t doca;
-
-	cred_t *cr = CRED();
-	crhold(cr);
-
-	doca.doca_clone = clone;
-	doca.doca_origin = origin;
-	doca.doca_cred = cr;
-
-	int rv = dsl_sync_task(clone,
-	    dmu_objset_clone_check, dmu_objset_clone_sync, &doca,
-	    6, ZFS_SPACE_CHECK_NORMAL);
-
-	if (rv == 0)
-		zvol_create_minor(clone);
 
 	crfree(cr);
 
@@ -2272,8 +2166,10 @@ dmu_objset_userquota_find_data(dmu_buf_impl_t *db, dmu_tx_t *tx)
 	dbuf_dirty_record_t *dr;
 	void *data;
 
-	if (db->db_dirtycnt == 0)
+	if (db->db_dirtycnt == 0) {
+		ASSERT(MUTEX_HELD(&db->db_mtx));
 		return (db->db.db_data);  /* Nothing is changing */
+	}
 
 	dr = dbuf_find_dirty_eq(db, tx->tx_txg);
 
@@ -2330,12 +2226,11 @@ dmu_objset_userquota_get_ids(dnode_t *dn, boolean_t before, dmu_tx_t *tx)
 			data = DN_BONUS(dn->dn_phys);
 		}
 	} else if (dn->dn_bonuslen == 0 && dn->dn_bonustype == DMU_OT_SA) {
-			int rf = 0;
+			dmu_flags_t rf = DB_RF_MUST_SUCCEED;
 
 			if (RW_WRITE_HELD(&dn->dn_struct_rwlock))
 				rf |= DB_RF_HAVESTRUCT;
-			error = dmu_spill_hold_by_dnode(dn,
-			    rf | DB_RF_MUST_SUCCEED,
+			error = dmu_spill_hold_by_dnode(dn, rf,
 			    FTAG, (dmu_buf_t **)&db);
 			ASSERT(error == 0);
 			mutex_enter(&db->db_mtx);
@@ -3164,7 +3059,6 @@ EXPORT_SYMBOL(dmu_objset_rele_flags);
 EXPORT_SYMBOL(dmu_objset_disown);
 EXPORT_SYMBOL(dmu_objset_from_ds);
 EXPORT_SYMBOL(dmu_objset_create);
-EXPORT_SYMBOL(dmu_objset_clone);
 EXPORT_SYMBOL(dmu_objset_stats);
 EXPORT_SYMBOL(dmu_objset_fast_stat);
 EXPORT_SYMBOL(dmu_objset_spa);

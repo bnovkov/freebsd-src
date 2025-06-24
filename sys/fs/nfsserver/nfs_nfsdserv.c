@@ -1599,14 +1599,14 @@ nfsrvd_remove(struct nfsrv_descript *nd, __unused int isdgram,
 				nd->nd_repstat = nfsvno_rmdirsub(&named, 1,
 				    nd->nd_cred, p, exp);
 			else
-				nd->nd_repstat = nfsvno_removesub(&named, 1,
-				    nd->nd_cred, p, exp);
+				nd->nd_repstat = nfsvno_removesub(&named, true,
+				    nd, p, exp);
 		} else if (nd->nd_procnum == NFSPROC_RMDIR) {
 			nd->nd_repstat = nfsvno_rmdirsub(&named, 0,
 			    nd->nd_cred, p, exp);
 		} else {
-			nd->nd_repstat = nfsvno_removesub(&named, 0,
-			    nd->nd_cred, p, exp);
+			nd->nd_repstat = nfsvno_removesub(&named, false, nd, p,
+			    exp);
 		}
 	}
 	if (!(nd->nd_flag & ND_NFSV2)) {
@@ -1770,8 +1770,7 @@ nfsrvd_rename(struct nfsrv_descript *nd, int isdgram,
 	if (fromnd.ni_vp->v_type == VDIR)
 		tond.ni_cnd.cn_flags |= WILLBEDIR;
 	nd->nd_repstat = nfsvno_namei(nd, &tond, tdp, 0, &tnes, &tdirp);
-	nd->nd_repstat = nfsvno_rename(&fromnd, &tond, nd->nd_repstat,
-	    nd->nd_flag, nd->nd_cred, p);
+	nd->nd_repstat = nfsvno_rename(&fromnd, &tond, nd, p);
 	if (fdirp)
 		fdiraft_ret = nfsvno_getattr(fdirp, &fdiraft, nd, p, 0, NULL);
 	if (tdirp)
@@ -2857,7 +2856,7 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 	int how = NFSCREATE_UNCHECKED;
 	int32_t cverf[2], tverf[2] = { 0, 0 };
 	vnode_t vp = NULL, dirp = NULL;
-	struct nfsvattr nva, dirfor, diraft;
+	struct nfsvattr nva, dirfor, diraft, nva2;
 	struct nameidata named;
 	nfsv4stateid_t stateid, delegstateid;
 	nfsattrbit_t attrbits;
@@ -3107,11 +3106,23 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 			}
 			break;
 		    case NFSCREATE_EXCLUSIVE:
-			exclusive_flag = 1;
 			if (nd->nd_repstat == 0 && named.ni_vp == NULL)
 				nva.na_mode = 0;
-			break;
+			/* FALLTHROUGH */
 		    case NFSCREATE_EXCLUSIVE41:
+			if (nd->nd_repstat == 0 && named.ni_vp != NULL) {
+				nd->nd_repstat = nfsvno_getattr(named.ni_vp,
+				    &nva2, nd, p, 1, NULL);
+				if (nd->nd_repstat == 0) {
+					tverf[0] = nva2.na_atime.tv_sec;
+					tverf[1] = nva2.na_atime.tv_nsec;
+					if (cverf[0] != tverf[0] ||
+					     cverf[1] != tverf[1])
+						nd->nd_repstat = EEXIST;
+				}
+				if (nd->nd_repstat != 0)
+					done_namei = true;
+			}
 			exclusive_flag = 1;
 			break;
 		    }
@@ -3201,16 +3212,8 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 		    NFSACCCHK_VPISLOCKED, NULL);
 	}
 
-	if (!nd->nd_repstat) {
+	if (!nd->nd_repstat)
 		nd->nd_repstat = nfsvno_getattr(vp, &nva, nd, p, 1, NULL);
-		if (!nd->nd_repstat) {
-			tverf[0] = nva.na_atime.tv_sec;
-			tverf[1] = nva.na_atime.tv_nsec;
-		}
-	}
-	if (!nd->nd_repstat && exclusive_flag && (cverf[0] != tverf[0] ||
-	    cverf[1] != tverf[1]))
-		nd->nd_repstat = EEXIST;
 	/*
 	 * Do the open locking/delegation stuff.
 	 */

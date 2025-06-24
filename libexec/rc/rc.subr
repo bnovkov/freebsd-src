@@ -223,10 +223,11 @@ rc_trace()
 list_vars()
 {
 	# Localize 'set' option below.
-	local -
+	local - _s
 	local IFS=$'\n' line varname
 
-	# Disable path expansion in unquoted 'for' parameters below.
+	# Disable path expansion temporarily in unquoted 'for' parameters below.
+	_s=$(set +o)
 	set -o noglob
 
 	for line in $(set); do
@@ -241,6 +242,7 @@ list_vars()
 			;;
 		esac
 	done
+	eval $_s
 }
 
 # set_rcvar [var] [defval] [desc]
@@ -290,6 +292,19 @@ set_rcvar_obsolete()
 	eval ${1}_newvar=\"$2\"
 	shift 2
 	eval ${_var}_obsolete_msg=\"$*\"
+}
+
+# expandpath str
+#	Apply pathname expansion to str.
+#
+expandpath()
+{
+	local _s
+
+	_s=$(set +o)
+	set +o noglob
+	echo $1
+	eval $_s
 }
 
 #
@@ -1214,27 +1229,43 @@ run_rc_command()
 		fi
 	fi
 
-	_svcj_ip="inherit"
 	_svcj_ip4_addrs=""
 	_svcj_ip6_addrs=""
-
-	for addr in $_svcj_ipaddrs; do
-		case $addr in
-			*:*) _svcj_ip6_addrs="$addr,${_svcj_ip6_addrs}" ;;
-			*) _svcj_ip4_addrs="$addr,${_svcj_ip4_addrs}" ;;
-		esac
-	done
-
 	_svcj_cmd_options=""
 
-	if [ -n "$_svcj_ip4_addrs" ]; then
-		_svcj_cmd_options="ip4.addr=${_svcj_ip4_addrs%*,} ${_svcj_cmd_options}"
+	if [ -n "$_svcj_ipaddrs" ]; then
 		_svcj_ip="new"
+
+		for addr in $_svcj_ipaddrs; do
+			case $addr in
+				*:*) _svcj_ip6_addrs="$addr,${_svcj_ip6_addrs}" ;;
+				*) _svcj_ip4_addrs="$addr,${_svcj_ip4_addrs}" ;;
+			esac
+		done
+	else
+		_svcj_ip="inherit"
 	fi
 
-	if [ -n "$_svcj_ip6_addrs" ]; then
-		_svcj_cmd_options="ip6.addr=${_svcj_ip6_addrs%*,} ${_svcj_cmd_options}"
-		_svcj_ip="new"
+	if check_kern_features inet; then
+		_svcj_ip4="ip4=${_svcj_ip}"
+		if [ -n "$_svcj_ip4_addrs" ]; then
+			_svcj_cmd_options="ip4.addr=${_svcj_ip4_addrs%*,} ${_svcj_cmd_options}"
+		fi
+	else
+		if [ -n "$_svcj_ip4_addrs" ]; then
+			warn "$rc_service: ${name}_svcj_ipaddrs contains at least one IPv4 address, but IPv4 is not enabled in the kernel; IPv4 addresses will be ignored."
+		fi
+	fi
+
+	if check_kern_features inet6; then
+		_svcj_ip6="ip6=${_svcj_ip}"
+		if [ -n "$_svcj_ip6_addrs" ]; then
+			_svcj_cmd_options="ip6.addr=${_svcj_ip6_addrs%*,} ${_svcj_cmd_options}"
+		fi
+	else
+		if [ -n "$_svcj_ip6_addrs" ]; then
+			warn "$rc_service: ${name}_svcj_ipaddrs contains at least one IPv6 address, but IPv6 is not enabled in the kernel; IPv6 addresses will be ignored."
+		fi
 	fi
 
 	if [ -n "$_svcj_options" ]; then	# translate service jail options
@@ -1245,19 +1276,19 @@ run_rc_command()
 					_svcj_cmd_options="allow.mlock ${_svcj_cmd_options}"
 					;;
 				netv4)
-					_svcj_cmd_options="ip4=${_svcj_ip} allow.reserved_ports ${_svcj_cmd_options}"
+					_svcj_cmd_options="${_svcj_ip4} allow.reserved_ports ${_svcj_cmd_options}"
 					;;
 				netv6)
-					_svcj_cmd_options="ip6=${_svcj_ip} allow.reserved_ports ${_svcj_cmd_options}"
+					_svcj_cmd_options="${_svcj_ip6} allow.reserved_ports ${_svcj_cmd_options}"
 					;;
 				net_basic)
-					_svcj_cmd_options="ip4=${_svcj_ip} ip6=${_svcj_ip} allow.reserved_ports ${_svcj_cmd_options}"
+					_svcj_cmd_options="${_svcj_ip4} ${_svcj_ip6} allow.reserved_ports ${_svcj_cmd_options}"
 					;;
 				net_raw)
 					_svcj_cmd_options="allow.raw_sockets ${_svcj_cmd_options}"
 					;;
 				net_all)
-					_svcj_cmd_options="allow.socket_af allow.raw_sockets allow.reserved_ports ip4=${_svcj_ip} ip6=${_svcj_ip} ${_svcj_cmd_options}"
+					_svcj_cmd_options="allow.socket_af allow.raw_sockets allow.reserved_ports ${_svcj_ip4} ${_svcj_ip6} ${_svcj_cmd_options}"
 					;;
 				nfsd)
 					_svcj_cmd_options="allow.nfsd enforce_statfs=1 ${_svcj_cmd_options}"
@@ -1767,14 +1798,19 @@ _run_rc_setup()
 
 _run_rc_doit()
 {
-	local _m
+	local _m _s
 
 	debug "run_rc_command: doit: $*"
 	_m=$(umask)
 	${_umask:+umask ${_umask}}
+
+	# Disable pathname expansion temporarily for run_rc_command. 
+	_s=$(set +o)
+	set -o noglob
 	eval "$@"
 	_return=$?
 	umask ${_m}
+	eval $_s
 
 	# If command failed and force isn't set, request exit.
 	if [ $_return -ne 0 ] && [ -z "$rc_force" ]; then

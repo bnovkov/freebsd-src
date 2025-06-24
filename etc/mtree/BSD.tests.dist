@@ -80,6 +80,8 @@
     ..
     cddl
         lib
+            libtpool
+            ..
         ..
         sbin
         ..
@@ -315,6 +317,8 @@
             dynamiclib
             ..
             dynamicpie
+            ..
+            errno
             ..
             static
             ..

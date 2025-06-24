@@ -39,6 +39,7 @@
 #include <sys/mman.h>
 #include <sys/mutex.h>
 #include <sys/reg.h>
+#include <sys/sleepqueue.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
@@ -689,6 +690,9 @@ sys_ptrace(struct thread *td, struct ptrace_args *uap)
 			break;
 		r.sr.pscr_args = pscr_args;
 		break;
+	case PTINTERNAL_FIRST ... PTINTERNAL_LAST:
+		error = EINVAL;
+		break;
 	default:
 		addr = uap->addr;
 		break;
@@ -1165,7 +1169,9 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		break;
 
 	case PT_GET_SC_ARGS:
-		CTR1(KTR_PTRACE, "PT_GET_SC_ARGS: pid %d", p->p_pid);
+	case PTLINUX_GET_SC_ARGS:
+		CTR2(KTR_PTRACE, "%s: pid %d", req == PT_GET_SC_ARGS ?
+		    "PT_GET_SC_ARGS" : "PT_LINUX_GET_SC_ARGS", p->p_pid);
 		if (((td2->td_dbgflags & (TDB_SCE | TDB_SCX)) == 0 &&
 		     td2->td_sa.code == 0)
 #ifdef COMPAT_FREEBSD32
@@ -1175,11 +1181,21 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			error = EINVAL;
 			break;
 		}
-		bzero(addr, sizeof(td2->td_sa.args));
-		/* See the explanation in linux_ptrace_get_syscall_info(). */
-		bcopy(td2->td_sa.args, addr, SV_PROC_ABI(td->td_proc) ==
-		    SV_ABI_LINUX ? sizeof(td2->td_sa.args) :
-		    td2->td_sa.callp->sy_narg * sizeof(syscallarg_t));
+		if (req == PT_GET_SC_ARGS) {
+			bzero(addr, sizeof(td2->td_sa.args));
+			bcopy(td2->td_sa.args, addr, td2->td_sa.callp->sy_narg *
+			    sizeof(syscallarg_t));
+		} else {
+			/*
+			 * Emulate a Linux bug which which strace(1) depends on:
+			 * at initialization it tests whether ptrace works by
+			 * calling close(2), or some other single-argument
+			 * syscall, _with six arguments_, and then verifies
+			 * whether it can fetch them all using this API;
+			 * otherwise it bails out.
+			 */
+			bcopy(td2->td_sa.args, addr, 6 * sizeof(syscallarg_t));
+		}
 		break;
 
 	case PT_GET_SC_RET:
@@ -1233,6 +1249,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 				    (u_long)(uintfptr_t)addr);
 				if (error)
 					goto out;
+				td2->td_dbgflags |= TDB_USERWR;
 			}
 			switch (req) {
 			case PT_TO_SCE:
@@ -1307,8 +1324,15 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 				p->p_flag2 &= ~P2_PTRACE_FSTP;
 			}
 
-			/* should we send SIGCHLD? */
-			/* childproc_continued(p); */
+			/*
+			 * Send SIGCHLD and wakeup the parent as needed.  It
+			 * may be the case that they had stopped the child
+			 * before it got ptraced, and now they're in the middle
+			 * of a wait(2) for it to continue.
+			 */
+			PROC_LOCK(p->p_pptr);
+			childproc_continued(p);
+			PROC_UNLOCK(p->p_pptr);
 			break;
 		}
 
@@ -1344,6 +1368,27 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		 */
 		if (data == SIGKILL)
 			proc_wkilled(p);
+
+		/*
+		 * If the PT_CONTINUE-like operation is attempted on
+		 * the thread on sleepq, this is possible only after
+		 * the transparent PT_ATTACH.  In this case, if the
+		 * caller modified the thread state, e.g. by writing
+		 * register file or specifying the pc, make the thread
+		 * xstopped by waking it up.
+		 */
+		if ((td2->td_dbgflags & TDB_USERWR) != 0) {
+			if (pt_attach_transparent) {
+				thread_lock(td2);
+				if (TD_ON_SLEEPQ(td2) &&
+				    (td2->td_flags & TDF_SINTR) != 0) {
+					sleepq_abort(td2, EINTR);
+				} else {
+					thread_unlock(td2);
+				}
+			}
+			td2->td_dbgflags &= ~TDB_USERWR;
+		}
 
 		/*
 		 * Unsuspend all threads.  To leave a thread

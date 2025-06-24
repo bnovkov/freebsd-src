@@ -383,7 +383,7 @@ cc_conn_init(struct tcpcb *tp)
 		}
 		TCPT_RANGESET(tp->t_rxtcur,
 		    ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1,
-		    tp->t_rttmin, TCPTV_REXMTMAX);
+		    tp->t_rttmin, tcp_rexmit_max);
 	}
 	if (metrics.hc_ssthresh) {
 		/*
@@ -1385,7 +1385,7 @@ dropwithreset:
 	    ((V_blackhole == 1 && (thflags & TH_SYN)) || V_blackhole > 1))) &&
 	    (V_blackhole_local || (
 #ifdef INET6
-	    isipv6 ? !in6_localaddr(&ip6->ip6_src) :
+	    isipv6 ? !in6_localip(&ip6->ip6_src) :
 #endif
 #ifdef INET
 	    !in_localip(ip->ip_src)
@@ -3732,7 +3732,7 @@ tcp_xmit_timer(struct tcpcb *tp, int rtt)
 	 * the minimum feasible timer (which is 2 ticks).
 	 */
 	TCPT_RANGESET(tp->t_rxtcur, TCP_REXMTVAL(tp),
-		      max(tp->t_rttmin, rtt + 2), TCPTV_REXMTMAX);
+	    max(tp->t_rttmin, rtt + 2), tcp_rexmit_max);
 
 	/*
 	 * We received an ack for a packet that wasn't retransmitted;

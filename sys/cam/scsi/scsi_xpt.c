@@ -40,6 +40,7 @@
 #include <sys/fcntl.h>
 #include <sys/md5.h>
 #include <sys/sbuf.h>
+#include <sys/stdarg.h>
 
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -59,7 +60,6 @@
 #include <cam/scsi/scsi_all.h>
 #include <cam/scsi/scsi_message.h>
 #include <cam/scsi/scsi_pass.h>
-#include <machine/stdarg.h>	/* for xpt_print below */
 
 struct scsi_quirk_entry {
 	struct scsi_inquiry_pattern inq_pat;
@@ -618,6 +618,7 @@ SCSI_XPT_XPORT(usb, USB);
 SCSI_XPT_XPORT(iscsi, ISCSI);
 SCSI_XPT_XPORT(srp, SRP);
 SCSI_XPT_XPORT(ppb, PPB);
+SCSI_XPT_XPORT(ufshci, UFSHCI);
 
 #undef SCSI_XPORT_XPORT
 

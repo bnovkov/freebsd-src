@@ -192,11 +192,11 @@ vn_open(struct nameidata *ndp, int *flagp, int cmode, struct file *fp)
 }
 
 static uint64_t
-open2nameif(int fmode, u_int vn_open_flags)
+open2nameif(int fmode, u_int vn_open_flags, uint64_t cn_flags)
 {
 	uint64_t res;
 
-	res = ISOPEN | LOCKLEAF;
+	res = ISOPEN | LOCKLEAF | cn_flags;
 	if ((fmode & O_RESOLVE_BENEATH) != 0)
 		res |= RBENEATH;
 	if ((fmode & O_EMPTY_PATH) != 0)
@@ -207,12 +207,17 @@ open2nameif(int fmode, u_int vn_open_flags)
 		res |= OPENWRITE;
 	if ((fmode & O_NAMEDATTR) != 0)
 		res |= OPENNAMED | CREATENAMED;
+	if ((fmode & O_NOFOLLOW) != 0)
+		res &= ~FOLLOW;
 	if ((vn_open_flags & VN_OPEN_NOAUDIT) == 0)
 		res |= AUDITVNODE1;
+	else
+		res &= ~AUDITVNODE1;
 	if ((vn_open_flags & VN_OPEN_NOCAPCHECK) != 0)
 		res |= NOCAPCHECK;
 	if ((vn_open_flags & VN_OPEN_WANTIOCTLCAPS) != 0)
 		res |= WANTIOCTLCAPS;
+
 	return (res);
 }
 
@@ -263,7 +268,9 @@ restart:
 		return (EINVAL);
 	else if ((fmode & (O_CREAT | O_DIRECTORY)) == O_CREAT) {
 		ndp->ni_cnd.cn_nameiop = CREATE;
-		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags);
+		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags,
+		    ndp->ni_cnd.cn_flags);
+
 		/*
 		 * Set NOCACHE to avoid flushing the cache when
 		 * rolling in many files at once.
@@ -272,8 +279,8 @@ restart:
 		 * exist despite NOCACHE.
 		 */
 		ndp->ni_cnd.cn_flags |= LOCKPARENT | NOCACHE | NC_KEEPPOSENTRY;
-		if ((fmode & O_EXCL) == 0 && (fmode & O_NOFOLLOW) == 0)
-			ndp->ni_cnd.cn_flags |= FOLLOW;
+		if ((fmode & O_EXCL) != 0)
+			ndp->ni_cnd.cn_flags &= ~FOLLOW;
 		if ((vn_open_flags & VN_OPEN_INVFS) == 0)
 			bwillwrite();
 		if ((error = namei(ndp)) != 0)
@@ -353,9 +360,8 @@ restart:
 		}
 	} else {
 		ndp->ni_cnd.cn_nameiop = LOOKUP;
-		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags);
-		ndp->ni_cnd.cn_flags |= (fmode & O_NOFOLLOW) != 0 ? NOFOLLOW :
-		    FOLLOW;
+		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags,
+		    ndp->ni_cnd.cn_flags);
 		if ((fmode & FWRITE) == 0)
 			ndp->ni_cnd.cn_flags |= LOCKSHARED;
 		if ((error = namei(ndp)) != 0)
@@ -825,7 +831,7 @@ foffset_lock(struct file *fp, int flags)
 		}
 		DROP_GIANT();
 		sleepq_add(&fp->f_vnread_flags, NULL, "vofflock", 0, 0);
-		sleepq_wait(&fp->f_vnread_flags, PUSER -1);
+		sleepq_wait(&fp->f_vnread_flags, PRI_MAX_KERN);
 		PICKUP_GIANT();
 		sleepq_lock(&fp->f_vnread_flags);
 		state = atomic_load_16(flagsp);
@@ -887,7 +893,7 @@ foffset_lock(struct file *fp, int flags)
 	if ((flags & FOF_NOLOCK) == 0) {
 		while (fp->f_vnread_flags & FOFFSET_LOCKED) {
 			fp->f_vnread_flags |= FOFFSET_LOCK_WAITING;
-			msleep(&fp->f_vnread_flags, mtxp, PUSER -1,
+			msleep(&fp->f_vnread_flags, mtxp, PRI_MAX_KERN,
 			    "vofflock", 0);
 		}
 		fp->f_vnread_flags |= FOFFSET_LOCKED;
@@ -1955,7 +1961,7 @@ vn_start_write_refed(struct mount *mp, int flags, bool mplocked)
 			if (flags & V_PCATCH)
 				mflags |= PCATCH;
 		}
-		mflags |= (PUSER - 1);
+		mflags |= PRI_MAX_KERN;
 		while ((mp->mnt_kern_flag & MNTK_SUSPEND) != 0) {
 			if ((flags & V_NOWAIT) != 0) {
 				error = EWOULDBLOCK;
@@ -2080,7 +2086,7 @@ vn_start_secondary_write(struct vnode *vp, struct mount **mpp, int flags)
 		if ((flags & V_PCATCH) != 0)
 			mflags |= PCATCH;
 	}
-	mflags |= (PUSER - 1) | PDROP;
+	mflags |= PRI_MAX_KERN | PDROP;
 	error = msleep(&mp->mnt_flag, MNT_MTX(mp), mflags, "suspfs", 0);
 	vfs_rel(mp);
 	if (error == 0)
@@ -2165,7 +2171,7 @@ vfs_write_suspend(struct mount *mp, int flags)
 		return (EALREADY);
 	}
 	while (mp->mnt_kern_flag & MNTK_SUSPEND)
-		msleep(&mp->mnt_flag, MNT_MTX(mp), PUSER - 1, "wsuspfs", 0);
+		msleep(&mp->mnt_flag, MNT_MTX(mp), PRI_MAX_KERN, "wsuspfs", 0);
 
 	/*
 	 * Unmount holds a write reference on the mount point.  If we
@@ -2186,7 +2192,7 @@ vfs_write_suspend(struct mount *mp, int flags)
 	mp->mnt_susp_owner = curthread;
 	if (mp->mnt_writeopcount > 0)
 		(void) msleep(&mp->mnt_writeopcount, 
-		    MNT_MTX(mp), (PUSER - 1)|PDROP, "suspwt", 0);
+		    MNT_MTX(mp), PRI_MAX_KERN | PDROP, "suspwt", 0);
 	else
 		MNT_IUNLOCK(mp);
 	if ((error = VFS_SYNC(mp, MNT_SUSPEND)) != 0) {

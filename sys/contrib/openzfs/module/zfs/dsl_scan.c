@@ -235,6 +235,9 @@ static uint_t zfs_resilver_defer_percent = 10;
 #define	DSL_SCAN_IS_SCRUB(scn)		\
 	((scn)->scn_phys.scn_func == POOL_SCAN_SCRUB)
 
+#define	DSL_SCAN_IS_RESILVER(scn) \
+	((scn)->scn_phys.scn_func == POOL_SCAN_RESILVER)
+
 /*
  * Enable/disable the processing of the free_bpobj object.
  */
@@ -1021,7 +1024,7 @@ dsl_scan(dsl_pool_t *dp, pool_scan_func_t func, uint64_t txgstart,
 			if (err == 0) {
 				spa_event_notify(spa, NULL, NULL,
 				    ESC_ZFS_ERRORSCRUB_RESUME);
-				return (ECANCELED);
+				return (0);
 			}
 			return (SET_ERROR(err));
 		}
@@ -1037,7 +1040,7 @@ dsl_scan(dsl_pool_t *dp, pool_scan_func_t func, uint64_t txgstart,
 		    POOL_SCRUB_NORMAL);
 		if (err == 0) {
 			spa_event_notify(spa, NULL, NULL, ESC_ZFS_SCRUB_RESUME);
-			return (SET_ERROR(ECANCELED));
+			return (0);
 		}
 		return (SET_ERROR(err));
 	}
@@ -1169,7 +1172,7 @@ dsl_scan_done(dsl_scan_t *scn, boolean_t complete, dmu_tx_t *tx)
 			vdev_dtl_reassess(spa->spa_root_vdev, tx->tx_txg,
 			    scn->scn_phys.scn_max_txg, B_TRUE, B_FALSE);
 
-			if (scn->scn_phys.scn_min_txg) {
+			if (DSL_SCAN_IS_RESILVER(scn)) {
 				nvlist_t *aux = fnvlist_alloc();
 				fnvlist_add_string(aux, ZFS_EV_RESILVER_TYPE,
 				    "healing");
@@ -1437,7 +1440,7 @@ dsl_scan_restart_resilver(dsl_pool_t *dp, uint64_t txg)
 	if (txg == 0) {
 		dmu_tx_t *tx;
 		tx = dmu_tx_create_dd(dp->dp_mos_dir);
-		VERIFY(0 == dmu_tx_assign(tx, DMU_TX_WAIT));
+		VERIFY0(dmu_tx_assign(tx, DMU_TX_WAIT | DMU_TX_SUSPEND));
 
 		txg = dmu_tx_get_txg(tx);
 		dp->dp_scan->scn_restart_txg = txg;

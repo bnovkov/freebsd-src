@@ -40,6 +40,7 @@
 #include <sys/queue.h>
 #include <sys/param.h>
 #include <sys/cpuset.h>
+#include <sys/exterrvar.h>
 #include <machine/atomic.h>
 #include <errno.h>
 #include <limits.h>
@@ -576,6 +577,8 @@ struct pthread {
 
 	/* pthread_set/get_name_np */
 	char			*name;
+
+	struct uexterror	uexterr;
 };
 
 #define THR_SHOULD_GC(thrd) 						\
@@ -775,6 +778,8 @@ extern int		_suspend_all_cycle __hidden;
 extern struct pthread	*_single_thread __hidden;
 
 extern bool		_thr_after_fork __hidden;
+
+extern int	__thr_new_flags;
 
 /*
  * Function prototype definitions.
