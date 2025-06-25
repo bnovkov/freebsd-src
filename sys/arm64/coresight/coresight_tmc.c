@@ -339,12 +339,10 @@ tmc_deallocate_pgdir(struct coresight_pipeline *pipeline)
 		if (m == NULL)
 			break;
 
-		vm_page_lock(m);
 		m->oflags |= VPO_UNMANAGED;
 		m->flags &= ~PG_FICTITIOUS;
 		vm_page_unwire_noq(m);
 		vm_page_free(m);
-		vm_page_unlock(m);
 	}
 
 	free(pg_dir, M_CORESIGHT_TMC);
