@@ -65,9 +65,11 @@
 
 static int
 hwt_record_to_elf_img(struct trace_context *tc,
-    struct hwt_record_user_entry *entry, struct hwt_exec_img *img)
+    struct hwt_record_user_entry *entry, struct hwt_exec_img *img,
+    struct hwt_exec_img *img2)
 {
 	pmcstat_interned_string path;
+	struct pmcstat_image *rtldimage;
 	struct pmcstat_image *image;
 	struct pmc_plugins plugins;
 	struct pmcstat_args args;
@@ -102,7 +104,7 @@ hwt_record_to_elf_img(struct trace_context *tc,
 	}
 	addr = (unsigned long)entry->addr & ~1;
 	if (tc->mode == HWT_MODE_THREAD)
-		addr -= (image->pi_start - image->pi_vaddr);
+		addr += image->pi_vaddr;
 
 	pmcstat_image_link(tc->pp, image, addr);
 	dprintf("image pi_vaddr %lx pi_start %lx"
@@ -118,6 +120,35 @@ hwt_record_to_elf_img(struct trace_context *tc,
 	img->addr = addr;
 	img->path = entry->fullpath;
 
+	if (image->pi_isdynamic && image->pi_dynlinkerpath != NULL) {
+		rtldimage = pmcstat_image_from_path(image->pi_dynlinkerpath,
+		    0, &args, &plugins);
+		if (rtldimage == NULL) {
+			warnx("WARNING: rtld not found \"%s\".",
+			    pmcstat_string_unintern(image->pi_dynlinkerpath));
+			return (-1);
+		}
+
+		if (rtldimage->pi_type == PMCSTAT_IMAGE_UNKNOWN)
+			pmcstat_image_get_elf_params(rtldimage, &args);
+
+		if (rtldimage->pi_type != PMCSTAT_IMAGE_ELF32 &&
+		    rtldimage->pi_type != PMCSTAT_IMAGE_ELF64) {
+			warnx("WARNING: rtld not an ELF object \"%s\".",
+			    pmcstat_string_unintern(image->pi_dynlinkerpath));
+			return (-2);
+		}
+
+		pmcstat_image_link(tc->pp, rtldimage, entry->baseaddr +
+		    rtldimage->pi_vaddr);
+
+		img2->path = pmcstat_string_unintern(image->pi_dynlinkerpath);
+		if (hwt_elf_get_text_offs(img2->path, &img2->offs))
+			return (-1);
+		img2->size = image->pi_end - image->pi_start;
+		img2->addr = entry->baseaddr + rtldimage->pi_vaddr;
+	}
+
 	return (0);
 }
 
@@ -126,7 +157,7 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 {
 	struct hwt_record_user_entry *entry;
 	struct hwt_record_get record_get;
-	struct hwt_exec_img img;
+	struct hwt_exec_img img, img2;
 	struct hwt_wakeup w;
 	int nentries;
 	int error;
@@ -154,9 +185,8 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 		switch (entry->record_type) {
 		case HWT_RECORD_MMAP:
 		case HWT_RECORD_EXECUTABLE:
-		case HWT_RECORD_INTERP:
 		case HWT_RECORD_KERNEL:
-			if (hwt_record_to_elf_img(tc, entry, &img) != 0)
+			if (hwt_record_to_elf_img(tc, entry, &img, &img2) != 0)
 				continue;
 			/* Invoke backend callback, if any. */
 			if (tc->trace_dev->methods->image_load_cb != NULL &&

@@ -35,7 +35,6 @@ enum hwt_record_type {
 	HWT_RECORD_MMAP,
 	HWT_RECORD_MUNMAP,
 	HWT_RECORD_EXECUTABLE,
-	HWT_RECORD_INTERP,
 	HWT_RECORD_KERNEL,
 	HWT_RECORD_THREAD_CREATE,
 	HWT_RECORD_THREAD_SET_NAME,
@@ -54,6 +53,7 @@ struct hwt_record_entry {
 		struct {
 			char *fullpath;
 			uintptr_t addr;
+			uintptr_t baseaddr;
 		};
 		/* Used for BUFFER records. */
 		struct {

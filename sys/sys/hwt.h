@@ -84,6 +84,7 @@ struct hwt_record_user_entry {
 		struct {
 			char fullpath[MAXPATHLEN];
 			uintptr_t addr;
+			uintptr_t baseaddr;
 		};
 		/* Used for BUFFER records. */
 		struct {

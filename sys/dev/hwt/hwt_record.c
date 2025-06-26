@@ -71,7 +71,6 @@ hwt_record_clone(struct hwt_record_entry *ent, int flags)
 	switch (ent->record_type) {
 	case HWT_RECORD_MMAP:
 	case HWT_RECORD_EXECUTABLE:
-	case HWT_RECORD_INTERP:
 	case HWT_RECORD_KERNEL:
 		entry->fullpath = strdup(ent->fullpath, M_HWT_RECORD);
 		break;
@@ -90,9 +89,9 @@ hwt_record_to_user(struct hwt_record_entry *ent,
 	switch (ent->record_type) {
 	case HWT_RECORD_MMAP:
 	case HWT_RECORD_EXECUTABLE:
-	case HWT_RECORD_INTERP:
 	case HWT_RECORD_KERNEL:
 		usr->addr = ent->addr;
+		usr->baseaddr = ent->baseaddr;
 		strncpy(usr->fullpath, ent->fullpath, MAXPATHLEN);
 		break;
 	case HWT_RECORD_BUFFER:
@@ -181,7 +180,6 @@ hwt_record_entry_free(struct hwt_record_entry *entry)
 	switch (entry->record_type) {
 	case HWT_RECORD_MMAP:
 	case HWT_RECORD_EXECUTABLE:
-	case HWT_RECORD_INTERP:
 	case HWT_RECORD_KERNEL:
 		free(entry->fullpath, M_HWT_RECORD);
 		break;
