@@ -619,8 +619,8 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 	rv = vm_map_delete(map, addr, end);
 
 #ifdef HWT_HOOKS
-	struct hwt_record_entry ent;
 	if (HWT_HOOK_INSTALLED && rv == KERN_SUCCESS) {
+		struct hwt_record_entry ent;
 		ent.addr = (uintptr_t) addr;
 		ent.fullpath = NULL;
 		ent.record_type = HWT_RECORD_MUNMAP;

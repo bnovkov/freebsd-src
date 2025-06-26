@@ -3012,13 +3012,11 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 #endif
 
 #ifdef HWT_HOOKS
-	/* HWT: record dynamic libs. */
-	struct hwt_record_entry ent;
-	char *fullpath;
-	char *freepath;
-
 	if (HWT_HOOK_INSTALLED && (prot & VM_PROT_EXECUTE) != 0 &&
 	    error == 0) {
+		struct hwt_record_entry ent;
+		char *fullpath;
+		char *freepath;
 		if (vn_fullpath(vp, &fullpath, &freepath) == 0) {
 			ent.fullpath = fullpath;
 			ent.addr = (uintptr_t) *addr;
