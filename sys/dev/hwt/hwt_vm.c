@@ -122,8 +122,7 @@ hwt_vm_alloc_pages(struct hwt_vm *vm, int kva_req)
 	low = 0;
 	high = -1UL;
 	boundary = 0;
-	pflags = VM_ALLOC_NORMAL | VM_ALLOC_NOBUSY | VM_ALLOC_WIRED |
-	    VM_ALLOC_ZERO;
+	pflags = VM_ALLOC_NORMAL | VM_ALLOC_WIRED | VM_ALLOC_ZERO;
 	memattr = VM_MEMATTR_DEVICE;
 
 	if (kva_req) {
