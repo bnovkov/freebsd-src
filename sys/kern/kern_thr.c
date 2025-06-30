@@ -60,7 +60,7 @@
 #ifdef	HWPMC_HOOKS
 #include <sys/pmckern.h>
 #endif
-#ifdef	HWT_HOOKS
+#ifdef HWT_HOOKS
 #include <dev/hwt/hwt_hook.h>
 #endif
 

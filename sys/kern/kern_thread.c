@@ -61,7 +61,7 @@
 #ifdef	HWPMC_HOOKS
 #include <sys/pmckern.h>
 #endif
-#ifdef	HWT_HOOKS
+#ifdef HWT_HOOKS
 #include <dev/hwt/hwt_hook.h>
 #endif
 #include <sys/priv.h>
@@ -1007,7 +1007,7 @@ thread_exit(void)
 		PMC_CALL_HOOK_UNLOCKED(td, PMC_FN_THR_EXIT_LOG, NULL);
 #endif
 
-#ifdef	HWT_HOOKS
+#ifdef HWT_HOOKS
 	HWT_CALL_HOOK(td, HWT_THREAD_EXIT, NULL);
 #endif
 

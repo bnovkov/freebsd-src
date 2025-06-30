@@ -3017,6 +3017,7 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 		struct hwt_record_entry ent;
 		char *fullpath;
 		char *freepath;
+
 		if (vn_fullpath(vp, &fullpath, &freepath) == 0) {
 			ent.fullpath = fullpath;
 			ent.addr = (uintptr_t) *addr;
