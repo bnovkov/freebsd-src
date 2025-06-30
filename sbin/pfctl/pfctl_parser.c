@@ -135,7 +135,8 @@ static const struct icmptypeent icmp6_type[] = {
 	{ "niqry",	ICMP6_NI_QUERY },
 	{ "nirep",	ICMP6_NI_REPLY },
 	{ "mtraceresp",	MLD_MTRACE_RESP },
-	{ "mtrace",	MLD_MTRACE }
+	{ "mtrace",	MLD_MTRACE },
+	{ "listenrepv2", MLDV2_LISTENER_REPORT },
 };
 
 static const struct icmpcodeent icmp_code[] = {
@@ -1010,6 +1011,8 @@ print_rule(struct pfctl_rule *r, const char *anchor_call, int verbose, int numer
 	if (r->pktrate.limit)
 		printf(" max-pkt-rate %u/%u", r->pktrate.limit,
 		    r->pktrate.seconds);
+	if (r->max_pkt_size)
+		printf( " max-pkt-size %u", r->max_pkt_size);
 	if (r->scrub_flags & PFSTATE_SETMASK) {
 		char *comma = "";
 		printf(" set (");
