@@ -942,7 +942,7 @@ interpret:
 #endif
 
 #ifdef HWT_HOOKS
-	if (td->td_proc->p_flag2 & P2_HWT) {
+	if ((td->td_proc->p_flag2 & P2_HWT) != 0) {
 		struct hwt_record_entry ent;
 
 		ent.fullpath = imgp->execpath;
