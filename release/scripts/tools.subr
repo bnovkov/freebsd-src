@@ -11,3 +11,11 @@
 : ${ETDUMP:=etdump}
 : ${MAKEFS:=makefs}
 : ${MKIMG:=mkimg}
+
+: ${MAKEFSARGS:=""}
+: ${MKIMGARGS:=""}
+
+if [ -n $REPRODUCIBLE_BUILD ]; then
+MKIMGARGS="${MKIMGARGS} -t 1742574909"
+MAKEFSARGS="${MAKEFSARGS} -T 1742574909"
+fi

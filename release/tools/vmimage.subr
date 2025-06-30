@@ -295,7 +295,7 @@ vm_create_disk() {
 		WITH_UNIFIED_OBJDIR=yes \
 		make -C ${WORLDDIR}/stand -V .OBJDIR)"
 	BOOTFILES="$(realpath ${BOOTFILES})"
-	MAKEFSARGS="-s ${VMSIZE} -D"
+	MAKEFSARGS="${MAKEFSARGS} -s ${VMSIZE} -D"
 
 	case "${TARGET}:${TARGET_ARCH}" in
 		amd64:amd64 | i386:i386)
@@ -303,22 +303,22 @@ vm_create_disk() {
 			BOOTPARTS="-b ${BOOTFILES}/i386/pmbr/pmbr \
 				   -p freebsd-boot/bootfs:=${BOOTFILES}/${X86GPTBOOTFILE}${BOOTPARTSOFFSET}"
 			ROOTFSPART="-p ${FSPARTTYPE}/rootfs:=${VMBASE}"
-			MAKEFSARGS="$MAKEFSARGS -B little"
+			MAKEFSARGS="${MAKEFSARGS} -B little"
 			;;
 		arm:armv7 | arm64:aarch64 | riscv:riscv64*)
 			ESP=yes
 			BOOTPARTS=
 			ROOTFSPART="-p ${FSPARTTYPE}/rootfs:=${VMBASE}"
-			MAKEFSARGS="$MAKEFSARGS -B little"
+			MAKEFSARGS="${MAKEFSARGS} -B little"
 			;;
 		powerpc:powerpc*)
 			ESP=no
 			BOOTPARTS="-p prepboot:=${BOOTFILES}/powerpc/boot1.chrp/boot1.elf -a 1"
 			ROOTFSPART="-p freebsd:=${VMBASE}"
 			if [ ${TARGET_ARCH} = powerpc64le ]; then
-				MAKEFSARGS="$MAKEFSARGS -B little"
+				MAKEFSARGS="${MAKEFSARGS} -B little"
 			else
-				MAKEFSARGS="$MAKEFSARGS -B big"
+				MAKEFSARGS="${MAKEFSARGS} -B big"
 			fi
 			;;
 		*)
@@ -343,7 +343,7 @@ vm_create_disk() {
 	buildfs
 
 	echo "Building final disk image...  Please wait."
-	${MKIMG} -s ${PARTSCHEME} -f ${VMFORMAT} \
+	${MKIMG} ${MKIMGARGS} -s ${PARTSCHEME} -f ${VMFORMAT} \
 		${BOOTPARTS} \
 		${SWAPOPT} \
 		${CONFIG_DRIVE} \
