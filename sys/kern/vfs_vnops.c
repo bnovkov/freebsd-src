@@ -3023,8 +3023,7 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 			ent.addr = (uintptr_t) *addr;
 			ent.record_type = HWT_RECORD_MMAP;
 			HWT_CALL_HOOK(td, HWT_MMAP, &ent);
-			if (freepath != NULL)
-				free(freepath, M_TEMP);
+			free(freepath, M_TEMP);
 		}
 	}
 #endif
