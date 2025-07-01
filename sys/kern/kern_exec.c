@@ -944,12 +944,13 @@ interpret:
 #ifdef HWT_HOOKS
 	if ((td->td_proc->p_flag2 & P2_HWT) != 0) {
 		struct hwt_record_entry ent;
-
+		VOP_UNLOCK(imgp->vp);
 		ent.fullpath = imgp->execpath;
 		ent.addr = imgp->et_dyn_addr;
 		ent.baseaddr = imgp->reloc_base;
 		ent.record_type = HWT_RECORD_EXECUTABLE;
 		HWT_CALL_HOOK(td, HWT_EXEC, &ent);
+		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
 	}
 #endif
 
