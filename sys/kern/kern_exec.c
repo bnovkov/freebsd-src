@@ -944,6 +944,7 @@ interpret:
 #ifdef HWT_HOOKS
 	if ((td->td_proc->p_flag2 & P2_HWT) != 0) {
 		struct hwt_record_entry ent;
+
 		VOP_UNLOCK(imgp->vp);
 		ent.fullpath = imgp->execpath;
 		ent.addr = imgp->et_dyn_addr;
