@@ -171,7 +171,6 @@ static int
 hwt_ctx_alloc(struct trace_context *tc)
 {
 	struct hwt_alloc al;
-	cpuset_t cpu_map;
 	int error = 0;
 
 	if (tc->trace_dev->methods->init != NULL){
@@ -179,8 +178,6 @@ hwt_ctx_alloc(struct trace_context *tc)
 		if (error)
 			return (error);
 	}
-
-	CPU_ZERO(&cpu_map);
 
 	memset(&al, 0, sizeof(struct hwt_alloc));
 
