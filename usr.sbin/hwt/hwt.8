@@ -22,12 +22,12 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd May 05, 2025
-.Dt hwt 8
+.Dd May 5, 2025
+.Dt HWT 8
 .Os
 .Sh NAME
 .Nm hwt
-.Nd "hardware-accelerated program tracing"
+.Nd hardware-accelerated program tracing
 .Sh SYNOPSIS
 .Op Fl ghr
 .Op Fl b Ar bufsize
@@ -51,11 +51,13 @@ framework to launch and trace the executable specified by
 .Pa path
 and decode the resulting program execution traces.
 The options are as follows:
-.Bl -tag -width indent
+.Bl -tag -width "event_payload"
 .It Fl b Ar size
-Specify the size of the tracing buffer in bytes. Must be a multiple of the system's page size.
+Specify the size of the tracing buffer in bytes.
+Must be a multiple of the system's page size.
 .It Fl c Ar name
-Name of the tracing backend to be used. Currently supported tracing backends are:
+Name of the tracing backend to be used.
+Currently supported tracing backends are:
 .Pp
 .Bl -bullet -compact
 .It
@@ -65,9 +67,9 @@ spe (aarch64)
 .It
 pt (amd64)
 .El
+.Pp
 .Nm
 will select the first available backend if this flag is not passed.
-.Pp
 .It Fl f Ar fname
 Filter trace by function name.
 .It Fl i Ar obj
@@ -88,12 +90,12 @@ Filter trace by thread id
 when tracing in thread mode.
 .It Fl w Ar path
 Store decoded trace to file specified by
-.Ar path.
+.Ar path .
 .El
 .Pp
 .Nm
 currently supports the following format keywords:
-.Bl -tag -width lockname
+.Bl -tag -width "event_payload"
 .It Cm offset
 The trace file offset.
 .It Cm id
@@ -108,6 +110,7 @@ Program counter value.
 Tracing event type.
 .It Cm event_payload
 Payload associated with a generated tracing event.
+.El
 .Sh EXIT STATUS
 .Ex -std
 .Sh EXAMPLES
@@ -127,13 +130,13 @@ Launch program and trace execution of
 .Pp
 Trace execution of a kernel function on CPU core 0:
 .Pp
-.Dl "hwt -s 0 -i kernel -f cpu_switch"
-.Pp
+.Dl hwt -s 0 -i kernel -f cpu_switch
 .Sh SEE ALSO
-.Xr hwt 4 .
+.Xr hwt 4
 .Sh HISTORY
 The
 .Nm
-utility first appeared in FreeBSD 15.0.
+utility first appeared in
+.Fx 15.0 .
 .Sh AUTHORS
 .An Bojan Novković Aq Mt bnovkov@freebsd.org
