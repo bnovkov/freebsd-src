@@ -142,7 +142,7 @@ SUBDIR=	\
 	${_hptnr} \
 	${_hptrr} \
 	hwpmc \
-	hwt \
+	${_hwt} \
 	${_hyperv} \
 	i2c \
 	${_iavf} \
@@ -869,6 +869,10 @@ _sgx=		sgx
 _sgx_linux=	sgx_linux
 _smartpqi=	smartpqi
 _p2sb=		p2sb
+.endif
+
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
+_hwt=		hwt
 .endif
 
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \

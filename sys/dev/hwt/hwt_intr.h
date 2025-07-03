@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
+ * Copyright (c) 2023-2025 Bojan Novković <bnovkov@freebsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions

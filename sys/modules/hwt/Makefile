@@ -18,6 +18,4 @@ SRCS	=			\
 	hwt_thread.c		\
 	hwt_vm.c
 
-# EXPORT_SYMS=	hwt_backend_register
-
 .include <bsd.kmod.mk>

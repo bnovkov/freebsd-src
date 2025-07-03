@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2023 Ruslan Bukin <br@bsdpad.com>
+ * Copyright (c) 2023-2025 Ruslan Bukin <br@bsdpad.com>
  *
  * This work was supported by Innovate UK project 105694, "Digital Security
  * by Design (DSbD) Technology Platform Prototype".
@@ -36,7 +36,7 @@
 #ifndef _SYS_HWT_H_
 #define _SYS_HWT_H_
 
-#define	HWT_MAGIC	0x42
+#define	HWT_MAGIC		0x42
 #define	HWT_IOC_ALLOC		_IOW(HWT_MAGIC, 0x00, struct hwt_alloc)
 #define	HWT_IOC_START		_IOW(HWT_MAGIC, 0x01, struct hwt_start)
 #define	HWT_IOC_STOP		_IOW(HWT_MAGIC, 0x02, struct hwt_stop)
