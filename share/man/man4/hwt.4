@@ -123,7 +123,7 @@ tracing as needed. This is particulary useful if address range filtering
 feature is configured, allowing user to trace particular function of a target
 executable or dynamic library.
 .Sh IOCTLS
-CTX management character devices accepts several IOC requests:
+CTX management character devices accept several IOC requests:
 .Bl -tag -width 01234567890123aaabbb
 .It HWT_IOC_START
 Start tracing. In HWT CPU mode the tracing does actually start with this IOCTL request. In the Thread mode, the tracing "running" flag set, but tracing begins after scheduler switches the target thread onto CPU and return to user mode.
