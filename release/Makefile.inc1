@@ -45,3 +45,6 @@ BUILDDATE!=		date +%Y%m%d
 # Override UNAME_r to allow building ports for a different branch.
 UNAME_r=	${REVISION}-${BRANCH}
 .export UNAME_r
+.if defined(WITH_REPRODUCIBLE_BUILD)
+PKG_INSTALL_EPOCH=     1742574909
+.endif
