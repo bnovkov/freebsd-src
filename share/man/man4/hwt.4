@@ -88,9 +88,9 @@ When loaded into kernel, the
 framework provides
 .Cd /dev/hwt
 character device for tracing contexts (CTX) management.
-The only request it accepts is HWT_IOC_ALLOC.
-The HWT_IOC_ALLOC request allocates kernel tracing context (CTX) based on
-requested mode of operation, set of CPUs and/or pid.
+The only IOC request it accepts is HWT_IOC_ALLOC.
+This request allocates kernel tracing context (CTX) based on requested mode of
+operation, set of CPUs and/or pid.
 .Pp
 The HWT framework supports two methods of operation:
 .Bl -tag -width ".Em Thread mode"
@@ -123,7 +123,8 @@ This is particulary useful if address range filtering feature is configured,
 allowing user to trace particular function of a target executable or dynamic
 library.
 .Sh IOCTLS
-CTX management character devices accept several IOC requests:
+Once a CTX is allocated, it's management character device accept several IOC
+requests:
 .Bl -tag -width 01234567890123aaabbb
 .It HWT_IOC_START
 Start tracing.
@@ -133,7 +134,8 @@ scheduler switches the target thread onto CPU and return to user mode.
 .It HWT_IOC_STOP
 Stop tracing of the particular CTX.
 .It HWT_IOC_RECORD_GET
-Copy all or part of records associated with this CTX to userspace.
+Copy all or part of records collected during hook invocation and associated
+with this CTX to userspace.
 .It HWT_IOC_BUFPTR_GET
 Get current pointer in buffer that is filled by tracing units in real-time.
 .It HWT_IOC_SET_CONFIG
