@@ -21,7 +21,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd Jan 20, 2025
+.Dd July 7, 2025
 .Dt HWT 4
 .Os
 .Sh NAME
@@ -43,7 +43,10 @@ Alternatively, to compile the driver into the kernel:
 .Cd "device hwt"
 .Ed
 .Pp
-Additionally, on arm64 systems at least one of these drivers has to be loaded into kernel via module or compiled in via kernel configuration file:
+Additionally, at least one of these drivers has to be loaded into kernel via
+module or compiled in via kernel configuration file:
+.Pp
+On arm64 systems:
 .Bd -ragged -offset indent
 .Cd "coresight"
 .Cd "spe"
@@ -53,18 +56,24 @@ On amd64 systems:
 .Bd -ragged -offset indent
 .Cd "pt"
 .Ed
-.Pp
 .Sh DESCRIPTION
 The
 .Nm
-framework provides a set of kernel interfaces to manage hardware tracing units of a CPU (if provided by an architecture). The HW trace units collect information about software execution and store it as events in highly compressed format into DRAM. The events cover information about control flow changes of a program, whether branches taken or not, exceptions taken, timing information, cycles elapsed and more. The information collected allows to restore the entire program flow of a given application without noticeable performance impact.
+framework provides a set of kernel interfaces to manage hardware tracing units
+of a CPU (if provided by an architecture). The HW trace units collect
+information about software execution and store it as events in highly
+compressed format into DRAM.
+The events cover information about control flow changes of a program, whether
+branches taken or not, exceptions taken, timing information, cycles elapsed and
+more.
+The information collected allows to restore the entire program flow of a given
+application without noticeable performance impact.
 .Pp
 The framework supports several tracing technologies found on
 .Cd arm64
 and
 .Cd amd64
 systems:
-
 .Bl -bullet -compact
 .It
 ARM Coresight
@@ -73,31 +82,35 @@ ARM Statistical Profiling Extension (SPE)
 .It
 Intel Processor Trace (PT)
 .El
-
+.Pp
 When loaded into kernel, the
 .Nm
 framework provides
 .Cd /dev/hwt
-character device for tracing contexts (CTX) management. The only request it accepts is HWT_IOC_ALLOC.
-
-The HWT_IOC_ALLOC request allocates kernel tracing context (CTX) based on requested mode of operation, set of CPUs and/or pid.
-
-The hwt framework supports two methods of operation:
-
+character device for tracing contexts (CTX) management.
+The only request it accepts is HWT_IOC_ALLOC.
+The HWT_IOC_ALLOC request allocates kernel tracing context (CTX) based on
+requested mode of operation, set of CPUs and/or pid.
+.Pp
+The HWT framework supports two methods of operation:
 .Bl -tag -width ".Em Thread mode"
 .It Em CPU mode
 In this mode HWT captures whatever CPU activity in kernel mode.
 .It Em Thread mode
-In this mode HWT captures activity of a process (every of its thread) in user mode.
+In this mode HWT captures activity of a process (each of its threads) in user
+mode.
 .El
-
-Upon successfull CTX allocation, the
+.Pp
+Upon successfull CTX allocation request, the
 .Nm
-framework returns a CTX identification number (ident) that is needed for CTX management.
+framework returns a CTX identification number (ident) that is needed for CTX
+management.
+.Pp
 Each CTX is managed using its own dedicated character device found at
 .Cd /dev/hwt_${ident}_${d},
-where d is either CPU ID in HWT CPU mode or process's tid in HWT Thread mode, ident is a unique identification number of tracing context.
-
+where d is either cpu_id (in HWT CPU mode) or process's tid (in HWT Thread mode),
+ident is a unique identification number of tracing context.
+.Pp
 CTX management character devices accepts several IOC requests:
 .Bl -bullet -compact
 .It
@@ -115,16 +128,13 @@ HWT_IOC_WAKEUP
 .It
 HWT_IOC_SVC_BUF
 .El
-
 .Sh SEE ALSO
 .Xr hwt 8
-
 .Sh HISTORY
 The
 .Nm
 framework first appeared in
 .Fx 15.0 .
-
 .Sh AUTHORS
 .An Ruslan Bukin Aq Mt br@FreeBSD.org
 .An Bojan Novković Aq Mt bnovkov@freebsd.org
