@@ -108,25 +108,25 @@ management.
 .Pp
 Each CTX is managed using its own dedicated character device found at
 .Cd /dev/hwt_${ident}_${d},
-where d is either cpu_id (in HWT CPU mode) or process's tid (in HWT Thread mode),
-ident is a unique identification number of tracing context.
-.Pp
+where d is either cpu_id (in HWT CPU mode) or process's tid (in HWT Thread
+mode), ident is a unique identification number of tracing context.
+.Sh IOCTLS
 CTX management character devices accepts several IOC requests:
-.Bl -bullet -compact
-.It
-HWT_IOC_START
-.It
-HWT_IOC_STOP
-.It
-HWT_IOC_RECORD_GET
-.It
-HWT_IOC_BUFPTR_GET
-.It
-HWT_IOC_SET_CONFIG
-.It
-HWT_IOC_WAKEUP
-.It
-HWT_IOC_SVC_BUF
+.Bl -tag -width 01234567890123aaabbb
+.It HWT_IOC_START
+Start tracing. In HWT CPU mode the tracing does actually start with this IOCTL request. In the Thread mode, the tracing "start" flag set, but tracing begins after scheduler switches in the target thread onto CPU and return to user mode.
+.It HWT_IOC_STOP
+Stop tracing of the particular CTX.
+.It HWT_IOC_RECORD_GET
+Copy all or part of records associated with this CTX to userspace.
+.It HWT_IOC_BUFPTR_GET
+Get current pointer in buffer that is filled by tracing units in real-time.
+.It HWT_IOC_SET_CONFIG
+Set achitecture-specific config (optional).
+.It HWT_IOC_WAKEUP
+Wake up a thread that has been put to sleep by HWT framework hooks.
+.It HWT_IOC_SVC_BUF
+For SPE-only, kernel is waiting for userspace to notify that it's copied out a buffer to avoid data loss/overwriting buffers.
 .El
 .Sh SEE ALSO
 .Xr hwt 8
