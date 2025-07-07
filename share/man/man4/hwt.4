@@ -106,10 +106,11 @@ Upon successfull CTX allocation request, the
 framework returns a CTX identification number (ident) that is needed for CTX
 management.
 .Pp
+.Sh FILES
 Each CTX is managed using its own dedicated character device found at
 .Cd /dev/hwt_${ident}_${d},
-where d is either cpu_id (in HWT CPU mode) or process pid (in HWT Thread mode),
-ident is a unique identification number of tracing context.
+where ident is a unique identification number of tracing context, d is either
+cpu_id (in HWT CPU mode) or process pid (in HWT Thread mode).
 .Sh HOOKS
 During operation (when tracing for a particular process is started), HWT
 collects information about threads creation, as well as calls to exec or
