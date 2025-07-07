@@ -1,8 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2003 Mathew Kanner
- * Copyright (c) 1999 Seigo Tanimura
+ * Copyright (c) 2009 Oleksandr Tymoshenko <gonzo@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,65 +24,24 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
  */
+
+#ifndef __GPIOBUS_INTERNAL_H__
+#define __GPIOBUS_INTERNAL_H__
 
 /*
- * Include file for the midi sequence driver.
+ * Functions shared between gpiobus and other bus classes that derive from it;
+ * these should not be called directly by other drivers.
  */
+int gpiobus_attach(device_t);
+int gpiobus_detach(device_t);
+int gpiobus_init_softc(device_t);
+int gpiobus_alloc_ivars(struct gpiobus_ivar *);
+void gpiobus_free_ivars(struct gpiobus_ivar *);
+int gpiobus_read_ivar(device_t, device_t, int, uintptr_t *);
+int gpiobus_acquire_pin(device_t, uint32_t);
+void gpiobus_release_pin(device_t, uint32_t);
 
-#ifndef _SEQUENCER_H_
-#define _SEQUENCER_H_
-
-#define NSEQ_MAX	16
-
-/*
- * many variables should be reduced to a range. Here define a macro
- */
-
-#define RANGE(var, low, high) (var) = \
-((var)<(low)?(low) : (var)>(high)?(high) : (var))
-
-#ifdef _KERNEL
-
-void	seq_timer(void *arg);
-
-SYSCTL_DECL(_hw_midi_seq);
-
-extern int seq_debug;
-
-#define SEQ_DEBUG(y, x)			\
-	do {				\
-		if (seq_debug >= y) {	\
-			(x);		\
-		}			\
-	} while (0)
-
-SYSCTL_DECL(_hw_midi);
-
-#endif					/* _KERNEL */
-
-#define SYNTHPROP_MIDI		1
-#define SYNTHPROP_SYNTH		2
-#define SYNTHPROP_RX		4
-#define SYNTHPROP_TX		8
-
-struct _midi_cmdtab {
-	int	cmd;
-	char   *name;
-};
-typedef struct _midi_cmdtab midi_cmdtab;
-extern midi_cmdtab cmdtab_seqevent[];
-extern midi_cmdtab cmdtab_seqioctl[];
-extern midi_cmdtab cmdtab_timer[];
-extern midi_cmdtab cmdtab_seqcv[];
-extern midi_cmdtab cmdtab_seqccmn[];
-
-char   *midi_cmdname(int cmd, midi_cmdtab * tab);
-
-enum {
-	MORE,
-	TIMERARMED,
-	QUEUEFULL
-};
-
+extern driver_t gpiobus_driver;
 #endif
