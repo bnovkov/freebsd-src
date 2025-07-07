@@ -108,13 +108,25 @@ management.
 .Pp
 Each CTX is managed using its own dedicated character device found at
 .Cd /dev/hwt_${ident}_${d},
-where d is either cpu_id (in HWT CPU mode) or process's tid (in HWT Thread
-mode), ident is a unique identification number of tracing context.
+where d is either cpu_id (in HWT CPU mode) or process pid (in HWT Thread mode),
+ident is a unique identification number of tracing context.
+
+.Sh HOOKS
+During operation (when tracing for a particular process is started), HWT
+collects information about new thread creation, as well as calls to exec or
+mmap by the target process. The information of this events is stored as
+"records" to a particular CTX.
+.Pp
+Additionally, HWT could put a thread to sleep if requested by user on exec/mmap
+event, so that user has time to copy the records to userspace and reconfigure
+tracing as needed. This is particulary useful if address range filtering
+feature is configured, allowing user to trace particular function of a target
+executable or dynamic library.
 .Sh IOCTLS
 CTX management character devices accepts several IOC requests:
 .Bl -tag -width 01234567890123aaabbb
 .It HWT_IOC_START
-Start tracing. In HWT CPU mode the tracing does actually start with this IOCTL request. In the Thread mode, the tracing "start" flag set, but tracing begins after scheduler switches in the target thread onto CPU and return to user mode.
+Start tracing. In HWT CPU mode the tracing does actually start with this IOCTL request. In the Thread mode, the tracing "running" flag set, but tracing begins after scheduler switches the target thread onto CPU and return to user mode.
 .It HWT_IOC_STOP
 Stop tracing of the particular CTX.
 .It HWT_IOC_RECORD_GET
