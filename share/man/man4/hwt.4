@@ -91,7 +91,7 @@ Upon successfull CTX allocation request, the ioctl returns a CTX identification
 number (ident).
 .Pp
 Each CTX is then managed using its own dedicated character device found at
-.Pa /dev/hwt_${ident}_${d},
+.Pa "/dev/hwt_${ident}_${d}",
 where ident is a unique identification number of tracing context, d is either
 cpu_id (in HWT CPU mode) or process pid (in HWT Thread mode).
 .Sh HOOKS
