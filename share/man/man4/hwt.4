@@ -41,7 +41,7 @@ On amd64 systems:
 The
 .Nm
 framework provides a set of kernel interfaces to manage hardware tracing units
-of a CPU (if provided by an architecture).
+of a CPU (if provided by the architecture).
 The HW trace units collect information about software execution and store it as
 events in highly compressed format into DRAM.
 The events cover information about control flow changes of a program, whether
@@ -95,17 +95,17 @@ Each CTX is then managed using its own dedicated character device found at
 where ident is a unique identification number of tracing context, d is either
 cpu_id (in HWT CPU mode) or process pid (in HWT Thread mode).
 .Sh HOOKS
-During operation (when tracing for a particular process is started), HWT
-collects information about threads creation, as well as calls to exec or
-mmap by the target process.
-This information is stored as "records" to a particular CTX.
+During tracing of a target process, HWT records runtime events such as threads
+creation, exec and mmap system calls.
+These events are logged as "records" within a particular CTX associated with
+traced process.
 .Pp
-Additionally, HWT could put a thread to sleep if requested by user on exec/mmap
-event, so that user has time to copy the records to userspace and reconfigure
-tracing as needed.
-This is particulary useful if address range filtering feature is configured,
-allowing user to trace particular function of a target executable or dynamic
-library.
+Additionally, HWT can suspend the target thread upon exec or mmap system calls
+if requested by the user.
+This pause allows user-space tools to retrieve the records and adjust tracing
+settings before execution continues.
+This feature is especially useful when address range filtering is enabled,
+allowing tracing of specific functions within the target executable or a dynamic library.
 .Sh IOCTLS
 Once a CTX is allocated, it's management character device accept several IOC
 requests:
