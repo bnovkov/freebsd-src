@@ -1,32 +1,13 @@
 .\" Copyright (c) 2025 Ruslan Bukin <br@bsdpad.com>
 .\"
-.\" Redistribution and use in source and binary forms, with or without
-.\" modification, are permitted provided that the following conditions
-.\" are met:
-.\" 1. Redistributions of source code must retain the above copyright
-.\"    notice, this list of conditions and the following disclaimer.
-.\" 2. Redistributions in binary form must reproduce the above copyright
-.\"    notice, this list of conditions and the following disclaimer in the
-.\"    documentation and/or other materials provided with the distribution.
-.\"
-.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
-.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
-.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-.\" SUCH DAMAGE.
+.\" SPDX-License-Identifier: BSD-2-Clause
 .\"
 .Dd July 7, 2025
 .Dt HWT 4
 .Os
 .Sh NAME
 .Nm hwt
-.Nd "Hardware Trace Framework"
+.Nd Hardware Trace Framework
 .Sh SYNOPSIS
 The following option must be present in the kernel configuration file:
 .Bd -ragged -offset indent
@@ -60,9 +41,9 @@ On amd64 systems:
 The
 .Nm
 framework provides a set of kernel interfaces to manage hardware tracing units
-of a CPU (if provided by an architecture). The HW trace units collect
-information about software execution and store it as events in highly
-compressed format into DRAM.
+of a CPU (if provided by an architecture).
+The HW trace units collect information about software execution and store it as
+events in highly compressed format into DRAM.
 The events cover information about control flow changes of a program, whether
 branches taken or not, exceptions taken, timing information, cycles elapsed and
 more.
@@ -74,6 +55,7 @@ The framework supports several tracing technologies found on
 and
 .Cd amd64
 systems:
+.Pp
 .Bl -bullet -compact
 .It
 ARM Coresight
@@ -83,21 +65,25 @@ ARM Statistical Profiling Extension (SPE)
 Intel Processor Trace (PT)
 .El
 .Pp
-The HWT framework supports two modes of operation:
-.Bl -tag -width ".Em Thread mode"
+The
+.Nm
+framework supports two modes of operation:
+.Bl -tag -width "Thread mode"
 .It Em CPU mode
-In this mode HWT captures whatever CPU activity in kernel mode.
+Capture CPU activity in kernel mode.
 .It Em Thread mode
-In this mode HWT captures activity of a process (each of its threads) in user
-mode.
+Capture activity of each of a process's threads in user mode.
 .El
 .Sh MANAGEMENT
 When loaded into kernel, the
 .Nm
 framework provides
-.Cd /dev/hwt
+.Pa /dev/hwt
 character device.
-The only IOC request it accepts is HWT_IOC_ALLOC.
+The only
+.Xr ioctl 2
+request it accepts is
+.Dv HWT_IOC_ALLOC .
 This request allocates kernel tracing context (CTX) based on requested mode of
 operation, set of CPUs and/or pid.
 .Pp
@@ -105,7 +91,7 @@ Upon successfull CTX allocation request, the ioctl returns a CTX identification
 number (ident).
 .Pp
 Each CTX is then managed using its own dedicated character device found at
-.Cd /dev/hwt_${ident}_${d},
+.Pa /dev/hwt_${ident}_${d},
 where ident is a unique identification number of tracing context, d is either
 cpu_id (in HWT CPU mode) or process pid (in HWT Thread mode).
 .Sh HOOKS
@@ -123,26 +109,28 @@ library.
 .Sh IOCTLS
 Once a CTX is allocated, it's management character device accept several IOC
 requests:
-.Bl -tag -width 01234567890123aaabbb
-.It HWT_IOC_START
+.Bl -tag -width "HWT_IOC_RECORD_GET"
+.It Dv HWT_IOC_START
 Start tracing.
-In HWT CPU mode the tracing does actually start with this IOCTL request.
+In HWT CPU mode the tracing does actually start with this
+.Xr ioctl 2
+request.
 In the Thread mode, the tracing "running" flag set, but tracing begins after
 scheduler switches the target thread onto CPU and return to user mode.
-.It HWT_IOC_STOP
+.It Dv HWT_IOC_STOP
 Stop tracing of the particular CTX.
-.It HWT_IOC_RECORD_GET
+.It Dv HWT_IOC_RECORD_GET
 Copy all or part of records collected during hook invocation and associated
 with this CTX to userspace.
-.It HWT_IOC_BUFPTR_GET
+.It Dv HWT_IOC_BUFPTR_GET
 Get current pointer in buffer that is filled by tracing units in real-time.
-.It HWT_IOC_SET_CONFIG
+.It Dv HWT_IOC_SET_CONFIG
 Set achitecture-specific config (optional).
-.It HWT_IOC_WAKEUP
+.It Dv HWT_IOC_WAKEUP
 Wake up a thread that has been put to sleep by HWT framework hooks.
-.It HWT_IOC_SVC_BUF
-For SPE-only, kernel is waiting for userspace to notify that it's copied out
-a buffer to avoid data loss/overwriting buffers.
+.It Dv HWT_IOC_SVC_BUF
+For SPE-only, the kernel is waiting for userspace to notify that it's copied
+out a buffer to avoid data loss/overwriting buffers.
 .El
 .Sh SEE ALSO
 .Xr hwt 8
