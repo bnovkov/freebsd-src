@@ -140,8 +140,8 @@ attach_raw_printers(dcd_tree_handle_t dcd_tree_h)
 }
 
 static int
-print_data_array(const uint8_t *p_array, const int array_size,
-    char *p_buffer, int buf_size)
+print_data_array(const uint8_t *p_array, const int array_size, char *p_buffer,
+    int buf_size)
 {
 	int bytes_processed;
 	int chars_printed;
@@ -173,12 +173,9 @@ print_data_array(const uint8_t *p_array, const int array_size,
 }
 
 static void
-packet_monitor(void *context __unused,
-    const ocsd_datapath_op_t op,
-    const ocsd_trc_index_t index_sop,
-    const void *p_packet_in,
-    const uint32_t size,
-    const uint8_t *p_data)
+packet_monitor(void *context __unused, const ocsd_datapath_op_t op,
+    const ocsd_trc_index_t index_sop, const void *p_packet_in,
+    const uint32_t size, const uint8_t *p_data)
 {
 	int offset;
 
@@ -432,8 +429,7 @@ print_timestamp(const ocsd_generic_trace_elem *elem)
 static ocsd_datapath_resp_t
 gen_trace_elem_print_lookup(const void *p_context,
     const ocsd_trc_index_t index_sop __unused,
-    const uint8_t trc_chan_id __unused,
-    const ocsd_generic_trace_elem *elem)
+    const uint8_t trc_chan_id __unused, const ocsd_generic_trace_elem *elem)
 {
 	struct trace_context *tc;
 	struct pmcstat_image *image;
@@ -744,11 +740,12 @@ catch_int(int sig_num __unused)
 static int
 cs_get_offs(struct trace_context *tc, size_t *offs)
 {
-	struct hwt_bufptr_get bget = {0};
+	struct hwt_bufptr_get bget;
 	vm_offset_t curpage_offset;
 	int curpage;
 	int error;
 
+	bzero(&bget, sizeof(struct hwt_bufptr_get));
 	bget.ident = &curpage;
 	bget.offset = &curpage_offset;
 	bget.data = NULL;
