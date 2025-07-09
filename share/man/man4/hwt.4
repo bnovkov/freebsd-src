@@ -9,34 +9,20 @@
 .Nm hwt
 .Nd Hardware Trace Framework
 .Sh SYNOPSIS
-The following option must be present in the kernel configuration file:
-.Bd -ragged -offset indent
 .Cd "options HWT_HOOKS"
-.Ed
-.Pp
-To load the driver as a module at boot time:
-.Bd -literal -offset indent
-sysrc kld_list+=hwt
-.Ed
-.Pp
-Alternatively, to compile the driver into the kernel:
-.Bd -ragged -offset indent
 .Cd "device hwt"
-.Ed
 .Pp
-Additionally, at least one of these drivers has to be loaded into kernel via
-module or compiled in via kernel configuration file:
+At least one of:
+.Cd "device pt"
+.Pq amd64
+.Cd "device coresight"
+.Pq arm64
+.Cd "device spe"
+.Pq arm64
 .Pp
-On arm64 systems:
-.Bd -ragged -offset indent
-.Cd "coresight"
-.Cd "spe"
-.Ed
-.Pp
-On amd64 systems:
-.Bd -ragged -offset indent
-.Cd "pt"
-.Ed
+In
+.Xr rc.conf 5 :
+.Cd kld_list="hwt"
 .Sh DESCRIPTION
 The
 .Nm
@@ -49,7 +35,7 @@ branches taken or not, exceptions taken, timing information, cycles elapsed and
 more.
 The information collected allows to restore the entire program flow of a given
 application without noticeable performance impact.
-.Pp
+.Sh HARDWARE
 The framework supports several tracing technologies found on
 .Cd arm64
 and
@@ -107,8 +93,18 @@ settings before execution continues.
 This feature is especially useful when address range filtering is enabled,
 allowing tracing of specific functions within the target executable or a
 dynamic library.
-.Sh IOCTLS
-Once a CTX is allocated, it's management character device accept several IOC
+.Sh KERNEL OPTIONS
+The following options in the kernel configuration file are mandatory and
+related to
+.Nm
+operation:
+.Pp
+.Bl -tag -width ".Dv HWT_HOOKS" -compact
+.It Dv HWT_HOOKS
+Enable kernel hooks.
+.El
+.Sh IOCTL INTERFACE
+Once a CTX is allocated, it's management character device accepts several IOC
 requests:
 .Bl -tag -width "HWT_IOC_RECORD_GET"
 .It Dv HWT_IOC_START
