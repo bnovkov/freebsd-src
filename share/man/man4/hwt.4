@@ -27,14 +27,13 @@ In
 .Sh DESCRIPTION
 The
 .Nm
-framework provides a set of kernel interfaces to manage hardware tracing units
-of a CPU (if provided by the architecture).
-The HW trace units collect information about software execution and store it as
+framework provides infrastructure for hardware-assisted tracing.
+It collects detailed information about software execution and stores it as
 events in highly compressed format into DRAM.
 The events cover information about control flow changes of a program, whether
 branches taken or not, exceptions taken, timing information, cycles elapsed and
 more.
-The information collected allows to restore the entire program flow of a given
+The information collected allows to reconstruct entire program flow of a given
 application without noticeable performance impact.
 .Sh HARDWARE
 The framework supports several tracing technologies found on
