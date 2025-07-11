@@ -51,6 +51,15 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20250710: share: Delete bitrotted make_*_driver.sh scripts
+OLD_FILES+=usr/share/examples/drivers/README
+OLD_FILES+=usr/share/examples/drivers/make_device_driver.sh
+OLD_FILES+=usr/share/examples/drivers/make_pseudo_driver.sh
+OLD_DIRS+=usr/share/examples/drivers
+
+# 20250710: shar(1) removed
+OLD_FILES+=usr/bin/shar
+
 # 20250708: For 34 days 15.0-CURRENT installed libkadm5clnt symlink without .so
 OLD_FILES+=usr/lib/libkadm5clnt
 
@@ -59,10 +68,6 @@ MOVED_LIBS+=usr/lib/libtpool.so.2
 
 # 20250626: replace yaml.lua with lyaml
 OLD_FILES+=usr/share/flua/yaml.lua
-
-# 20250623: fscandir() renamed to fdscandir()
-OLD_FILES+=usr/share/man/man3/fscandir.3.gz
-OLD_FILES+=usr/share/man/man3/fscandir_b.3.gz
 
 # 20250615: don't install man page for absent function
 OLD_FILES+=usr/share/man/man9/vm_map_simplify_entry.9.gz
