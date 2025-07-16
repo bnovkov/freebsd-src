@@ -1,32 +1,11 @@
-/*-
+/*
+ * Copyright (c) 2025 Bojan Novković <bnovkov@freebsd.org>
+ *
  * SPDX-License-Identifier: BSD-2-Clause
- *
- * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
  */
 
 /*
- * Intel Processor Trace (PT) backend
+ * hwt(4) Intel Processor Trace (PT) backend
  *
  * Driver Design Overview
  *
@@ -62,48 +41,35 @@
  *
  */
 
-#include <sys/cdefs.h>
-#include <sys/types.h>
-#include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/event.h>
 #include <sys/hwt.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
-#include <sys/proc.h>
-#include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/smp.h>
-#include <sys/lock.h>
-#include <sys/errno.h>
 #include <sys/taskqueue.h>
-#include <sys/domainset.h>
-#include <sys/sleepqueue.h>
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
 
-#include <machine/cpufunc.h>
-#include <machine/param.h>
 #include <machine/atomic.h>
-#include <machine/smp.h>
+#include <machine/cpufunc.h>
 #include <machine/fpu.h>
+#include <machine/smp.h>
 #include <machine/specialreg.h>
 
 #include <x86/apicvar.h>
 #include <x86/x86_var.h>
 
-#include <dev/hwt/hwt_vm.h>
-#include <dev/hwt/hwt_thread.h>
-#include <dev/hwt/hwt_cpu.h>
-#include <dev/hwt/hwt_config.h>
 #include <dev/hwt/hwt_context.h>
+#include <dev/hwt/hwt_vm.h>
 #include <dev/hwt/hwt_backend.h>
-#include <dev/hwt/hwt_hook.h>
-#include <dev/hwt/hwt_intr.h>
+#include <dev/hwt/hwt_config.h>
+#include <dev/hwt/hwt_cpu.h>
 #include <dev/hwt/hwt_record.h>
+#include <dev/hwt/hwt_thread.h>
 
 #include <amd64/pt/pt.h>
 
@@ -112,10 +78,18 @@
 #else
 #define dprintf(fmt, ...)
 #endif
-
+#define PT_SUPPORTED_FLAGS						\
+	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT |	\
+	    RTIT_CTL_USER | RTIT_CTL_OS | RTIT_CTL_BRANCHEN)
 #define PT_XSAVE_MASK (XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE)
 #define PT_XSTATE_BV (PT_XSAVE_MASK | XFEATURE_ENABLED_PT)
 #define PT_MAX_IP_RANGES 2
+
+#define PT_TOPA_MASK_PTRS 0x7f
+#define PT_TOPA_PAGE_MASK 0xffffff80
+#define PT_TOPA_PAGE_SHIFT 7
+
+#define CPUID_PT_LEAF	0x14
 
 MALLOC_DEFINE(M_PT, "pt", "Intel Processor Trace");
 
@@ -126,6 +100,21 @@ TASKQUEUE_FAST_DEFINE_THREAD(pt);
 
 static void pt_send_buffer_record(void *arg, int pending __unused);
 static int pt_topa_intr(struct trapframe *tf);
+
+/*
+ * Intel Processor Trace XSAVE-managed state.
+ */
+struct pt_ext_area {
+	uint64_t rtit_ctl;
+	uint64_t rtit_output_base;
+	uint64_t rtit_output_mask_ptrs;
+	uint64_t rtit_status;
+	uint64_t rtit_cr3_match;
+	uint64_t rtit_addr0_a;
+	uint64_t rtit_addr0_b;
+	uint64_t rtit_addr1_a;
+	uint64_t rtit_addr1_b;
+};
 
 struct pt_buffer {
 	uint64_t *topa_hw; /* ToPA table entries. */
@@ -213,7 +202,7 @@ pt_update_buffer(struct pt_buffer *buf)
 
 	/* Update buffer offset. */
 	reg = rdmsr(MSR_IA32_RTIT_OUTPUT_MASK_PTRS);
-	curpage = (reg & 0xffffff80) >> 7;
+	curpage = (reg & PT_TOPA_PAGE_MASK) >> PT_TOPA_PAGE_SHIFT;
 	mtx_lock_spin(&buf->lock);
 	/* Check if the output wrapped. */
 	if (buf->curpage > curpage)
@@ -313,8 +302,6 @@ pt_cpu_stop(void *dummy)
 	pt_cpu_set_state(curcpu, PT_STOPPED);
 	pt_cpu_toggle_local(cpu->ctx->save_area, false);
 	pt_update_buffer(&ctx->buf);
-	taskqueue_enqueue_flags(taskqueue_pt, &ctx->task,
-	    TASKQUEUE_FAIL_IF_PENDING);
 }
 
 /*
@@ -338,9 +325,6 @@ pt_topa_prepare(struct pt_ctx *ctx, struct hwt_vm *vm)
 	    ("%s: ToPA info already exists", __func__));
 	buf->topa_hw = mallocarray(vm->npages + 1, sizeof(uint64_t), M_PT,
 	    M_ZERO | M_WAITOK);
-	if (buf->topa_hw == NULL)
-		return (ENOMEM);
-
 	dprintf("%s: ToPA virt addr %p\n", __func__, buf->topa_hw);
 	buf->size = vm->npages * PAGE_SIZE;
 	for (i = 0; i < vm->npages; i++) {
@@ -528,7 +512,7 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 	pt_ctx->hwt_ctx = ctx;
 	pt_ext->rtit_ctl |= RTIT_CTL_TOPA;
 	pt_ext->rtit_output_base = (uint64_t)vtophys(pt_ctx->buf.topa_hw);
-	pt_ext->rtit_output_mask_ptrs = 0x7f;
+	pt_ext->rtit_output_mask_ptrs = PT_TOPA_MASK_PTRS;
 	hdr->xstate_bv = XFEATURE_ENABLED_PT;
 	hdr->xstate_xcomp_bv = XFEATURE_ENABLED_PT |
 	    XSTATE_XCOMP_BV_COMPACT;
@@ -542,30 +526,28 @@ pt_backend_configure(struct hwt_context *ctx, int cpu_id, int thread_id)
 /*
  * hwt backend trace start operation. CPU affine.
  */
-static int
+static void
 pt_backend_enable(struct hwt_context *ctx, int cpu_id)
 {
 	if (ctx->mode == HWT_MODE_CPU)
-		return (-1);
+		return;
 
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to start PT on another cpu", __func__));
 	pt_cpu_start(NULL);
 	CPU_SET(cpu_id, &ctx->cpu_map);
-
-	return (0);
 }
 
 /*
  * hwt backend trace stop operation. CPU affine.
  */
-static int
+static void
 pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 {
 	struct pt_cpu *cpu;
 
 	if (ctx->mode == HWT_MODE_CPU)
-		return (-1);
+		return;
 
 	KASSERT(curcpu == cpu_id,
 	    ("%s: attempting to disable PT on another cpu", __func__));
@@ -573,8 +555,6 @@ pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 	CPU_CLR(cpu_id, &ctx->cpu_map);
 	cpu = &pt_pcpu[cpu_id];
 	cpu->ctx = NULL;
-
-	return (0);
 }
 
 /*
@@ -890,6 +870,12 @@ pt_init(void)
 
 	nmi_register_handler(pt_topa_intr);
 	if (!lapic_enable_pcint()) {
+		nmi_remove_handler(pt_topa_intr);
+		hwt_backend_unregister(&backend);
+		free(pt_pcpu, M_PT);
+		free(pt_pcpu_ctx, M_PT);
+		pt_pcpu = NULL;
+		pt_pcpu_ctx = NULL;
 		printf("pt: failed to setup interrupt line\n");
 		return (error);
 	}

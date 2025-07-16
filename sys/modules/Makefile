@@ -853,6 +853,7 @@ _ixl=		ixl
 _nvdimm=	nvdimm
 _pt=		pt
 _pms=		pms
+_pt=		pt
 _qat=		qat
 .if ${MK_SOURCELESS_UCODE} != "no"
 _qatfw=		qatfw

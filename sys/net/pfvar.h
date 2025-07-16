@@ -1370,7 +1370,6 @@ struct pf_kruleset {
 		struct pf_krulequeue	 queues[2];
 		struct {
 			struct pf_krulequeue	*ptr;
-			struct pf_krule		**ptr_array;
 			u_int32_t		 rcount;
 			u_int32_t		 ticket;
 			int			 open;
@@ -2500,7 +2499,7 @@ int	pfr_match_addr(struct pfr_ktable *, struct pf_addr *, sa_family_t);
 void	pfr_update_stats(struct pfr_ktable *, struct pf_addr *, sa_family_t,
 	    u_int64_t, int, int, int);
 int	pfr_pool_get(struct pfr_ktable *, int *, struct pf_addr *, sa_family_t,
-	    pf_addr_filter_func_t);
+	    pf_addr_filter_func_t, bool);
 void	pfr_dynaddr_update(struct pfr_ktable *, struct pfi_dynaddr *);
 struct pfr_ktable *
 	pfr_attach_table(struct pf_kruleset *, char *);
@@ -2534,6 +2533,8 @@ int	pfr_ina_rollback(struct pfr_table *, u_int32_t, int *, int);
 int	pfr_ina_commit(struct pfr_table *, u_int32_t, int *, int *, int);
 int	pfr_ina_define(struct pfr_table *, struct pfr_addr *, int, int *,
 	    int *, u_int32_t, int);
+struct pfr_ktable
+	*pfr_ktable_select_active(struct pfr_ktable *);
 
 MALLOC_DECLARE(PFI_MTYPE);
 VNET_DECLARE(struct pfi_kkif *,		 pfi_all);
@@ -2712,7 +2713,6 @@ u_short			 pf_map_addr(u_int8_t, struct pf_krule *,
 u_short			 pf_map_addr_sn(u_int8_t, struct pf_krule *,
 			    struct pf_addr *, struct pf_addr *,
 			    struct pfi_kkif **nkif, struct pf_addr *,
-			    struct pf_ksrc_node **, struct pf_srchash **,
 			    struct pf_kpool *, pf_sn_types_t);
 int			 pf_get_transaddr_af(struct pf_krule *,
 			    struct pf_pdesc *);

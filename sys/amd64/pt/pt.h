@@ -46,12 +46,4 @@ struct pt_cpu_config {
 	uint32_t cyc_thresh;
 	uint32_t psb_freq;
 };
-
-#ifdef _KERNEL
-
-#define PT_SUPPORTED_FLAGS                                        \
-	(RTIT_CTL_MTCEN | RTIT_CTL_CR3FILTER | RTIT_CTL_DIS_TNT | \
-	    RTIT_CTL_USER | RTIT_CTL_OS | RTIT_CTL_BRANCHEN)
-
-#endif /* _KERNEL */
 #endif /* !_AMD64_PT_PT_H_ */
