@@ -35,8 +35,6 @@
 
 #include <sys/cdefs.h>
 #include "opt_atpic.h"
-#include "opt_hwpmc_hooks.h"
-#include "opt_hwt_hooks.h"
 
 #include "opt_ddb.h"
 
