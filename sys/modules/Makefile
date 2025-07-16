@@ -851,7 +851,6 @@ _ioat=		ioat
 _iwx=		iwx
 _ixl=		ixl
 _nvdimm=	nvdimm
-_pt=		pt
 _pms=		pms
 _pt=		pt
 _qat=		qat
