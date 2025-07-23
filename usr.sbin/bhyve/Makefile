@@ -44,6 +44,7 @@ SRCS=	\
 	pci_emul.c		\
 	pci_hda.c		\
 	pci_hostbridge.c	\
+	pci_hp.c	\
 	pci_irq.c		\
 	pci_nvme.c		\
 	pci_uart.c		\

@@ -50,6 +50,7 @@
 
 /* Allocated GPE bits. */
 #define	GPE_VMGENC		0
+#define	GPE_HP		1
 
 struct vmctx;
 

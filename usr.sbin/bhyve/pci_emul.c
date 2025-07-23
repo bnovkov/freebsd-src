@@ -29,11 +29,12 @@
 #include <sys/param.h>
 #include <sys/linker_set.h>
 #include <sys/mman.h>
+#include <sys/nv.h>
 
-#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,8 +56,10 @@
 #ifdef __amd64__
 #include "amd64/inout.h"
 #endif
+#include "ipc.h"
 #include "mem.h"
 #include "pci_emul.h"
+#include "pci_hp.h"
 #ifdef __amd64__
 #include "amd64/pci_lpc.h"
 #include "pci_passthru.h"
@@ -1513,6 +1516,8 @@ init_bootorder(void)
 #define	BUSMEM32_ROUNDUP	(1024 * 1024)
 #define	BUSMEM64_ROUNDUP	(512 * 1024 * 1024)
 
+static int hp_slot = -1;
+
 int
 init_pci(struct vmctx *ctx)
 {
@@ -1638,11 +1643,16 @@ init_pci(struct vmctx *ctx)
 
 		for (slot = 0; slot < MAXSLOTS; slot++) {
 			si = &bi->slotinfo[slot];
+			int free = 1;
 			for (func = 0; func < MAXFUNCS; func++) {
 				fi = &si->si_funcs[func];
 				if (fi->fi_devi == NULL)
 					continue;
+				free = 0;
 				pci_lintr_route(fi->fi_devi);
+			}
+			if (free && hp_slot == -1) {
+				hp_slot = free;
 			}
 		}
 	}
@@ -1701,7 +1711,7 @@ init_pci(struct vmctx *ctx)
 	error = register_mem(&mr);
 	assert(error == 0);
 
-	return (0);
+	return (pci_hp_init(ctx));
 }
 
 #ifdef __amd64__
@@ -1879,7 +1889,6 @@ pci_bus_write_dsdt(int bus)
 		dsdt_unindent(2);
 	}
 #endif
-
 	dsdt_indent(2);
 	for (slot = 0; slot < MAXSLOTS; slot++) {
 		si = &bi->slotinfo[slot];
@@ -1889,6 +1898,54 @@ pci_bus_write_dsdt(int bus)
 				pi->pi_d->pe_write_dsdt(pi);
 		}
 	}
+	if (bus == 0) {
+		assert(hp_slot != -1);
+		uint32_t adr = hp_slot << 16;
+
+		/* Hotplug status */
+		dsdt_line("OperationRegion (PCST, SystemIO, 0x%04X, 0x08)",
+		    PCI_EMUL_HP_PCST);
+		dsdt_line("Field (PCST, DWordAcc, NoLock, WriteAsZeros)");
+		dsdt_line("{");
+		dsdt_line("   PCIU,   32,");
+		dsdt_line("   PCID,   32");
+		dsdt_line("}");
+		dsdt_line("OperationRegion (SEJ, SystemIO, 0x%04X, 0x04)",
+		    PCI_EMUL_HP_EJ);
+		dsdt_line("Field (SEJ, DWordAcc, NoLock, WriteAsZeros)");
+		dsdt_line("{");
+		dsdt_line("   B0EJ,   32");
+		dsdt_line("}");
+		dsdt_line("Mutex (BLCK, 0x00)");
+		dsdt_line("Method (PCEJ, 1, NotSerialized)");
+		dsdt_line("{");
+		dsdt_line("   Acquire (BLCK, 0xFFFF)");
+		dsdt_line("   B0EJ = (One << Arg0)");
+		dsdt_line("   Release (BLCK)");
+		dsdt_line("   Return (Zero)");
+		dsdt_line("}");
+
+		/* Hot-pluggable slot "device" */
+		dsdt_line("Device (S%02X)", hp_slot);
+		dsdt_line("{");
+		dsdt_line("   Name (_ADR, 0x%08X)", adr);
+		dsdt_line("   Name (_SUN, 0x%02X)", hp_slot);
+		dsdt_line("   Method (_EJ0, 1, NotSerialized)");
+		dsdt_line("   {");
+		dsdt_line("      PCEJ (0x%04X)", hp_slot);
+		dsdt_line("   }");
+		dsdt_line("}");
+		dsdt_line("");
+		dsdt_line("Method (DVNT, 2, NotSerialized)");
+		dsdt_line("{");
+		dsdt_line("	If ((Arg0 & 0x08))");
+		dsdt_line("	{");
+		dsdt_line("	    Notify (S%02X, Arg1)", hp_slot);
+		dsdt_line("	}");
+		dsdt_line("}");
+
+	}
+
 	dsdt_unindent(2);
 #ifdef __amd64__
 done:
@@ -1912,6 +1969,14 @@ pci_write_dsdt(void)
 	dsdt_line("{");
 	for (bus = 0; bus < MAXBUSES; bus++)
 		pci_bus_write_dsdt(bus);
+	dsdt_line("}");
+	dsdt_line("Scope (_SB.PC00)");
+	dsdt_line("{");
+	dsdt_line("Method (PCNT, 0, NotSerialized)");
+	dsdt_line("{");
+	dsdt_line("   DVNT (PCIU, One)");
+	dsdt_line("   DVNT (PCID, 0x03)");
+	dsdt_line("}");
 	dsdt_line("}");
 	dsdt_unindent(1);
 }
@@ -2790,6 +2855,55 @@ pci_emul_snapshot(struct vm_snapshot_meta *meta __unused)
 	return (0);
 }
 #endif
+
+static int
+pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
+{
+	struct pci_bar_allocation *bar_tmp;
+	struct pci_bar_allocation *bar;
+	struct pci_devemu **pdpp, *pdp;
+	struct businfo *bi;
+	struct slotinfo *si;
+	struct funcinfo *fi;
+	const char *devname;
+	bool found;
+
+	devname = nvlist_get_string(nvl, "devname");
+	if (devname == NULL) {
+		EPRINTLN("%s: missing device name", __func__);
+		return (EINVAL);
+	}
+
+	found = false;
+	SET_FOREACH(pdpp, pci_devemu_set) {
+		pdp = *pdpp;
+		if (strcmp(devname, pdp->pe_emu) == 0) {
+			printf("%s: Found '%s'\n", __func__, pdp->pe_emu);
+			found = true;
+			break;
+		}
+	}
+
+	if (!found)
+		return (ENOENT);
+
+	bi = pci_businfo[0];
+	assert(hp_slot != -1);
+	si = &bi->slotinfo[hp_slot];
+	fi = &si->si_funcs[0];
+	pci_emul_init(ctx, pdp, 0, hp_slot, 0, fi);
+
+	TAILQ_FOREACH_SAFE(bar, &pci_bars, chain, bar_tmp) {
+		pci_emul_assign_bar(bar->pdi, bar->idx, bar->type,
+							bar->size);
+		free(bar);
+	}
+	TAILQ_INIT(&pci_bars);
+
+	return (pci_hp_request_up(ctx, 0, hp_slot));
+}
+IPC_COMMAND(pci_add, pci_hp_add_device);
+
 
 static const struct pci_devemu pci_dummy = {
 	.pe_emu = "dummy",

@@ -48,7 +48,7 @@ static sig_t old_power_handler;
 
 static unsigned gpe0_active;
 static unsigned gpe0_enabled;
-static const unsigned gpe0_valid = (1u << GPE_VMGENC);
+static const unsigned gpe0_valid = (1u << (GPE_VMGENC | GPE_HP));
 
 /*
  * Reset Control register at I/O port 0xcf9.  Bit 2 forces a system
