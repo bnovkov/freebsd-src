@@ -50,6 +50,7 @@
 
 #include "hwt.h"
 #include "hwt_elf.h"
+#include "hwt_record.h"
 
 #include "libpmcstat_stubs.h"
 #include <libpmcstat.h>
