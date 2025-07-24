@@ -70,7 +70,6 @@
 #include "hwt_pt.h"
 #endif
 
-
 #define	HWT_DEBUG
 #undef	HWT_DEBUG
 
