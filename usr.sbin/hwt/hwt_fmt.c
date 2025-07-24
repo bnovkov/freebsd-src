@@ -83,7 +83,8 @@ hwt_fmt_print_generic(struct trace_context *tc, xo_handle_t *xop, int id,
 			if (!image)
 				piname = "?";
 			else
-				piname = pmcstat_string_unintern(image->pi_name);
+				piname =
+				    pmcstat_string_unintern(image->pi_name);
 			xo_emit_h(xop, "{:image_name/%s}\t", piname);
 		}
 
@@ -93,10 +94,11 @@ hwt_fmt_print_generic(struct trace_context *tc, xo_handle_t *xop, int id,
 				offset = 0;
 			} else {
 				psname = pmcstat_string_unintern(sym->ps_name);
-				offset = newpc -
-				    (sym->ps_start + (image != NULL ? image->pi_vaddr : 0));
+				offset = newpc - (sym->ps_start +
+				    (image != NULL ? image->pi_vaddr : 0));
 			}
-			xo_emit_h(xop, "{:sym_name/%s}{:sym_offset/+%#lx}\t", psname, offset);
+			xo_emit_h(xop, "{:sym_name/%s}{:sym_offset/+%#lx}\t",
+			    psname, offset);
 		}
 	}
 

@@ -375,8 +375,8 @@ hwt_process(struct trace_context *tc)
 		}
 	} else {
 		if (tc->trace_dev->methods->process == NULL)
-			errx(EX_SOFTWARE,
-			    "Backend has no data processing methods specified\n");
+			errx(EX_SOFTWARE, "Backend has no data processing "
+			    "methods specified\n");
 		error = tc->trace_dev->methods->process(tc);
 		if (error) {
 			printf("Can't process data, error %d.\n", error);

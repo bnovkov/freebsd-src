@@ -47,6 +47,6 @@ enum hwt_fmt_column {
 struct trace_context;
 void hwt_fmt_print_generic(struct trace_context *tc, xo_handle_t *xop, int id,
     uint64_t pc, uint64_t offs);
-
 enum hwt_fmt_column hwt_fmt_parse_cols(const char *args);
+
 #endif /* _HWT_FMT_H_ */
