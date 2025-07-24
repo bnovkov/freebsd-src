@@ -69,7 +69,7 @@
 #if defined(__amd64__)
 #include <sys/tree.h>
 
-#include "hwt_pt.h"
+#include "pt/hwt_pt.h"
 #endif
 
 #define	HWT_DEBUG

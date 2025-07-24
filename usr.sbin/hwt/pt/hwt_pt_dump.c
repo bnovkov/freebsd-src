@@ -40,11 +40,11 @@
 #include <libxo/xo.h>
 #include <libipt/intel-pt.h>
 
-#include "../libpmcstat_stubs.h"
+#include "libpmcstat_stubs.h"
 #include <libpmcstat.h>
 
-#include "../hwt.h"
-#include "../hwt_pt.h"
+#include "hwt.h"
+#include "hwt_pt.h"
 
 static int
 pt_dump_init(struct trace_context *tc, struct pt_dec_ctx *dctx)

@@ -40,11 +40,10 @@
 #include <amd64/pt/pt.h>
 #include <libipt/intel-pt.h>
 
-#include "../hwt.h"
-#include "../hwt_pt.h"
-#include "../hwt_fmt.h"
-
-#include "pt_fmt.h"
+#include "hwt.h"
+#include "hwt_pt.h"
+#include "hwt_fmt.h"
+#include "hwt_pt_fmt.h"
 
 static int
 pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,

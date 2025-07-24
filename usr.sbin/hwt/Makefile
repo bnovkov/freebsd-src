@@ -17,10 +17,10 @@ SRCS+=	coresight/hwt_coresight.c
 SRCS+=	spe/hwt_spe.c
 LIBADD+= opencsd
 .elif ${MACHINE_CPUARCH} == "amd64"
-SRCS+= 	pt/hwt_pt.c	\
-	pt/pt_decode.c	\
-	pt/pt_dump.c	\
-	pt/pt_fmt.c
+SRCS+= 	pt/hwt_pt.c		\
+	pt/hwt_pt_decode.c	\
+	pt/hwt_pt_dump.c	\
+	pt/hwt_pt_fmt.c
 LIBADD+= ipt
 .endif
 

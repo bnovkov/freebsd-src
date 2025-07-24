@@ -40,11 +40,10 @@
 #include <libipt/intel-pt.h>
 #include <libxo/xo.h>
 
-#include "../hwt.h"
-#include "../hwt_fmt.h"
-#include "../hwt_pt.h"
-
-#include "pt_fmt.h"
+#include "hwt.h"
+#include "hwt_fmt.h"
+#include "hwt_pt.h"
+#include "hwt_pt_fmt.h"
 
 void
 pt_print_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
