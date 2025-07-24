@@ -28,7 +28,7 @@
 #ifndef	_HWT_SPE_H_
 #define	_HWT_SPE_H_
 
-extern struct trace_dev_methods spe_methods;
+extern struct backend_methods spe_methods;
 
 struct arm_spe_mmap {
 	int	n;

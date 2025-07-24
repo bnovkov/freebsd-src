@@ -854,7 +854,7 @@ hwt_coresight_process(struct trace_context *tc)
 	return (0);
 }
 
-struct trace_dev_methods cs_methods = {
+struct backend_methods cs_methods = {
 	.init = NULL,
 	.mmap = hwt_coresight_mmap,
 	.process = hwt_coresight_process,

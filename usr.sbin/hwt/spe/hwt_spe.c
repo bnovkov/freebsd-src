@@ -436,7 +436,7 @@ hwt_spe_set_config(struct trace_context *tc)
 	return ret;
 }
 
-struct trace_dev_methods spe_methods = {
+struct backend_methods spe_methods = {
 	.init = hwt_spe_init,
 	.mmap = hwt_spe_mmap,
 	.process = hwt_spe_process,

@@ -36,7 +36,7 @@ struct trace_context;
 struct hwt_exec_img;
 struct pmcstat_image;
 
-struct trace_dev_methods {
+struct backend_methods {
 	int (*init)(struct trace_context *tc);
 	void (*shutdown)(struct trace_context *tc);
 
@@ -76,14 +76,14 @@ struct trace_dev_methods {
 	    vm_offset_t offset);
 };
 
-struct trace_dev {
+struct backend {
 	const char *name;
 	const char *fullname;
-	struct trace_dev_methods *methods;
+	struct backend_methods *methods;
 };
 
 struct trace_context {
-	struct trace_dev *trace_dev;
+	struct backend *backend;
 	struct pmcstat_process *pp;
 	struct hwt_record_user_entry *records;
 	void *base;

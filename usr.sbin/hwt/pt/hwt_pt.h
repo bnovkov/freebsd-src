@@ -57,5 +57,5 @@ struct pt_decode_ops {
 extern struct pt_decode_ops pt_decode_generic_ops;
 extern struct pt_decode_ops pt_dump_ops;
 
-extern struct trace_dev_methods pt_methods;
+extern struct backend_methods pt_methods;
 #endif /* !_HWT_PT_H_ */

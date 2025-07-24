@@ -278,6 +278,6 @@ struct etmv4_config {
 	uint8_t			s_ex_level;
 };
 
-extern struct trace_dev_methods cs_methods;
+extern struct backend_methods cs_methods;
 
 #endif /* !_HWT_CORESIGHT_H_ */

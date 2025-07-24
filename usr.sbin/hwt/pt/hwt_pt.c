@@ -450,7 +450,7 @@ pt_process_buffer(struct trace_context *tc, int id, int curpage,
 	return (0);
 }
 
-struct trace_dev_methods pt_methods = {
+struct backend_methods pt_methods = {
 	.init = pt_init,
 	.mmap = pt_mmap,
 	.process_buffer = pt_process_buffer,

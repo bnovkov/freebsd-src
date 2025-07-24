@@ -87,7 +87,7 @@
 
 static struct trace_context tcs;
 
-static struct trace_dev trace_devs[] = {
+static struct backend backends[] = {
 #if defined(__aarch64__)
 	{ "coresight",	"ARM Coresight", &cs_methods },
 	{ "spe",	"ARM Statistical Profiling Extension", &spe_methods },
@@ -153,7 +153,7 @@ hwt_mmap_received(struct trace_context *tc,
 
 	tc->suspend_on_mmap = 0;
 
-	error = tc->trace_dev->methods->set_config(tc);
+	error = tc->backend->methods->set_config(tc);
 	if (error)
 		return (-2);
 
@@ -174,8 +174,8 @@ hwt_ctx_alloc(struct trace_context *tc)
 	struct hwt_alloc al;
 	int error = 0;
 
-	if (tc->trace_dev->methods->init != NULL){
-		error = tc->trace_dev->methods->init(tc);
+	if (tc->backend->methods->init != NULL){
+		error = tc->backend->methods->init(tc);
 		if (error)
 			return (error);
 	}
@@ -191,7 +191,7 @@ hwt_ctx_alloc(struct trace_context *tc)
 	}
 
 	al.bufsize = tc->bufsize;
-	al.backend_name = tc->trace_dev->name;
+	al.backend_name = tc->backend->name;
 	al.ident = &tc->ident;
 	al.kqueue_fd = tc->kqueue_fd;
 
@@ -348,8 +348,8 @@ hwt_process_loop(struct trace_context *tc)
 			printf("%s: tracing terminated - exiting\n", __func__);
 			/* Fetch any remaining records */
 			hwt_record_fetch(tc, &nrec, 0);
-			if (tc->trace_dev->methods->shutdown != NULL)
-				tc->trace_dev->methods->shutdown(tc);
+			if (tc->backend->methods->shutdown != NULL)
+				tc->backend->methods->shutdown(tc);
 			return (0);
 		}
 	}
@@ -367,17 +367,17 @@ hwt_process(struct trace_context *tc)
 {
 	int error;
 
-	if (tc->trace_dev->methods->process_buffer != NULL) {
+	if (tc->backend->methods->process_buffer != NULL) {
 		error = hwt_process_loop(tc);
 		if (error) {
 			printf("Can't process data, error %d.\n", error);
 			return (error);
 		}
 	} else {
-		if (tc->trace_dev->methods->process == NULL)
+		if (tc->backend->methods->process == NULL)
 			errx(EX_SOFTWARE, "Backend has no data processing "
 			    "methods specified\n");
-		error = tc->trace_dev->methods->process(tc);
+		error = tc->backend->methods->process(tc);
 		if (error) {
 			printf("Can't process data, error %d.\n", error);
 			return (error);
@@ -393,7 +393,7 @@ hwt_mode_cpu(struct trace_context *tc)
 	uint32_t nrec;
 	int error;
 
-	if (strcmp(tc->trace_dev->name, "coresight") == 0 &&
+	if (strcmp(tc->backend->name, "coresight") == 0 &&
 	    (tc->image_name == NULL || tc->func_name == NULL))
 		errx(EX_USAGE, "IP range filtering must be setup for CPU"
 		    " tracing");
@@ -411,7 +411,7 @@ hwt_mode_cpu(struct trace_context *tc)
 		return (error);
 	}
 
-	error = tc->trace_dev->methods->mmap(tc, NULL);
+	error = tc->backend->methods->mmap(tc, NULL);
 	if (error) {
 		printf("%s: cant map memory, error %d\n", __func__, error);
 		return (error);
@@ -431,7 +431,7 @@ hwt_mode_cpu(struct trace_context *tc)
 			errx(EX_USAGE, "could not find symbol");
 	}
 
-	error = tc->trace_dev->methods->set_config(tc);
+	error = tc->backend->methods->set_config(tc);
 	if (error != 0)
 		errx(EX_DATAERR, "can't set config");
 
@@ -563,14 +563,14 @@ hwt_mode_thread(struct trace_context *tc, char **cmd, char **env)
 		printf("\n");
 		return (error);
 	}
-	error = tc->trace_dev->methods->mmap(tc, NULL);
+	error = tc->backend->methods->mmap(tc, NULL);
 	if (error) {
 		printf("%s: failed to map trace buffer for first thread, %d\n",
 		    __func__, error);
 		return (error);
 	}
 
-	error = tc->trace_dev->methods->set_config(tc);
+	error = tc->backend->methods->set_config(tc);
 	if (error != 0)
 		errx(EX_DATAERR, "can't set config, errno %d", errno);
 
@@ -651,7 +651,7 @@ int
 main(int argc, char **argv, char **env)
 {
 	struct trace_context *tc;
-	char *trace_dev_name;
+	char *backend_name;
 	int error;
 	int option;
 	int found;
@@ -666,8 +666,8 @@ main(int argc, char **argv, char **env)
 	tc->bufsize = 128 * 1024 * 1024;
 
 	/* First available is default trace device. */
-	tc->trace_dev = &trace_devs[0];
-	if (tc->trace_dev->name == NULL) {
+	tc->backend = &backends[0];
+	if (tc->backend->name == NULL) {
 		printf("No trace devices available\n");
 		return (1);
 	}
@@ -697,19 +697,19 @@ main(int argc, char **argv, char **env)
 			tc->fs_root = optarg;
 			break;
 		case 'c':
-			trace_dev_name = strdup(optarg);
+			backend_name = strdup(optarg);
 			found = 0;
-			for (i = 0; trace_devs[i].name != NULL; i++) {
-				if (strcmp(trace_devs[i].name,
-				    trace_dev_name) == 0) {
-					tc->trace_dev = &trace_devs[i];
+			for (i = 0; backends[i].name != NULL; i++) {
+				if (strcmp(backends[i].name,
+				    backend_name) == 0) {
+					tc->backend = &backends[i];
 					found = 1;
 					break;
 				}
 			}
 			if (!found) {
 				printf("Trace device \"%s\" not available.\n",
-				    trace_dev_name);
+				    backend_name);
 				return (ENOENT);
 			}
 			break;

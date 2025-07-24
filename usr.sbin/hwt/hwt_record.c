@@ -190,8 +190,8 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 			if (hwt_record_to_elf_img(tc, entry, &img, &img2) != 0)
 				continue;
 			/* Invoke backend callback, if any. */
-			if (tc->trace_dev->methods->image_load_cb != NULL &&
-			    (error = tc->trace_dev->methods->image_load_cb(tc,
+			if (tc->backend->methods->image_load_cb != NULL &&
+			    (error = tc->backend->methods->image_load_cb(tc,
 				&img))) {
 				ioctl(tc->thr_fd, HWT_IOC_WAKEUP, &w);
 				return (error);
@@ -202,7 +202,7 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 			break;
 		case HWT_RECORD_THREAD_CREATE:
 			/* Let the backend register the newly created thread. */
-			if ((error = tc->trace_dev->methods->mmap(tc, entry)) !=
+			if ((error = tc->backend->methods->mmap(tc, entry)) !=
 			    0)
 				return (error);
 			break;
@@ -211,8 +211,8 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 			break;
 		case HWT_RECORD_BUFFER:
 			/* Invoke backend process method. */
-			assert(tc->trace_dev->methods->process_buffer != NULL);
-			if ((error = tc->trace_dev->methods->process_buffer(tc,
+			assert(tc->backend->methods->process_buffer != NULL);
+			if ((error = tc->backend->methods->process_buffer(tc,
 				entry->buf_id, entry->curpage,
 				entry->offset)) != 0)
 				return (error);
