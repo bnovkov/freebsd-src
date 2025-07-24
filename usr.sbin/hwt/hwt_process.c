@@ -47,6 +47,7 @@
 #include <string.h>
 
 #include "hwt.h"
+#include "hwt_process.h"
 
 #include "libpmcstat_stubs.h"
 #include <libpmcstat.h>

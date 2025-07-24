@@ -58,6 +58,7 @@
 
 #include "hwt.h"
 #include "hwt_elf.h"
+#include "hwt_process.h"
 
 #if defined(__aarch64__)
 #include "coresight/hwt_coresight.h"
