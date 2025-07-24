@@ -60,8 +60,8 @@
 #include "hwt_elf.h"
 
 #if defined(__aarch64__)
-#include "hwt_coresight.h"
-#include "hwt_spe.h"
+#include "coresight/hwt_coresight.h"
+#include "spe/hwt_spe.h"
 #endif
 
 #if defined(__amd64__)
