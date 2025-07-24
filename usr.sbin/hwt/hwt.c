@@ -81,10 +81,6 @@
 #define	dprintf(fmt, ...)
 #endif
 
-#define	PARENTSOCKET		0
-#define	CHILDSOCKET		1
-#define	NSOCKPAIRFD		2
-
 static struct trace_context tcs;
 
 static struct backend backends[] = {

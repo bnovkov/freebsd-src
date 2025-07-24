@@ -29,6 +29,10 @@
 #ifndef	_HWT_PROCESS_H_
 #define	_HWT_PROCESS_H_
 
+#define	PARENTSOCKET		0
+#define	CHILDSOCKET		1
+#define	NSOCKPAIRFD		2
+
 int hwt_process_create(int *sockpair, char **cmd, char **env, int *pid0);
 int hwt_process_start(int *sockpair);
 struct pmcstat_process *hwt_process_alloc(void);
