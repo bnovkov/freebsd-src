@@ -1,5 +1,5 @@
 PROG_CXX=	hwt
-MAN=
+MAN=		hwt.8
 
 CFLAGS+= -I${SRCTOP}/lib/libpmcstat -I${SRCTOP}/sys
 
