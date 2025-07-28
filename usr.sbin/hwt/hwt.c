@@ -330,8 +330,8 @@ hwt_process_loop(struct trace_context *tc)
 	printf("Decoder started. Press ctrl+c to stop.\n");
 
 	while (1) {
-		waitpid(tc->pid, &status, WNOHANG);
-		if (WIFEXITED(status)) {
+		error = waitpid(tc->pid, &status, WNOHANG);
+		if (error != 0 && WIFEXITED(status)) {
 			tc->terminate = 1;
 		}
 		if (!tc->terminate) {
