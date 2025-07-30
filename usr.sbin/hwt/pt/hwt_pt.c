@@ -283,6 +283,7 @@ pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 			return (ENOMEM);
 		}
 		dctx->id = tid;
+		dctx->dev_fd = fd;
 		if (tc->raw) {
 			RB_INSERT(threads, &threads, dctx);
 			break;
@@ -450,9 +451,35 @@ pt_process_buffer(struct trace_context *tc, int id, int curpage,
 	return (0);
 }
 
+static void
+pt_ctx_shutdown_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
+    void *arg __unused)
+{
+	int error;
+	struct hwt_bufptr_get bget;
+	vm_offset_t offset;
+	int curpage;
+
+	bget.ident = &curpage;
+	bget.offset = &offset;
+	error = ioctl(dctx->dev_fd, HWT_IOC_BUFPTR_GET, &bget);
+	if (error)
+		return;
+	error = pt_process_buffer(tc, dctx->id, curpage, offset);
+	if (error)
+		errx(EXIT_FAILURE, "pt_process_data");
+}
+
+static void
+pt_shutdown(struct trace_context *tc)
+{
+	pt_foreach_ctx(tc, pt_ctx_shutdown_cb, NULL);
+}
+
 struct backend_methods pt_methods = {
 	.init = pt_init,
 	.mmap = pt_mmap,
+	.shutdown = pt_shutdown,
 	.process_buffer = pt_process_buffer,
 	.set_config = pt_set_config,
 	.image_load_cb = pt_image_load_cb

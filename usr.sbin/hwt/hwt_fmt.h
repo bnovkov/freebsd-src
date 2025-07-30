@@ -41,7 +41,7 @@ enum hwt_fmt_column {
 
 #define HWT_FMT_SHOULD_PRINT_COLS(flags, cols) ((flags & (cols)) != 0)
 #define HWT_FMT_SHOULD_PRINT(flags, col) ((flags & HWT_FMT_##col) != 0)
-#define HWT_FMT_DEFAULT_COLS (HWT_FMT_OFFSET | HWT_FMT_ID | HWT_FMT_SYM_NAME | \
+#define HWT_FMT_DEFAULT_COLS (HWT_FMT_OFFSET | HWT_FMT_ID | HWT_FMT_IMAGE_NAME | \
 	    HWT_FMT_PC)
 
 struct trace_context;
