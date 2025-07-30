@@ -53,8 +53,8 @@ static struct column {
 	{ "image", HWT_FMT_IMAGE_NAME },
 	{ "symbol", HWT_FMT_SYM_NAME },
 	{ "pc", HWT_FMT_PC },
-	{ "event_type", HWT_FMT_EV_TYPE },
-	{ "event_payload", HWT_FMT_EV_PAYLOAD },
+	{ "event", HWT_FMT_EV_TYPE },
+	{ "payload", HWT_FMT_EV_PAYLOAD },
 	{ "disas", HWT_FMT_DISAS },
 };
 
@@ -83,9 +83,8 @@ hwt_fmt_print_generic(struct trace_context *tc, xo_handle_t *xop, int id,
 			if (!image)
 				piname = "?";
 			else
-				piname =
-				    pmcstat_string_unintern(image->pi_name);
-			xo_emit_h(xop, "{:image_name/%s}\t", piname);
+				piname = pmcstat_string_unintern(image->pi_name);
+			xo_emit_h(xop, "{:image_name/%s}{:image_offset/+%#lx}\t", piname, newpc);
 		}
 
 		if (HWT_FMT_SHOULD_PRINT(tc->fmt, SYM_NAME))  {
