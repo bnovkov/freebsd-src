@@ -259,6 +259,7 @@ struct bridge_iflist {
 	struct epoch_context	bif_epoch_ctx;
 	ether_vlanid_t		bif_pvid;	/* port vlan id */
 	ifbvlan_set_t		bif_vlan_set;	/* if allowed tagged vlans */
+	uint16_t		bif_vlanproto;	/* vlan protocol */
 };
 
 /*
@@ -423,6 +424,7 @@ static int	bridge_ioctl_gflags(struct bridge_softc *, void *);
 static int	bridge_ioctl_sflags(struct bridge_softc *, void *);
 static int	bridge_ioctl_gdefpvid(struct bridge_softc *, void *);
 static int	bridge_ioctl_sdefpvid(struct bridge_softc *, void *);
+static int	bridge_ioctl_svlanproto(struct bridge_softc *, void *);
 static int	bridge_pfil(struct mbuf **, struct ifnet *, struct ifnet *,
 		    int);
 #ifdef INET
@@ -653,6 +655,9 @@ static const struct bridge_control bridge_control_table[] = {
 	  BC_F_COPYOUT },
 
 	{ bridge_ioctl_sdefpvid,	sizeof(struct ifbrparam),
+	  BC_F_COPYIN|BC_F_SUSER },
+
+	{ bridge_ioctl_svlanproto,	sizeof(struct ifbreq),
 	  BC_F_COPYIN|BC_F_SUSER },
 };
 static const int bridge_control_table_size = nitems(bridge_control_table);
@@ -1494,8 +1499,10 @@ bridge_ioctl_add(struct bridge_softc *sc, void *arg)
 	bif->bif_ifp = ifs;
 	bif->bif_flags = IFBIF_LEARNING | IFBIF_DISCOVER;
 	bif->bif_savedcaps = ifs->if_capenable;
-	if (sc->sc_flags & IFBRF_VLANFILTER)
-		bif->bif_pvid = sc->sc_defpvid;
+	bif->bif_vlanproto = ETHERTYPE_VLAN;
+	bif->bif_pvid = sc->sc_defpvid;
+	if (sc->sc_flags & IFBRF_DEFQINQ)
+		bif->bif_flags |= IFBIF_QINQ;
 
 	/*
 	 * Assign the interface's MAC address to the bridge if it's the first
@@ -1577,6 +1584,7 @@ bridge_ioctl_gifflags(struct bridge_softc *sc, void *arg)
 	req->ifbr_addrmax = bif->bif_addrmax;
 	req->ifbr_addrexceeded = bif->bif_addrexceeded;
 	req->ifbr_pvid = bif->bif_pvid;
+	req->ifbr_vlanproto = bif->bif_vlanproto;
 
 	/* Copy STP state options as flags */
 	if (bp->bp_operedge)
@@ -1961,9 +1969,6 @@ bridge_ioctl_sifpvid(struct bridge_softc *sc, void *arg)
 	struct ifbreq *req = arg;
 	struct bridge_iflist *bif;
 
-	if ((sc->sc_flags & IFBRF_VLANFILTER) == 0)
-		return (EXTERROR(EINVAL, "VLAN filtering not enabled"));
-
 	bif = bridge_lookup_member(sc, req->ifbr_ifsname);
 	if (bif == NULL)
 		return (EXTERROR(ENOENT, "Interface is not a bridge member"));
@@ -2252,6 +2257,24 @@ bridge_ioctl_sdefpvid(struct bridge_softc *sc, void *arg)
 	return (0);
 }
 
+static int
+bridge_ioctl_svlanproto(struct bridge_softc *sc, void *arg)
+{
+	struct ifbreq *req = arg;
+	struct bridge_iflist *bif;
+
+	bif = bridge_lookup_member(sc, req->ifbr_ifsname);
+	if (bif == NULL)
+		return (EXTERROR(ENOENT, "Interface is not a bridge member"));
+
+	if (req->ifbr_vlanproto != ETHERTYPE_VLAN &&
+	    req->ifbr_vlanproto != ETHERTYPE_QINQ)
+		return (EXTERROR(EINVAL, "Invalid VLAN protocol"));
+
+	bif->bif_vlanproto = req->ifbr_vlanproto;
+
+	return (0);
+}
 /*
  * bridge_ifdetach:
  *
@@ -2383,24 +2406,25 @@ bridge_enqueue(struct bridge_softc *sc, struct ifnet *dst_ifp, struct mbuf *m,
 		mflags = m->m_flags;
 
 		/*
-		 * If VLAN filtering is enabled, and the native VLAN ID of the
-		 * outgoing interface matches the VLAN ID of the frame, remove
-		 * the VLAN header.
+		 * If the native VLAN ID of the outgoing interface matches the
+		 * VLAN ID of the frame, remove the VLAN tag.
 		 */
-		if ((sc->sc_flags & IFBRF_VLANFILTER) &&
-		    bif->bif_pvid != DOT1Q_VID_NULL &&
+		if (bif->bif_pvid != DOT1Q_VID_NULL &&
 		    VLANTAGOF(m) == bif->bif_pvid) {
 			m->m_flags &= ~M_VLANTAG;
 			m->m_pkthdr.ether_vtag = 0;
 		}
 
 		/*
-		 * If underlying interface can not do VLAN tag insertion itself
-		 * then attach a packet tag that holds it.
+		 * There are two cases where we have to insert our own tag:
+		 * if the member interface doesn't support hardware tagging,
+		 * or if the tag proto is not 802.1q.
 		 */
 		if ((m->m_flags & M_VLANTAG) &&
-		    (dst_ifp->if_capenable & IFCAP_VLAN_HWTAGGING) == 0) {
-			m = ether_vlanencap(m, m->m_pkthdr.ether_vtag);
+		    ((dst_ifp->if_capenable & IFCAP_VLAN_HWTAGGING) == 0 ||
+		      bif->bif_vlanproto != ETHERTYPE_VLAN)) {
+			m = ether_vlanencap_proto(m, m->m_pkthdr.ether_vtag,
+			    bif->bif_vlanproto);
 			if (m == NULL) {
 				if_printf(dst_ifp,
 				    "unable to prepend VLAN header\n");
@@ -2411,6 +2435,12 @@ bridge_enqueue(struct bridge_softc *sc, struct ifnet *dst_ifp, struct mbuf *m,
 		}
 
 		M_ASSERTPKTHDR(m); /* We shouldn't transmit mbuf without pkthdr */
+		/*
+		 * XXXZL: gif(4) requires the af to be saved in csum_data field
+		 * so that gif_transmit() routine can pull it back.
+		 */
+		if (dst_ifp->if_type == IFT_GIF)
+			m->m_pkthdr.csum_data = AF_LINK;
 		if ((err = dst_ifp->if_transmit(dst_ifp, m))) {
 			int n;
 
@@ -2828,8 +2858,28 @@ bridge_input(struct ifnet *ifp, struct mbuf *m)
 
 	NET_EPOCH_ASSERT();
 
+	/* We need the Ethernet header later, so make sure we have it now. */
+	if (m->m_len < ETHER_HDR_LEN) {
+		m = m_pullup(m, ETHER_HDR_LEN);
+		if (m == NULL) {
+			if_inc_counter(sc->sc_ifp, IFCOUNTER_IERRORS, 1);
+			m_freem(m);
+			return (NULL);
+		}
+	}
+
 	eh = mtod(m, struct ether_header *);
 	vlan = VLANTAGOF(m);
+
+	/*
+	 * If this frame has a VLAN tag and the receiving interface has a
+	 * vlan(4) trunk, then it is is destined for vlan(4), not for us.
+	 * This means if vlan(4) and bridge(4) are configured on the same
+	 * interface, vlan(4) is preferred, which is what users typically
+	 * expect.
+	 */
+	if (vlan != DOT1Q_VID_NULL && ifp->if_vlantrunk != NULL)
+		return (m);
 
 	bif = ifp->if_bridge;
 	if (bif)
@@ -3031,19 +3081,13 @@ bridge_input(struct ifnet *ifp, struct mbuf *m)
 	do { GRAB_OUR_PACKETS(bifp) } while (0);
 
 	/*
-	 * Check the interface the packet arrived on.  For tagged frames,
-	 * we need to do this even if member_ifaddrs is disabled because
-	 * vlan(4) might need to handle the traffic.
-	 */
-	if (V_member_ifaddrs || (vlan && ifp->if_vlantrunk))
-		do { GRAB_OUR_PACKETS(ifp) } while (0);
-
-	/*
-	 * We only need to check other members interface if member_ifaddrs
-	 * is enabled; otherwise we should have never traffic destined for
-	 * a member's lladdr.
+	 * If member_ifaddrs is enabled, see if the packet is destined for
+	 * one of the members' addresses.
 	 */
 	if (V_member_ifaddrs) {
+		/* Check the interface the packet arrived on. */
+		do { GRAB_OUR_PACKETS(ifp) } while (0);
+
 		CK_LIST_FOREACH(bif2, &sc->sc_iflist, bif_next) {
 			GRAB_OUR_PACKETS(bif2->bif_ifp)
 		}
@@ -3246,9 +3290,31 @@ bridge_vfilter_in(const struct bridge_iflist *sbif, struct mbuf *m)
 	if (vlan > DOT1Q_VID_MAX)
 		return (false);
 
-	/* If VLAN filtering isn't enabled, pass everything. */
-	if ((sbif->bif_sc->sc_flags & IFBRF_VLANFILTER) == 0)
+	/*
+	 * If VLAN filtering isn't enabled, pass everything, but add a tag
+	 * if the port has a pvid configured.
+	 */
+	if ((sbif->bif_sc->sc_flags & IFBRF_VLANFILTER) == 0) {
+		if (vlan == DOT1Q_VID_NULL &&
+		    sbif->bif_pvid != DOT1Q_VID_NULL) {
+			m->m_pkthdr.ether_vtag = sbif->bif_pvid;
+			m->m_flags |= M_VLANTAG;
+		}
+
 		return (true);
+	}
+
+	/* If Q-in-Q is disabled, check for stacked tags. */
+	if ((sbif->bif_flags & IFBIF_QINQ) == 0) {
+		struct ether_header *eh;
+		uint16_t proto;
+
+		eh = mtod(m, struct ether_header *);
+		proto = ntohs(eh->ether_type);
+
+		if (proto == ETHERTYPE_VLAN || proto == ETHERTYPE_QINQ)
+			return (false);
+	}
 
 	if (vlan == DOT1Q_VID_NULL) {
 		/*
