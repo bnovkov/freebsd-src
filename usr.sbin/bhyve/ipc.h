@@ -33,18 +33,17 @@
 #include <sys/linker_set.h>
 #include <sys/nv.h>
 
+struct vmctx;
+
 struct ipc_command {
 	const char *name;
 	int (*handler)(struct vmctx *ctx, const nvlist_t *nvl);
 };
 
-#define IPC_COMMAND(set, name, function)			\
-	static struct ipc_command name ## _ipc_command =	\
-	{ #name, function };					\
-	DATA_SET(set, name ## _ipc_command)
+#define IPC_COMMAND(name, function)                                         \
+	static struct ipc_command name##_ipc_command = { #name, function }; \
+	DATA_SET(ipc_cmd_set, name##_ipc_command)
 
-#define IPC_COMMAND_FOREACH(pvar, set)	SET_FOREACH(pvar, set)
-
-SET_DECLARE(ipc_cmd_set, struct ipc_command);
+int init_ipc_thread(struct vmctx *ctx);
 
 #endif /* _IPC_H_ */
