@@ -1938,7 +1938,7 @@ pci_bus_write_dsdt(int bus)
 		dsdt_line("");
 		dsdt_line("Method (DVNT, 2, NotSerialized)");
 		dsdt_line("{");
-		dsdt_line("	If ((Arg0 & 0x08))");
+		dsdt_line("	If ((Arg0 & 0x%02X))", hp_slot);
 		dsdt_line("	{");
 		dsdt_line("	    Notify (S%02X, Arg1)", hp_slot);
 		dsdt_line("	}");
@@ -2887,6 +2887,7 @@ pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
 	if (!found)
 		return (ENOENT);
 
+	printf("%s: attempting to hotplug slot %d\n", __func__, hp_slot);
 	bi = pci_businfo[0];
 	assert(hp_slot != -1);
 	si = &bi->slotinfo[hp_slot];

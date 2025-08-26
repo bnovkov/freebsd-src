@@ -112,7 +112,25 @@ int pci_hp_init(struct vmctx *ctx) {
 	mr.handler = pcihp_iomem_handler;
 	mr.base = PCI_EMUL_HP_PORT;
 	mr.size = PCI_EMUL_HP_LEN;
+	error = register_mem(&mr);
 
 err_out:
 	return (error);
 }
+
+// TODO
+/* //         Device (PHPR) */
+/*         { */
+/*             Name (_HID, "PNP0A06" /\* Generic Container Device *\/)  // _HID: Hardware ID */
+/*             Name (_UID, "PCI Hotplug resources")  // _UID: Unique ID */
+/*             Name (_STA, 0x0B)  // _STA: Status */
+/*             Name (_CRS, ResourceTemplate ()  // _CRS: Current Resource Settings */
+/*             { */
+/*                 IO (Decode16, */
+/*                     0xCAE00,             // Range Minimum */
+/*                     0xAE00,             // Range Maximum */
+/*                     0x01,               // Alignment */
+/*                     0x18,               // Length */
+/*                     ) */
+/*             }) */
+/*         } */

@@ -86,6 +86,7 @@ enum {
 	SET_CHECKPOINT_FILE,
 	SET_SUSPEND_FILE,
 #endif
+	PCI_HOTADD,
 	OPT_LAST,
 };
 
@@ -134,6 +135,7 @@ setup_options(void)
 		{ "get-debug-cpus",	NO_ARG,	&get_debug_cpus,	1 },
 		{ "get-suspended-cpus", NO_ARG,	&get_suspended_cpus, 	1 },
 		{ "get-cpu-topology",	NO_ARG, &get_cpu_topology,	1 },
+		{ "pci-hotadd",	REQ_ARG, 0,	PCI_HOTADD },
 #ifdef BHYVE_SNAPSHOT
 		{ "checkpoint", 	REQ_ARG, 0,	SET_CHECKPOINT_FILE},
 		{ "suspend", 		REQ_ARG, 0,	SET_SUSPEND_FILE},
@@ -249,9 +251,9 @@ show_memseg(struct vmctx *ctx)
 	}
 }
 
-#ifdef BHYVE_SNAPSHOT
+#define BHYVE_RUN_DIR		       "/var/run/bhyve/"
 static int
-send_message(const char *vmname, nvlist_t *nvl)
+ipc_send_message(const char *vmname, nvlist_t *nvl)
 {
 	struct sockaddr_un addr;
 	int err = 0, socket_fd;
@@ -288,6 +290,19 @@ done:
 }
 
 static int
+pci_hotadd_request(const char *vmname, const char *devname)
+{
+	nvlist_t *nvl;
+
+	nvl = nvlist_create(0);
+	nvlist_add_string(nvl, "cmd", "pci_add");
+	nvlist_add_string(nvl, "devname", devname);
+
+	return (ipc_send_message(vmname, nvl));
+}
+
+#ifdef BHYVE_SNAPSHOT
+static int
 open_directory(const char *file)
 {
 	char *path;
@@ -313,12 +328,12 @@ snapshot_request(const char *vmname, char *file, bool suspend)
 		return (errno);
 
 	nvl = nvlist_create(0);
-	nvlist_add_string(nvl, "cmd", "checkpoint");
+	nvlist_add_string(nvl, "cmd", "checkpoint_ipc_command");
 	nvlist_add_string(nvl, "filename", basename(file));
 	nvlist_add_bool(nvl, "suspend", suspend);
 	nvlist_move_descriptor(nvl, "fddir", fd);
 
-	return (send_message(vmname, nvl));
+	return (ipc_send_message(vmname, nvl));
 }
 #endif
 
@@ -335,11 +350,13 @@ main(int argc, char *argv[])
 #ifdef BHYVE_SNAPSHOT
 	char *checkpoint_file = NULL;
 #endif
+	const char *hotadd_devname;
 
 	opts = setup_options();
 
 	vcpuid = 0;
 	vmname = NULL;
+	hotadd_devname = NULL;
 	progname = basename(argv[0]);
 
 	while ((ch = getopt_long(argc, argv, "", opts, NULL)) != -1) {
@@ -378,6 +395,10 @@ main(int argc, char *argv[])
 			vm_suspend_opt = (ch == SET_SUSPEND_FILE);
 			break;
 #endif
+		case PCI_HOTADD:
+			hotadd_devname = optarg;
+			break;
+
 		default:
 			usage(opts);
 		}
@@ -507,6 +528,9 @@ main(int argc, char *argv[])
 
 	if (!error && force_poweroff)
 		error = vm_suspend(ctx, VM_SUSPEND_POWEROFF);
+
+	if (!error && hotadd_devname != NULL)
+		error = pci_hotadd_request(vmname, hotadd_devname);
 
 	if (error)
 		printf("errno = %d\n", errno);

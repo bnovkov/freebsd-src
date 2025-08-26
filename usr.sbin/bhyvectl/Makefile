@@ -14,8 +14,9 @@ LIBADD=	vmmapi util
 
 CFLAGS+= -I${.CURDIR} -I${SRCTOP}/sys/amd64/vmm
 
-.if ${MK_BHYVE_SNAPSHOT} != "no"
 LIBADD+= nv
+
+.if ${MK_BHYVE_SNAPSHOT} != "no"
 CFLAGS+= -DBHYVE_SNAPSHOT
 
 # usr.sbin/bhyve/snapshot.h needs ucl header
