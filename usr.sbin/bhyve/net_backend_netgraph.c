@@ -25,12 +25,13 @@
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <sys/param.h>
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
 #endif
 #include <sys/socket.h>
 #include <sys/sysctl.h>
-
+#include <fcntl.h>
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif

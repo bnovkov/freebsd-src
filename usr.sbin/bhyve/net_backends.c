@@ -106,7 +106,7 @@ tap_init(struct net_backend *be, const char *devname,
 
 	be->fd = open(tbuf, O_RDWR);
 	if (be->fd == -1) {
-		EPRINTLN("open of tap device %s failed", tbuf);
+		EPRINTLN("open of tap device %s failed: %s", tbuf, strerror(errno));
 		goto error;
 	}
 

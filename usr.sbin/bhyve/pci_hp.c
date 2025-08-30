@@ -1,5 +1,6 @@
 
 #include <sys/_param.h>
+#include <sys/cdefs.h>
 #include <assert.h>
 #include <err.h>
 #include <stdio.h>
@@ -8,8 +9,8 @@
 
 #include "acpi.h"
 #include "acpi_device.h"
-#include "mem.h"
 #include "pci_hp.h"
+#include "amd64/inout.h"
 
 #define PCIHP_ACPI_HID "PNP0A06"
 #define PCIHP_ACPI_DEVNAME "PHPS"
@@ -34,31 +35,32 @@ static struct hpstate {
 static pthread_mutex_t hp_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int
-pcihp_iomem_handler(struct vcpu *vcpu __unused, int dir, uint64_t addr, int size,
-				   uint64_t *val, void *arg1  __unused, long arg2 __unused) {
-	uint64_t offset;
+pcihp_ioport_handler(struct vmctx *ctx __unused, int in, int port,
+					 int bytes, uint32_t *eax, void *arg __unused) {
 	int error;
 
-	// TODO: assert 4 byte granularity
-	assert(size == sizeof(uint32_t));
-	offset = addr - PCI_EMUL_HP_PORT;
-	if (offset < PCI_EMUL_HP_EJ && dir == MEM_F_WRITE) {
+	assert(port >= PCI_EMUL_HP_PORT && port < (PCI_EMUL_HP_PORT + PCI_EMUL_HP_LEN));
+	if (port < PCI_EMUL_HP_EJ && !in) {
 		return (-1);
 	}
+	if (bytes != 4) {
+		return (-1);
+	}
+
 	error = 0;
 	pthread_mutex_lock(&hp_lock);
-	switch(offset) {
+	switch(port) {
 		case PCI_EMUL_HP_PCIU:
-			*val = hp_status.pciu;
+			*eax = hp_status.pciu;
 			break;
 		case PCI_EMUL_HP_PCID:
-			*val = hp_status.pciu;
+			*eax = hp_status.pciu;
 			break;
 		case PCI_EMUL_HP_EJ:
-			if (dir == MEM_F_WRITE) {
-				hp_status.bus0ej = *val;
+			if (!in) {
+				hp_status.bus0ej = *eax;
 			} else {
-				*val = hp_status.bus0ej;
+				*eax = hp_status.bus0ej;
 			}
 			break;
 		default:
@@ -93,9 +95,10 @@ int pci_hp_request_up(struct vmctx *ctx, int bus, int slot) {
 }
 
 int pci_hp_init(struct vmctx *ctx) {
-	struct mem_range mr;
-	struct acpi_device *dev;
 	int error;
+#ifdef __amd64__
+	struct inout_port iop;
+	struct acpi_device *dev;
 
 	error = acpi_device_create(&dev, dev, ctx, &pcihp_device_emul);
 	if (error)
@@ -106,31 +109,16 @@ int pci_hp_init(struct vmctx *ctx) {
 	if (error)
 		goto err_out;
 
-	bzero(&mr, sizeof(struct mem_range));
-	mr.name = PCIHP_IOMEM_RANGE_NAME;
-	mr.flags = MEM_F_RW;
-	mr.handler = pcihp_iomem_handler;
-	mr.base = PCI_EMUL_HP_PORT;
-	mr.size = PCI_EMUL_HP_LEN;
-	error = register_mem(&mr);
-
+	bzero(&iop, sizeof(iop));
+	iop.name = PCIHP_IOMEM_RANGE_NAME;
+	iop.port = PCI_EMUL_HP_PORT;
+	iop.size = PCI_EMUL_HP_LEN;
+	iop.flags = IOPORT_F_INOUT;
+	iop.handler = pcihp_ioport_handler;
+	error = register_inout(&iop);
 err_out:
+#else
+	error = -1;
+#endif
 	return (error);
 }
-
-// TODO
-/* //         Device (PHPR) */
-/*         { */
-/*             Name (_HID, "PNP0A06" /\* Generic Container Device *\/)  // _HID: Hardware ID */
-/*             Name (_UID, "PCI Hotplug resources")  // _UID: Unique ID */
-/*             Name (_STA, 0x0B)  // _STA: Status */
-/*             Name (_CRS, ResourceTemplate ()  // _CRS: Current Resource Settings */
-/*             { */
-/*                 IO (Decode16, */
-/*                     0xCAE00,             // Range Minimum */
-/*                     0xAE00,             // Range Maximum */
-/*                     0x01,               // Alignment */
-/*                     0x18,               // Length */
-/*                     ) */
-/*             }) */
-/*         } */

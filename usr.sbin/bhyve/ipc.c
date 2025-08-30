@@ -6,12 +6,14 @@
 #include <sys/linker_set.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/types.h>
 
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
 #include <sys/ioctl.h>
 
+#include <sys/cpuset.h>
 #include <machine/vmm.h>
 #include <machine/vmm_snapshot.h>
 
@@ -112,7 +114,7 @@ init_ipc_thread(struct vmctx *ctx)
 	pthread_t ipc_pthread;
 	int err;
 #ifndef WITHOUT_CAPSICUM
-	cap_rights_t rights;
+	/* cap_rights_t rights; */
 #endif
 
 	memset(&addr, 0, sizeof(addr));

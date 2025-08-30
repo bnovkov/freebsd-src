@@ -77,6 +77,8 @@
 
 #define GB		(1024 * 1024 * 1024UL)
 
+static bool in_hotplug = false;
+
 struct funcinfo {
 	nvlist_t *fi_config;
 	struct pci_devemu *fi_pde;
@@ -95,8 +97,11 @@ struct slotinfo {
 
 struct businfo {
 	uint16_t iobase, iolimit;		/* I/O window */
+	uint16_t iocur;
 	uint32_t membase32, memlimit32;		/* mmio window below 4GB */
+	uint32_t memcur32;
 	uint64_t membase64, memlimit64;		/* mmio window above 4GB */
+	uint64_t memcur64;
 	struct slotinfo slotinfo[MAXSLOTS];
 };
 
@@ -863,7 +868,7 @@ pci_emul_alloc_bar(struct pci_devinst *pdi, int idx, enum pcibar_type type,
 	 * used to load the initial guest image.  Otherwise, we rely on the boot
 	 * ROM to handle this.
 	 */
-	if (!get_config_bool_default("pci.enable_bars", !bootrom_boot()))
+	if (!get_config_bool_default("pci.enable_bars", !bootrom_boot()) && !in_hotplug)
 		return (0);
 
 	/*
@@ -1617,15 +1622,18 @@ init_pci(struct vmctx *ctx)
 		 * this bus to give a guest some flexibility if it wants to
 		 * reprogram the BARs.
 		 */
+		bi->iocur = pci_emul_iobase;
 		pci_emul_iobase += BUSIO_ROUNDUP;
 		pci_emul_iobase = roundup2(pci_emul_iobase, BUSIO_ROUNDUP);
 		bi->iolimit = pci_emul_iobase;
 
+		bi->memcur32 = pci_emul_membase32;
 		pci_emul_membase32 += BUSMEM32_ROUNDUP;
 		pci_emul_membase32 = roundup2(pci_emul_membase32,
 		    BUSMEM32_ROUNDUP);
 		bi->memlimit32 = pci_emul_membase32;
 
+		bi->memcur64 = pci_emul_membase64;
 		pci_emul_membase64 += BUSMEM64_ROUNDUP;
 		pci_emul_membase64 = roundup2(pci_emul_membase64,
 		    BUSMEM64_ROUNDUP);
@@ -1938,7 +1946,7 @@ pci_bus_write_dsdt(int bus)
 		dsdt_line("");
 		dsdt_line("Method (DVNT, 2, NotSerialized)");
 		dsdt_line("{");
-		dsdt_line("	If ((Arg0 & 0x%02X))", hp_slot);
+		dsdt_line("	If ((Arg0 & 0x%02X))", 1 << hp_slot);
 		dsdt_line("	{");
 		dsdt_line("	    Notify (S%02X, Arg1)", hp_slot);
 		dsdt_line("	}");
@@ -2887,12 +2895,22 @@ pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
 	if (!found)
 		return (ENOENT);
 
-	printf("%s: attempting to hotplug slot %d\n", __func__, hp_slot);
 	bi = pci_businfo[0];
+	pci_emul_iobase = bi->iocur;
+	pci_emul_membase32 = bi->memcur32;
+	pci_emul_membase64 = bi->memcur64;
+	printf("%s: attempting to hotplug slot %d\n", __func__, hp_slot);
 	assert(hp_slot != -1);
 	si = &bi->slotinfo[hp_slot];
 	fi = &si->si_funcs[0];
-	pci_emul_init(ctx, pdp, 0, hp_slot, 0, fi);
+	set_config_value("backend", "tap0");
+
+	in_hotplug = true;
+	if (pci_emul_init(ctx, pdp, 0, hp_slot, 0, fi) != 0) {
+		printf("%s: failed to init device\n", __func__);
+		in_hotplug = false;
+		return (-1);
+	}
 
 	TAILQ_FOREACH_SAFE(bar, &pci_bars, chain, bar_tmp) {
 		pci_emul_assign_bar(bar->pdi, bar->idx, bar->type,
@@ -2900,6 +2918,8 @@ pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
 		free(bar);
 	}
 	TAILQ_INIT(&pci_bars);
+	pci_lintr_route(fi->fi_devi);
+	in_hotplug = false;
 
 	return (pci_hp_request_up(ctx, 0, hp_slot));
 }
