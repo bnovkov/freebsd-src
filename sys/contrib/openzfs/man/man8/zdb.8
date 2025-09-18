@@ -15,7 +15,7 @@
 .\" Copyright (c) 2017 Lawrence Livermore National Security, LLC.
 .\" Copyright (c) 2017 Intel Corporation.
 .\"
-.Dd October 27, 2024
+.Dd August 12, 2025
 .Dt ZDB 8
 .Os
 .
@@ -64,6 +64,13 @@
 .Nm
 .Fl m
 .Op Fl AFLPXY
+.Op Fl e Oo Fl V Oc Oo Fl p Ar path Oc Ns …
+.Op Fl t Ar txg
+.Op Fl U Ar cache
+.Ar poolname Op Ar vdev Oo Ar metaslab Oc Ns …
+.Nm
+.Fl -allocated-map
+.Op Fl mAFLPXY
 .Op Fl e Oo Fl V Oc Oo Fl p Ar path Oc Ns …
 .Op Fl t Ar txg
 .Op Fl U Ar cache
@@ -128,6 +135,11 @@ that zdb may interpret inconsistent pool data and behave erratically.
 .Sh OPTIONS
 Display options:
 .Bl -tag -width Ds
+.It Fl Sy -allocated-map
+Prints out a list of all the allocated regions in the pool.
+Primarily intended for use with the
+.Nm zhack metaslab leak
+subcommand.
 .It Fl b , -block-stats
 Display statistics regarding the number, size
 .Pq logical, physical and allocated
@@ -531,6 +543,18 @@ option, with more occurrences enabling more verbosity.
 If no options are specified, all information about the named pool will be
 displayed at default verbosity.
 .
+.Sh EXIT STATUS
+The
+.Nm
+utility exits
+.Sy 0
+on success,
+.Sy 1
+if a fatal error occurs,
+.Sy 2
+if invalid command line options were specified, or
+.Sy 3
+if on-disk corruption was detected, but was not fatal.
 .Sh EXAMPLES
 .Ss Example 1 : No Display the configuration of imported pool Ar rpool
 .Bd -literal

@@ -1,12 +1,14 @@
 SHLIBDIR?=	/lib
-.if !defined(LIBCRYPTO_WITHOUT_SUBDIRS)
+.if !defined(LIBCRYPTO_WITHOUT_SUBDIRS) && !defined(BOOTSTRAPPING)
 SUBDIR=		engines modules
+.endif
+.ifdef BOOTSTRAPPING
+CFLAGS+=	-DOPENSSL_NO_SCTP
 .endif
 
 .include <bsd.own.mk>
 .include <src.opts.mk>
 
-PACKAGE=	openssl-lib
 LIB=		crypto
 SHLIB_MAJOR=	35
 VERSION_MAP=	${.CURDIR}/Version.map
@@ -647,10 +649,11 @@ _cmd1=/%%NO_ASM%%/d
 .else
 _cmd1=s/%%NO_ASM%%//
 .endif
-.if ${MK_OPENSSL_KTLS} != "no"
+.if ${MK_OPENSSL_KTLS} != "no" && !defined(BOOTSTRAPPING)
 _cmd2=/%%NO_KTLS%%/d
 .else
 _cmd2=s/%%NO_KTLS%%//
+CFLAGS+= -DOPENSSL_NO_KTLS
 .endif
 
 buildinf.h: Makefile

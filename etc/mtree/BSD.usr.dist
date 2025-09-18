@@ -26,6 +26,8 @@
                     ..
                 ..
             ..
+            samplerate
+            ..
             sqlite3
             ..
             ucl
@@ -267,6 +269,8 @@
         ..
         dtrace
         ..
+        et
+        ..
         examples
             BSD_daemon
             ..
@@ -283,8 +287,6 @@
             diskless
             ..
             dma
-            ..
-            drivers
             ..
             dwatch
             ..

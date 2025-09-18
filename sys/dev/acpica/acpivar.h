@@ -40,6 +40,7 @@
 #include <sys/ktr.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/power.h>
 #include <sys/selinfo.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
@@ -490,6 +491,7 @@ EVENTHANDLER_DECLARE(acpi_video_event, acpi_event_handler_t);
 
 /* Device power control. */
 ACPI_STATUS	acpi_pwr_wake_enable(ACPI_HANDLE consumer, int enable);
+ACPI_STATUS	acpi_pwr_get_state(ACPI_HANDLE consumer, int *state);
 ACPI_STATUS	acpi_pwr_switch_consumer(ACPI_HANDLE consumer, int state);
 acpi_pwr_for_sleep_t	acpi_device_pwr_for_sleep;
 int		acpi_set_powerstate(device_t child, int state);

@@ -51,12 +51,17 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20250917: Remove a miscapitalized manual
+OLD_FILES+=usr/share/man/man9/vnet.9.gz
+
+# 20250911: This tool is no longer needed
+OLD_FILES+=usr/tests/bin/cp/sparse
+
+# 20250826: Remove a misspelled manual
+OLD_FILES+=usr/share/man/man3/sysdecode_syscallnames.3.gz
+
 # 20250812: Remove a bogus manlink
 OLD_FILES+=usr/share/man/man3/quota_statfs.3.gz
-
-# 20250810: Removal of remaining Secure RPC (DES) bits
-OLD_FILES+=usr/sbin/rpc.ypupdated
-OLD_FILES+=etc/rc.d/ypupdated
 
 # 20250808: nvmfd removed from base install
 OLD_FILES+=usr/sbin/nvmfd
@@ -80,7 +85,6 @@ OLD_FILES+=usr/lib/libopencsd.so
 
 # 20250801: Move compile_et to /usr/sbin
 OLD_FILES+=usr/share/et/compile_et
-OLD_DIRS+=usr/share/et
 
 # 20250728: zfsboot (MBR) removed
 OLD_FILES+=boot/zfsboot

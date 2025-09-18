@@ -953,7 +953,7 @@ fuse_vnop_copy_file_range(struct vop_copy_file_range_args *ap)
 		*ap->a_outoffp += fwo->size;
 		fuse_internal_clear_suid_on_write(outvp, outcred, td);
 		if (*ap->a_outoffp > outfvdat->cached_attrs.va_size) {
-                        fuse_vnode_setsize(outvp, *ap->a_outoffp, false);
+			fuse_vnode_setsize(outvp, *ap->a_outoffp, false);
 			getnanouptime(&outfvdat->last_local_modify);
 		}
 		fuse_vnode_update(invp, FN_ATIMECHANGE);
@@ -1748,7 +1748,7 @@ fuse_vnop_open(struct vop_open_args *ap)
 	if (fuse_isdeadfs(vp))
 		return (EXTERROR(ENXIO, "This FUSE session is about "
 		    "to be closed"));
-	if (vp->v_type == VCHR || vp->v_type == VBLK || vp->v_type == VFIFO)
+	if (VN_ISDEV(vp) || vp->v_type == VFIFO)
 		return (EXTERROR(EOPNOTSUPP, "Unsupported vnode type",
 		    vp->v_type));
 	if ((a_mode & (FREAD | FWRITE | FEXEC)) == 0)

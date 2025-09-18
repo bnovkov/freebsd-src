@@ -251,11 +251,11 @@ spa_mode_t spa_mode_global = SPA_MODE_UNINIT;
 
 #ifdef ZFS_DEBUG
 /*
- * Everything except dprintf, set_error, spa, and indirect_remap is on
- * by default in debug builds.
+ * Everything except dprintf, set_error, indirect_remap, and raidz_reconstruct
+ * is on by default in debug builds.
  */
 int zfs_flags = ~(ZFS_DEBUG_DPRINTF | ZFS_DEBUG_SET_ERROR |
-    ZFS_DEBUG_INDIRECT_REMAP);
+    ZFS_DEBUG_INDIRECT_REMAP | ZFS_DEBUG_RAIDZ_RECONSTRUCT);
 #else
 int zfs_flags = 0;
 #endif
@@ -2548,13 +2548,6 @@ spa_name_compare(const void *a1, const void *a2)
 }
 
 void
-spa_boot_init(void *unused)
-{
-	(void) unused;
-	spa_config_load();
-}
-
-void
 spa_init(spa_mode_t mode)
 {
 	mutex_init(&spa_namespace_lock, NULL, MUTEX_DEFAULT, NULL);
@@ -2607,7 +2600,6 @@ spa_init(spa_mode_t mode)
 	chksum_init();
 	zpool_prop_init();
 	zpool_feature_init();
-	spa_config_load();
 	vdev_prop_init();
 	l2arc_start();
 	scan_init();

@@ -512,13 +512,13 @@ parse_cmdline () {
 			if [ $# -eq 1 ]; then usage; fi; shift
 			config_KeyPrint $1 || usage
 			;;
-		-s)
-			if [ $# -eq 1 ]; then usage; fi; shift
-			config_ServerName $1 || usage
-			;;
 		-r)
 			if [ $# -eq 1 ]; then usage; fi; shift
 			config_TargetRelease $1 || usage
+			;;
+		-s)
+			if [ $# -eq 1 ]; then usage; fi; shift
+			config_ServerName $1 || usage
 			;;
 		-t)
 			if [ $# -eq 1 ]; then usage; fi; shift
@@ -3000,7 +3000,7 @@ install_from_index () {
 			if [ -z "${LINK}" ]; then
 				# Create a file, without setting flags.
 				gunzip < files/${HASH}.gz > ${HASH}
-				install -S -o ${OWNER} -g ${GROUP}	\
+				install -o ${OWNER} -g ${GROUP}		\
 				    -m ${PERM} ${HASH} ${BASEDIR}/${FPATH}
 				rm ${HASH}
 			else

@@ -215,7 +215,7 @@ FTPD=		ftpd
 FTPDPACKAGE=	ftpd
 .endif
 
-.if ${MK_GSSAPI} != "no" && ${MK_KERBEROS_SUPPORT} != "no"
+.if ${MK_KERBEROS_SUPPORT} != "no"
 CONFGROUPS+=	GSSD
 GSSD=		gssd
 GSSDPACKAGE=	gssd
@@ -273,6 +273,7 @@ JAILPACKAGE=	jail
 .if ${MK_LEGACY_CONSOLE} != "no"
 CONFGROUPS+=	CONSOLE
 CONSOLE+=	moused
+CONSOLE+=	msconvd
 CONSOLE+=	syscons
 CONSOLEPACKAGE=	console-tools
 .endif
@@ -318,6 +319,7 @@ YP=		ypbind \
 		yppasswdd \
 		ypserv \
 		ypset \
+		ypupdated \
 		ypxfrd \
 		nisdomain
 YPPACKAGE=	yp
