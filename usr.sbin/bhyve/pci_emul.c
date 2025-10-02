@@ -90,9 +90,22 @@ struct intxinfo {
 	struct pci_irq	ii_irq;
 };
 
+enum slottype {
+PCI_SLOT_FIXED,
+PCI_SLOT_HP_EMPTY,
+PCI_SLOT_HP_ACTIVE,
+};
+
 struct slotinfo {
 	struct intxinfo si_intpins[4];
 	struct funcinfo si_funcs[MAXFUNCS];
+	enum slottype si_type;
+};
+
+struct hpinfo {
+	uint32_t pciu;  /* Pending PCI hotadd bitmap. Guest R/O. */
+	uint32_t pcid;  /* Pending PCI eject bitmap. Guest R/O. */
+	uint32_t ejreq; /* PCI eject request bitmap. Guest R/W. */
 };
 
 struct businfo {
@@ -103,6 +116,7 @@ struct businfo {
 	uint64_t membase64, memlimit64;		/* mmio window above 4GB */
 	uint64_t memcur64;
 	struct slotinfo slotinfo[MAXSLOTS];
+	struct hpinfo hpinfo;
 };
 
 static struct businfo *pci_businfo[MAXBUSES];
@@ -163,6 +177,27 @@ SYSRES_MEM(PCI_EMUL_ECFG_BASE, PCI_EMUL_ECFG_SIZE);
 
 #define	PCI_EMUL_MEMLIMIT32	PCI_EMUL_ECFG_BASE
 #define PCI_EMUL_MEMSIZE64	(32*GB)
+
+#define PCI_EMUL_HP_BASE 0xFED60000
+#define PCI_EMUL_HP_PCIU_REG 0x0
+#define PCI_EMUL_HP_PCID_REG 0x4
+#define PCI_EMUL_HP_EJ_REG	 0x8
+
+#define PCI_EMUL_HP_BSEL_ADDR 0xFED62000
+
+static int pci_hp_init(struct vmctx *ctx);
+
+#define PCIHP_ACPI_HID "PNP0A06"
+#define PCIHP_ACPI_DEVNAME "PHPS"
+#define PCIHP_IOMEM_RANGE_NAME "PCI Hotplug state"
+
+static const struct acpi_device_emul pcihp_device_emul = {
+.name = PCIHP_ACPI_DEVNAME,
+.hid = PCIHP_ACPI_HID,
+};
+
+static int hp_bridgeselect;
+static pthread_mutex_t hp_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void pci_lintr_route(struct pci_devinst *pi);
 static void pci_lintr_update(struct pci_devinst *pi);
@@ -1521,8 +1556,6 @@ init_bootorder(void)
 #define	BUSMEM32_ROUNDUP	(1024 * 1024)
 #define	BUSMEM64_ROUNDUP	(512 * 1024 * 1024)
 
-static int hp_slot = -1;
-
 int
 init_pci(struct vmctx *ctx)
 {
@@ -1570,6 +1603,7 @@ init_pci(struct vmctx *ctx)
 		/* first run: init devices */
 		for (slot = 0; slot < MAXSLOTS; slot++) {
 			si = &bi->slotinfo[slot];
+			si->si_type = PCI_SLOT_HP_EMPTY;
 			for (func = 0; func < MAXFUNCS; func++) {
 				fi = &si->si_funcs[func];
 				snprintf(node_name, sizeof(node_name),
@@ -1604,6 +1638,7 @@ init_pci(struct vmctx *ctx)
 				    func, fi);
 				if (error)
 					return (error);
+				si->si_type = PCI_SLOT_FIXED;
 			}
 		}
 
@@ -1651,16 +1686,11 @@ init_pci(struct vmctx *ctx)
 
 		for (slot = 0; slot < MAXSLOTS; slot++) {
 			si = &bi->slotinfo[slot];
-			int free = 1;
 			for (func = 0; func < MAXFUNCS; func++) {
 				fi = &si->si_funcs[func];
 				if (fi->fi_devi == NULL)
 					continue;
-				free = 0;
 				pci_lintr_route(fi->fi_devi);
-			}
-			if (free && hp_slot == -1) {
-				hp_slot = free;
 			}
 		}
 	}
@@ -1756,6 +1786,105 @@ pci_pirq_prt_entry(int bus __unused, int slot, int pin, struct pci_irq *irq,
 	free(name);
 }
 #endif
+
+static void
+pci_bus_write_hotplug_dsdt(int bus, struct businfo *bi)
+{
+	int slot, nhpslots;
+	struct slotinfo *si;
+
+	/* Generate hotadd/remove methods for hotpluggable slots. */
+	nhpslots = 0;
+	for (slot = 0; slot < MAXSLOTS; slot++) {
+		si = &bi->slotinfo[slot];
+		if (si->si_type == PCI_SLOT_FIXED)
+			continue;
+		nhpslots++;
+	}
+
+	if (nhpslots == 0) {
+		/* Every slot on this bridge has a fixed device, bail. */
+		return;
+	}
+
+	/*
+	 * Bus hotplug metadata.
+	 */
+	dsdt_line("Scope (\\_SB.PC%02X)", bus);
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("OperationRegion (PCST, SystemMemory, 0x%08X, 0x%zX)",
+	    (uint32_t)(PCI_EMUL_HP_BASE + (bus * sizeof(struct hpinfo))),
+	    sizeof(struct hpinfo));
+	dsdt_line("Field (PCST, DWordAcc, NoLock, WriteAsZeros)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("PCUP,   32,");
+	dsdt_line("PCDW,   32,");
+	dsdt_line("BEJ,    32");
+	dsdt_unindent(1);
+	dsdt_line("}");
+	dsdt_line("Mutex (BLCK, 0x00)");
+	dsdt_line("Method (PCEJ, 1, NotSerialized)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("Acquire (BLCK, 0xFFFF)");
+	dsdt_line("BEJ = (One << Arg0)");
+	dsdt_line("Release (BLCK)");
+	dsdt_line("Return (Zero)");
+	dsdt_unindent(1);
+	dsdt_line("}");
+
+	dsdt_line("Method (PCNT, 0, NotSerialized)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("DVNT (PCUP, One)");
+	dsdt_line("DVNT (PCDW, 0x03)");
+	dsdt_unindent(1);
+	dsdt_line("}");
+
+	for (slot = 0; slot < MAXSLOTS; slot++) {
+		si = &bi->slotinfo[slot];
+		if (si->si_type == PCI_SLOT_FIXED)
+			continue;
+
+		/* Hot-pluggable slot. */
+		dsdt_line("Device (S%02X)", slot);
+		dsdt_line("{");
+		dsdt_line("   Name (_ADR, 0x%08X)", slot << 16);
+		dsdt_line("   Name (_SUN, 0x%02X)", slot);
+		dsdt_line("   Method (_EJ0, 1, NotSerialized)");
+		dsdt_line("   {");
+		dsdt_line("     PCEJ (_SUN)");
+		dsdt_line("   }");
+		dsdt_line("}");
+		dsdt_line("");
+	}
+	/*
+	 * The DVNT method is responsible for notifying the OS about hotplug events
+	 * on a given slot.
+	 */
+	nhpslots = 0;
+	dsdt_line("Method (DVNT, 2, NotSerialized)");
+	dsdt_line("{");
+	dsdt_indent(1);
+
+	for (slot = 0; slot < MAXSLOTS; slot++) {
+		si = &bi->slotinfo[slot];
+		if (si->si_type == PCI_SLOT_FIXED)
+			continue;
+
+		dsdt_line("%sIf ((Arg0 & 0x%02X))", nhpslots == 0 ? "" : "Else",  1 << slot);
+		dsdt_line("{");
+		dsdt_line("  Notify (S%02X, Arg1)", slot);
+		dsdt_line("}");
+		nhpslots++;
+	}
+	dsdt_unindent(1);
+	dsdt_line("}");
+	dsdt_unindent(1);
+	dsdt_line("}  // Scope (_SB.PC%02X)", bus);
+}
 
 /*
  * A bhyve virtual machine has a flat PCI hierarchy with a root port
@@ -1897,6 +2026,7 @@ pci_bus_write_dsdt(int bus)
 		dsdt_unindent(2);
 	}
 #endif
+
 	dsdt_indent(2);
 	for (slot = 0; slot < MAXSLOTS; slot++) {
 		si = &bi->slotinfo[slot];
@@ -1906,55 +2036,10 @@ pci_bus_write_dsdt(int bus)
 				pi->pi_d->pe_write_dsdt(pi);
 		}
 	}
-	if (bus == 0) {
-		assert(hp_slot != -1);
-		uint32_t adr = hp_slot << 16;
 
-		/* Hotplug status */
-		dsdt_line("OperationRegion (PCST, SystemIO, 0x%04X, 0x08)",
-		    PCI_EMUL_HP_PCST);
-		dsdt_line("Field (PCST, DWordAcc, NoLock, WriteAsZeros)");
-		dsdt_line("{");
-		dsdt_line("   PCIU,   32,");
-		dsdt_line("   PCID,   32");
-		dsdt_line("}");
-		dsdt_line("OperationRegion (SEJ, SystemIO, 0x%04X, 0x04)",
-		    PCI_EMUL_HP_EJ);
-		dsdt_line("Field (SEJ, DWordAcc, NoLock, WriteAsZeros)");
-		dsdt_line("{");
-		dsdt_line("   B0EJ,   32");
-		dsdt_line("}");
-		dsdt_line("Mutex (BLCK, 0x00)");
-		dsdt_line("Method (PCEJ, 1, NotSerialized)");
-		dsdt_line("{");
-		dsdt_line("   Acquire (BLCK, 0xFFFF)");
-		dsdt_line("   B0EJ = (One << Arg0)");
-		dsdt_line("   Release (BLCK)");
-		dsdt_line("   Return (Zero)");
-		dsdt_line("}");
-
-		/* Hot-pluggable slot "device" */
-		dsdt_line("Device (S%02X)", hp_slot);
-		dsdt_line("{");
-		dsdt_line("   Name (_ADR, 0x%08X)", adr);
-		dsdt_line("   Name (_SUN, 0x%02X)", hp_slot);
-		dsdt_line("   Method (_EJ0, 1, NotSerialized)");
-		dsdt_line("   {");
-		dsdt_line("      PCEJ (0x%04X)", hp_slot);
-		dsdt_line("   }");
-		dsdt_line("}");
-		dsdt_line("");
-		dsdt_line("Method (DVNT, 2, NotSerialized)");
-		dsdt_line("{");
-		dsdt_line("	If ((Arg0 & 0x%02X))", 1 << hp_slot);
-		dsdt_line("	{");
-		dsdt_line("	    Notify (S%02X, Arg1)", hp_slot);
-		dsdt_line("	}");
-		dsdt_line("}");
-
-	}
-
+	pci_bus_write_hotplug_dsdt(bus, bi);
 	dsdt_unindent(2);
+
 #ifdef __amd64__
 done:
 #endif
@@ -1973,19 +2058,44 @@ pci_write_dsdt(void)
 	dsdt_line("  Store (Arg0, PICM)");
 	dsdt_line("}");
 	dsdt_line("");
+	/* ACPI PCI Hotplug bridge select variable. */
+	dsdt_line("OperationRegion (BREG, SystemMemory, 0x%08x, 0x04)",
+			  PCI_EMUL_HP_BSEL_ADDR);
+	dsdt_line("Field (BREG, DWordAcc, NoLock, WriteAsZeros)");
+	dsdt_line("{");
+	dsdt_line(" BSEL,   32");
+	dsdt_line("}");
 	dsdt_line("Scope (_SB)");
 	dsdt_line("{");
 	for (bus = 0; bus < MAXBUSES; bus++)
 		pci_bus_write_dsdt(bus);
-	dsdt_line("}");
-	dsdt_line("Scope (_SB.PC00)");
+	dsdt_line("} // _SB");
+	dsdt_line("");
+	dsdt_line("Scope (_GPE)");
 	dsdt_line("{");
-	dsdt_line("Method (PCNT, 0, NotSerialized)");
+	dsdt_indent(1);
+	dsdt_line("Method (_E%02x, 0, NotSerialized)", GPE_HP);
 	dsdt_line("{");
-	dsdt_line("   DVNT (PCIU, One)");
-	dsdt_line("   DVNT (PCID, 0x03)");
+	dsdt_indent(1);
+	dsdt_line("Local0 = BSEL");
+	for (bus = 0; bus < MAXBUSES; bus++) {
+		if (pci_businfo[bus] == NULL)
+			break;
+
+		// TODO: generate only if the bridge has empty slots
+		dsdt_line("%sIf ((Local0 == 0x%02X))", bus == 0 ? "" : "Else", bus);
+		dsdt_line("{");
+		dsdt_indent(1);
+		dsdt_line("Acquire (\\_SB.PC%02X.BLCK, 0xFFFF)", bus);
+		dsdt_line("\\_SB.PC%02X.PCNT ()", bus);
+		dsdt_line("Release (\\_SB.PC%02X.BLCK)", bus);
+		dsdt_unindent(1);
+		dsdt_line("}");
+	}
+	dsdt_unindent(1);
 	dsdt_line("}");
-	dsdt_line("}");
+	dsdt_unindent(1);
+	dsdt_line("} // _GPE");
 	dsdt_unindent(1);
 }
 
@@ -2865,6 +2975,103 @@ pci_emul_snapshot(struct vm_snapshot_meta *meta __unused)
 #endif
 
 static int
+pcihp_hpinfo_mem_handler(struct vcpu *vcpu __unused, int dir,
+    uint64_t addr, int size, uint64_t *val, void *arg1 __unused,
+    long arg2 __unused)
+{
+	struct hpinfo *hi;
+	uint64_t offset;
+	int bus, error;
+
+	offset = (addr - PCI_EMUL_HP_BASE) % sizeof(struct hpinfo);
+	bus	= rounddown(addr - PCI_EMUL_HP_BASE, sizeof(struct hpinfo)) /
+		sizeof(struct hpinfo);
+	if (bus < 0 || bus >= MAXBUSES)
+		return (-1);
+	if (size != 4)
+		return (-1);
+	if (offset < PCI_EMUL_HP_EJ_REG && dir == MEM_F_WRITE)
+		return (-1);
+
+	error = 0;
+	hi = &pci_businfo[bus]->hpinfo;
+	pthread_mutex_lock(&hp_lock);
+	switch(offset) {
+		case PCI_EMUL_HP_PCIU_REG:
+			*val = hi->pciu;
+			break;
+		case PCI_EMUL_HP_PCID_REG:
+			*val = hi->pcid;
+			break;
+		case PCI_EMUL_HP_EJ_REG:
+			if (dir == MEM_F_WRITE)
+				hi->ejreq = *val;
+			else
+				*val = hi->ejreq;
+			break;
+		default:
+			error = -1;
+	}
+	pthread_mutex_unlock(&hp_lock);
+
+	return (error);
+}
+
+static int
+pci_hp_bridgeselect_handler(struct vcpu *vcpu __unused, int dir,
+    uint64_t addr __unused, int size, uint64_t *val, void *arg1 __unused,
+    long arg2 __unused)
+{
+	if (size != 4 || dir != MEM_F_READ)
+		return (-1);
+	*val = hp_bridgeselect;
+
+	return (0);
+}
+
+static int
+pci_hp_init(struct vmctx *ctx)
+{
+	int error;
+	struct mem_range mr;
+	struct acpi_device *dev;
+
+	error = acpi_device_create(&dev, dev, ctx, &pcihp_device_emul);
+	if (error)
+		goto err_out;
+
+	error = acpi_device_add_res_fixed_memory32(dev, false, PCI_EMUL_HP_BASE,
+	    sizeof(struct hpinfo) * MAXBUSES);
+	if (error)
+		goto err_out;
+	bzero(&mr, sizeof(mr));
+	mr.name = "HP_METADATA";
+	mr.flags = MEM_F_RW;
+	mr.base = PCI_EMUL_HP_BASE;
+	mr.size = sizeof(struct hpinfo) * MAXBUSES;
+	mr.handler = pcihp_hpinfo_mem_handler;
+	error = register_mem(&mr);
+	if (error) {
+		fprintf(stderr, "%s: Failed to register hotplug metadata device handler\n", __func__);
+		goto err_out;
+	}
+
+	bzero(&mr, sizeof(mr));
+	mr.name = "HP_BSEL";
+	mr.flags = MEM_F_READ;
+	mr.base =	PCI_EMUL_HP_BSEL_ADDR;
+	mr.size = sizeof(hp_bridgeselect);
+	mr.handler = pci_hp_bridgeselect_handler;
+	error = register_mem(&mr);
+	if (error) {
+		fprintf(stderr, "%s: Failed to register bridgeselect handler\n", __func__);
+	}
+
+err_out:
+	return (error);
+}
+
+static int
 pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
 {
 	struct pci_bar_allocation *bar_tmp;
@@ -2873,8 +3080,10 @@ pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
 	struct businfo *bi;
 	struct slotinfo *si;
 	struct funcinfo *fi;
+	struct hpinfo *hi;
 	const char *devname;
 	bool found;
+	int bus, slot;
 
 	devname = nvlist_get_string(nvl, "devname");
 	if (devname == NULL) {
@@ -2895,20 +3104,45 @@ pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
 	if (!found)
 		return (ENOENT);
 
+	pthread_mutex_lock(&hp_lock);
 	bi = pci_businfo[0];
 	pci_emul_iobase = bi->iocur;
 	pci_emul_membase32 = bi->memcur32;
 	pci_emul_membase64 = bi->memcur64;
-	printf("%s: attempting to hotplug slot %d\n", __func__, hp_slot);
-	assert(hp_slot != -1);
-	si = &bi->slotinfo[hp_slot];
-	fi = &si->si_funcs[0];
 	set_config_value("backend", "tap0");
 
+	/*
+	 * Try to find an empty hotpluggable slot.
+	 */
+	found = false;
+	for (bus = 0; bus < MAXBUSES; bus++) {
+		bi = pci_businfo[bus];
+		if (bi == NULL)
+			continue;
+		for (slot = 0; slot < MAXSLOTS; slot++) {
+			si = &bi->slotinfo[slot];
+			if (si->si_type != PCI_SLOT_HP_EMPTY)
+				continue;
+			found = true;
+			printf("%s: found empty slot %d on bus %d\n", __func__,
+			    slot, bus);
+			break;
+		}
+		if (found)
+			break;
+	}
+
+	if (!found) {
+		printf("%s: no empty hotpluggable slots found\n", __func__);
+		return (ENOENT);
+	}
+
 	in_hotplug = true;
-	if (pci_emul_init(ctx, pdp, 0, hp_slot, 0, fi) != 0) {
+	fi = &si->si_funcs[0];
+	if (pci_emul_init(ctx, pdp, bus, slot, 0, fi) != 0) {
 		printf("%s: failed to init device\n", __func__);
 		in_hotplug = false;
+		pthread_mutex_unlock(&hp_lock);
 		return (-1);
 	}
 
@@ -2918,13 +3152,26 @@ pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
 		free(bar);
 	}
 	TAILQ_INIT(&pci_bars);
+	// XXX: create a dummy "hotplug device" so that we can route the
+	// interrupts during initialization.
 	pci_lintr_route(fi->fi_devi);
 	in_hotplug = false;
 
-	return (pci_hp_request_up(ctx, 0, hp_slot));
+	hi = &bi->hpinfo;
+	if ((hi->pciu & (1 << slot)) != 0) {
+		printf("%s: slot %d has pending hotplug request\n", __func__, slot);
+		pthread_mutex_unlock(&hp_lock);
+		return (-1);
+	}
+	hi->pciu |= (1 << slot);
+	si->si_type = PCI_SLOT_HP_ACTIVE;
+	pthread_mutex_unlock(&hp_lock);
+
+	acpi_raise_gpe(ctx, GPE_HP);
+
+	return (0);
 }
 IPC_COMMAND(pci_add, pci_hp_add_device);
-
 
 static const struct pci_devemu pci_dummy = {
 	.pe_emu = "dummy",

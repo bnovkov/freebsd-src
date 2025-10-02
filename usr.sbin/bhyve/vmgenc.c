@@ -112,12 +112,6 @@ vmgenc_write_dsdt(void)
 	dsdt_line("  {");
 	dsdt_line("    Notify (\\_SB.GENC, 0x80)");
 	dsdt_line("  }");
-	dsdt_line("  Method (_E%02x, 0, NotSerialized)", GPE_HP);
-	dsdt_line("  {");
-	dsdt_line("    Acquire (\\_SB.PC00.BLCK, 0xFFFF)");
-	dsdt_line("    \\_SB.PC00.PCNT ()");
-	dsdt_line("    Release (\\_SB.PC00.BLCK)");
-	dsdt_line("  }");
 	dsdt_line("}");
 	dsdt_unindent(1);
 }
