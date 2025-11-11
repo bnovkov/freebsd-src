@@ -9,7 +9,7 @@
 
 #include <sys/linker_set.h>
 
-#include "config.h"
+#include <bhyve/config.h>
 
 struct tpm_device;
 

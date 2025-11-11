@@ -8,6 +8,7 @@
 #include <sys/types.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -16,7 +17,6 @@
 
 #include "acpi.h"
 #include "acpi_device.h"
-#include "config.h"
 #include "tpm_device.h"
 #include "tpm_emul.h"
 #include "tpm_intf.h"

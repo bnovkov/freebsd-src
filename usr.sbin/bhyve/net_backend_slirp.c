@@ -51,6 +51,7 @@
 #include <sys/wait.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <errno.h>
 #include <signal.h>
 #include <spawn.h>
@@ -59,7 +60,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "config.h"
 #include "debug.h"
 #include "mevent.h"
 #include "net_utils.h"

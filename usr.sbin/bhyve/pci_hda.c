@@ -28,11 +28,12 @@
  */
 
 #include <sys/param.h>
+
+#include <bhyve/config.h>
 #include <time.h>
 
 #include "pci_hda.h"
 #include "bhyverun.h"
-#include "config.h"
 #include "pci_emul.h"
 #include "hdac_reg.h"
 

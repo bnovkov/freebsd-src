@@ -31,6 +31,7 @@
 #include <sys/param.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -38,7 +39,6 @@
 #include <libfdt.h>
 #include <vmmapi.h>
 
-#include "config.h"
 #include "bhyve_machdep.h"
 #include "bhyverun.h"
 #include "fdt.h"

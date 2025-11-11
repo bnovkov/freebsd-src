@@ -28,10 +28,10 @@
 
 #include <sys/types.h>
 
+#include <bhyve/config.h>
 #include <stdio.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 #include "uart_emul.h"

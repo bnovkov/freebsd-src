@@ -32,10 +32,11 @@
 #include <assert.h>
 
 #include <machine/vmm.h>
+
+#include <bhyve/config.h>
 #include <vmmapi.h>
 
 #include "acpi.h"
-#include "config.h"
 #include "pci_lpc.h"
 #include "rtc.h"
 

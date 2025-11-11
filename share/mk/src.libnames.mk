@@ -46,6 +46,7 @@ _PRIVATELIBS+=	${LOCAL_PRIVATELIBS}
 _INTERNALLIBS=	\
 		amu \
 		apputils \
+		bhyve \
 		bsnmptools \
 		c_nossp_pic \
 		cron \
@@ -320,6 +321,7 @@ _DP_archive=	z bz2 lzma bsdxml zstd
 _DP_atf_cxx=	atf_c
 _DP_avl=	spl
 _DP_be=		zfs spl nvpair zfsbootenv
+_DP_bhyve=	netgraph
 _DP_bsddialog=	ncursesw tinfow
 .if ${MK_OPENSSL} != "no"
 _DP_bsnmp=	crypto
@@ -632,6 +634,9 @@ LIBELFTC?=	${LIBELFTCDIR}/libelftc${PIE_SUFFIX}.a
 
 LIBFDTDIR=	${_LIB_OBJTOP}/lib/libfdt
 LIBFDT?=	${LIBFDTDIR}/libfdt${PIE_SUFFIX}.a
+
+LIBBHYVEDIR=	${_LIB_OBJTOP}/lib/libbhyve
+LIBBHYVE?=	${LIBBHYVEDIR}/libbhyve${PIE_SUFFIX}.a
 
 LIBLUADIR=	${_LIB_OBJTOP}/lib/liblua
 LIBLUA?=	${LIBLUADIR}/liblua${PIE_SUFFIX}.a

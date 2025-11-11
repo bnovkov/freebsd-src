@@ -9,7 +9,7 @@
 
 #include <vmmapi.h>
 
-#include "config.h"
+#include <bhyve/config.h>
 
 struct tpm_device;
 

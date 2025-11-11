@@ -44,6 +44,7 @@
 #include <dev/evdev/input.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -56,7 +57,6 @@
 #include <unistd.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "mevent.h"
 #include "pci_emul.h"

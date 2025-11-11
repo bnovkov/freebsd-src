@@ -28,12 +28,12 @@
 #include <sys/param.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <time.h>
 
-#include "config.h"
 #include "mevent.h"
 #include "rtc_pl031.h"
 

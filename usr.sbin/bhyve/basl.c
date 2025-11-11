@@ -13,6 +13,7 @@
 #include <machine/vmm.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <libutil.h>
 #include <stddef.h>
@@ -20,7 +21,6 @@
 #include <vmmapi.h>
 
 #include "basl.h"
-#include "config.h"
 #include "qemu_loader.h"
 
 struct basl_table_checksum {

@@ -32,6 +32,8 @@
 #include <sys/nv.h>
 #include <sys/vmem.h>
 
+#include <bhyve/config.h>
+#include <bhyve/pci.h>
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
@@ -45,6 +47,7 @@
 #include <sysexits.h>
 
 #include <dev/vmm/vmm_mem.h>
+
 #include <machine/vmm.h>
 #include <machine/vmm_snapshot.h>
 #include <vmmapi.h>
@@ -52,7 +55,6 @@
 #include "acpi.h"
 #include "bhyverun.h"
 #include "bootrom.h"
-#include "config.h"
 #include "debug.h"
 #ifdef __amd64__
 #include "amd64/inout.h"
@@ -259,34 +261,6 @@ pci_parse_slot_usage(char *aopt)
 {
 
 	EPRINTLN("Invalid PCI slot info field \"%s\"", aopt);
-}
-
-/*
- * Helper function to parse a list of comma-separated options where
- * each option is formatted as "name[=value]".  If no value is
- * provided, the option is treated as a boolean and is given a value
- * of true.
- */
-int
-pci_parse_legacy_config(nvlist_t *nvl, const char *opt)
-{
-	char *config, *name, *tofree, *value;
-
-	if (opt == NULL)
-		return (0);
-
-	config = tofree = strdup(opt);
-	while ((name = strsep(&config, ",")) != NULL) {
-		value = strchr(name, '=');
-		if (value != NULL) {
-			*value = '\0';
-			value++;
-			set_config_value_node(nvl, name, value);
-		} else
-			set_config_bool_node(nvl, name, true);
-	}
-	free(tofree);
-	return (0);
 }
 
 /*

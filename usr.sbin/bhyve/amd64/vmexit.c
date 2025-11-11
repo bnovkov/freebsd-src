@@ -35,6 +35,7 @@
 #include <x86/apicreg.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -44,7 +45,6 @@
 #include <vmmapi.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "gdb.h"
 #include "inout.h"

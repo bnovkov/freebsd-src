@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "config.h"
+#include "bhyve/config.h"
 
 static nvlist_t *config_root;
 

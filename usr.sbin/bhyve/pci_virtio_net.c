@@ -35,6 +35,7 @@
 #include <net/ethernet.h>
 #include <net/if.h> /* IFNAMSIZ */
 
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -49,7 +50,6 @@
 #include <pthread_np.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 #include "mevent.h"

@@ -27,6 +27,7 @@
  */
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -41,7 +42,6 @@
 #include "snapshot.h"
 #endif
 #include "bootrom.h"
-#include "config.h"
 #include "debug.h"
 #include "e820.h"
 #include "fwctl.h"

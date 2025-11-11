@@ -60,6 +60,7 @@
 #include <net/ieee_oui.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <pthread.h>
 #include <pthread_np.h>
 #include <semaphore.h>
@@ -78,7 +79,6 @@
 
 #include "bhyverun.h"
 #include "block_if.h"
-#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 

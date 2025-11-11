@@ -29,12 +29,10 @@
 #ifndef	_BOOTROM_H_
 #define	_BOOTROM_H_
 
+#include <bhyve/config.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <limits.h>
-
-#include "config.h"
 
 struct vmctx;
 

@@ -33,6 +33,7 @@
 #include <machine/vmm_snapshot.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +46,6 @@
 
 #include "atkbdc.h"
 #include "bhyverun.h"
-#include "config.h"
 #include "console.h"
 #include "debug.h"
 #include "ps2kbd.h"

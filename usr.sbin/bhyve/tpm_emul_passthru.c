@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -14,7 +15,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "config.h"
 #include "tpm_device.h"
 #include "tpm_emul.h"
 

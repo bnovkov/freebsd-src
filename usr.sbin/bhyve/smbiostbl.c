@@ -29,6 +29,7 @@
 #include <sys/param.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <errno.h>
 #include <md5.h>
 #include <stdio.h>
@@ -40,7 +41,6 @@
 #include <vmmapi.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "smbiostbl.h"
 

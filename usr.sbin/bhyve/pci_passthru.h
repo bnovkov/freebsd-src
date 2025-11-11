@@ -9,9 +9,9 @@
 
 #include <sys/linker_set.h>
 
+#include <bhyve/config.h>
 #include <vmmapi.h>
 
-#include "config.h"
 #include "pci_emul.h"
 
 struct passthru_mmio_mapping {

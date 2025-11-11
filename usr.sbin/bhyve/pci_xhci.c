@@ -38,6 +38,7 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 
+#include <bhyve/config.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -52,7 +53,6 @@
 #include <xhcireg.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 #include "pci_xhci.h"

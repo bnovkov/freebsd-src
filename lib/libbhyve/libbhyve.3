@@ -1,0 +1,105 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Bojan Novković <bnovkov@FreeBSD.org>.
+.\"
+.\" This documentation was written by
+.\" Bojan Novković <bnovkov@FreeBSD.org>.
+.\"
+.Dd January 3, 2026
+.Dt LIBBHYVE 3
+.Os
+.Sh NAME
+.Nm libbhyve ,
+.Nm netbe_legacy_config ,
+.Nm pci_init_fds ,
+.Nm pci_parse_config ,
+.Nm pci_parse_legacy_config ,
+.Nm pci_validate_hotplug_request
+.Nd shared bhyve routines
+.Sh SYNOPSIS
+.Lb libbhyve
+.In bhyve/net_backends.h
+.In bhyve/config.h
+.In bhyve/pci.h
+.Ft int
+.Fo netbe_legacy_config
+.Fa "nvlist_t *nvl"
+.Fa "const char *opts"
+.Fc
+.Ft int
+.Fo pci_init_fds
+.Fa "nvlist_t *nvl"
+.Fa "const char *devname"
+.Fc
+.Ft int
+.Fo pci_parse_config
+.Fa "nvlist_t *nvl"
+.Fa "const char *device"
+.Fa "const char *config"
+.Fc
+.Ft int
+.Fo pci_parse_legacy_config
+.Fa "nvlist_t *nvl"
+.Fa "const char *opt"
+.Fc
+.Ft bool
+.Fo pci_validate_hotplug_request
+.Fa "nvlist_t *nvl"
+.Fa "const char *device"
+.Fc
+.Sh DESCRIPTION
+The
+.Nm
+library contains
+.Xr bhyve 8
+code that is meant to be used by other userspace programs.
+Please refer to the
+.Xr bhyve_config 5
+manual page to read the documentation for the functions listed in
+.In bhyve/config.h .
+.Pp
+The
+.Fn netbe_legacy_config
+routine parses common network device backend options from the configuration
+string
+.Ar opt .
+.Pp
+The
+.Fn pci_init_fds
+routine creates all file descriptors required for a hotpluggable
+emulated PCI device
+.Ar devname
+and stores them in the
+.Ar nvl
+.Xr nvlist 9
+object.
+.Pp
+The
+.Fn pci_parse_config
+routine parses the configuration string
+.Ar config
+for a hotpluggable emulated PCI device specified by
+.Ar device
+using device-specific parsing routines.
+.Pp
+The
+.Fn pci_parse_legacy_config
+routine parses a list of "name[=value]" comma-separated options and stores them
+in the
+.Ar nvl
+.Xr nvlist 9
+object.
+.Pp
+The
+.Fn pci_validate_hotplug_request
+routine determines whether the
+.Ar nvl
+.Xr nvlist 9
+object contains all necessary name value pairs required for hotplugging an
+emulated PCI device specified by
+.Ar device .
+.Sh SEE ALSO
+.Xr bhyve_config 5 ,
+.Xr bhyve 8
+.Sh AUTHORS
+.An Bojan Novković Aq Mt bnovkov@FreeBSD.org .

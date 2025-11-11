@@ -51,6 +51,7 @@
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -66,7 +67,6 @@
 #include <vmmapi.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "gdb.h"
 #include "mem.h"

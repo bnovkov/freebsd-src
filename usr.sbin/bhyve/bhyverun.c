@@ -74,12 +74,13 @@
 #endif
 
 #include <dev/vmm/vmm_mem.h>
+
+#include <bhyve/config.h>
 #include <vmmapi.h>
 
 #include "acpi.h"
 #include "bhyverun.h"
 #include "bootrom.h"
-#include "config.h"
 #include "debug.h"
 #ifdef BHYVE_GDB
 #include "gdb.h"

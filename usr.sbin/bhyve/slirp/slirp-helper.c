@@ -22,6 +22,7 @@
 #include <sys/socket.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <capsicum_helpers.h>
 #include <dlfcn.h>
 #include <err.h>
@@ -35,7 +36,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "config.h"
 #include "libslirp.h"
 
 struct slirp_priv {

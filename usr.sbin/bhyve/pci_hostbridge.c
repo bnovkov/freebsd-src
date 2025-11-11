@@ -27,10 +27,11 @@
  */
 
 #include <sys/cdefs.h>
+
+#include <bhyve/config.h>
 #include <err.h>
 #include <stdlib.h>
 
-#include "config.h"
 #include "pci_emul.h"
 
 static int

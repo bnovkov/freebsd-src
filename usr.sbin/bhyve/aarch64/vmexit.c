@@ -39,6 +39,7 @@
 #include <machine/vmm_instruction_emul.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -49,7 +50,6 @@
 
 #include "bhyve_machdep.h"
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "gdb.h"
 #include "mem.h"

@@ -24,7 +24,6 @@ SRCS=	\
 	bhyverun_machdep.c	\
 	block_if.c		\
 	bootrom.c		\
-	config.c		\
 	console.c		\
 	crc16.c			\
 	ctl_nvme_all.c		\
@@ -96,10 +95,11 @@ SUBDIR+= gdb
 .endif
 
 CFLAGS+=-I${.CURDIR}		\
+	-I${SRCTOP}/lib/libbhyve \
 	-I${.CURDIR}/../../contrib/lib9p \
 	-I${SRCTOP}/sys
 
-LIBADD+= vmmapi md nv uvmem pthread z util sbuf cam 9p
+LIBADD+= bhyve vmmapi md nv uvmem pthread z util sbuf cam 9p
 
 .if ${MK_BHYVE_SNAPSHOT} != "no"
 LIBADD+= ucl xo

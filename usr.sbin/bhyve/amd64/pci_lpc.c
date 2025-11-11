@@ -32,6 +32,7 @@
 #include <machine/vmm.h>
 #include <machine/vmm_snapshot.h>
 
+#include <bhyve/config.h>
 #include <err.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -43,7 +44,6 @@
 #include "acpi.h"
 #include "debug.h"
 #include "bootrom.h"
-#include "config.h"
 #include "inout.h"
 #include "pci_emul.h"
 #include "pci_irq.h"

@@ -33,6 +33,7 @@
 #include <machine/armreg.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -40,12 +41,10 @@
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
-
 #include <vmmapi.h>
 
 #include "bhyve_machdep.h"
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "fdt.h"
 #include "mem.h"

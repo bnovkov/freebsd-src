@@ -47,6 +47,7 @@
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -60,7 +61,6 @@
 #include <sysexits.h>
 #include <unistd.h>
 
-#include "config.h"
 #include "debug.h"
 #include "iov.h"
 #include "mevent.h"

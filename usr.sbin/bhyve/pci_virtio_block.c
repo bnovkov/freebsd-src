@@ -36,6 +36,7 @@
 
 #include <machine/vmm_snapshot.h>
 
+#include <bhyve/config.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -49,7 +50,6 @@
 #include <md5.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 #include "virtio.h"

@@ -26,9 +26,11 @@
  */
 
 #include <sys/types.h>
+
 #include <net/ethernet.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <errno.h>
 #include <limits.h>
 #include <md5.h>
@@ -37,7 +39,6 @@
 #include <string.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "net_utils.h"
 

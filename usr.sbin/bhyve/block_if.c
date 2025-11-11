@@ -41,6 +41,7 @@
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
+#include <bhyve/config.h>
 #include <err.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -56,7 +57,6 @@
 #include <machine/vmm_snapshot.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "mevent.h"
 #include "pci_emul.h"

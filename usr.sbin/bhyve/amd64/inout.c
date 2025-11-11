@@ -37,12 +37,12 @@
 #include <machine/vmm_instruction_emul.h>
 #include <vmmapi.h>
 
+#include <bhyve/config.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "inout.h"
 
 SET_DECLARE(inout_port_set, struct inout_port);

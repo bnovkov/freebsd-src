@@ -46,7 +46,7 @@
 
 #include <machine/intr.h>
 
-#include "config.h"
+#include <bhyve/config.h>
 #include "bhyverun.h"
 #include "fdt.h"
 

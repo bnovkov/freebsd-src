@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "config.h"
+#include <bhyve/config.h>
 
 struct tpm_ppi {
 	const char *name;

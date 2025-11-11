@@ -47,6 +47,7 @@
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <pthread.h>
@@ -64,7 +65,6 @@
 #include "bhyvegc.h"
 #include "debug.h"
 #include "console.h"
-#include "config.h"
 #include "rfb.h"
 #include "sockstream.h"
 

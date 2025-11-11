@@ -34,13 +34,13 @@
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
+#include <bhyve/config.h>
 #include <err.h>
 #include <netgraph.h>
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
 
-#include "config.h"
 #include "debug.h"
 #include "net_backends.h"
 #include "net_backends_priv.h"

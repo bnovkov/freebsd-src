@@ -7,10 +7,10 @@
 
 #pragma once
 
+#include <bhyve/config.h>
 #include <vmmapi.h>
 
 #include "acpi_device.h"
-#include "config.h"
 #include "tpm_device.h"
 #include "tpm_emul.h"
 

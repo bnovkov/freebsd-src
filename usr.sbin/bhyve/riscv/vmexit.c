@@ -43,6 +43,7 @@
 #include <machine/vmm_instruction_emul.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -52,7 +53,6 @@
 #include <vmmapi.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "mem.h"
 #include "vmexit.h"

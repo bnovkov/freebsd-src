@@ -12,6 +12,7 @@
 #include <machine/vmm.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <pthread.h>
@@ -22,7 +23,6 @@
 #include <vmmapi.h>
 
 #include "basl.h"
-#include "config.h"
 #include "mem.h"
 #include "qemu_fwcfg.h"
 #include "tpm_device.h"

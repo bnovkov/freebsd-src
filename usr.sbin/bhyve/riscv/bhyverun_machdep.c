@@ -37,6 +37,7 @@
 #include <sys/stat.h>
 
 #include <assert.h>
+#include <bhyve/config.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -48,7 +49,6 @@
 #include <vmmapi.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "fdt.h"
 #include "mem.h"

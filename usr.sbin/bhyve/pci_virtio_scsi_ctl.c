@@ -48,6 +48,7 @@
 #include <pthread.h>
 #include <pthread_np.h>
 
+#include <bhyve/config.h>
 #include <cam/scsi/scsi_all.h>
 #include <cam/scsi/scsi_message.h>
 #include <cam/ctl/ctl.h>
@@ -59,7 +60,6 @@
 #include <camlib.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 #include "virtio.h"

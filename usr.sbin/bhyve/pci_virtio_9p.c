@@ -35,6 +35,7 @@
 #include <sys/uio.h>
 #include <sys/capsicum.h>
 
+#include <bhyve/config.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -48,7 +49,6 @@
 #include <backend/fs.h>
 
 #include "bhyverun.h"
-#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 #include "virtio.h"
