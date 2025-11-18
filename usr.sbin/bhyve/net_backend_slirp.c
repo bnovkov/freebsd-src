@@ -47,6 +47,7 @@
  * thread also handles timeout events from the libslirp context.
  */
 
+#include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 
@@ -84,57 +85,31 @@ slirp_init(struct net_backend *be, const char *devname __unused,
 {
 	struct slirp_priv *priv = NET_BE_PRIV(be);
 	nvlist_t *config;
-	posix_spawn_file_actions_t fa;
 	pid_t child;
-	const char **argv;
-	char sockname[32];
-	int error, s[2];
+	int error, *s;
+	size_t mtu, nitems;
 	const char *mtu_value;
-	size_t mtu;
+	int helper_pd;
 
-	if (socketpair(PF_LOCAL, SOCK_SEQPACKET | SOCK_NONBLOCK, 0, s) != 0) {
-		EPRINTLN("socketpair");
+	s = nvlist_take_descriptor_array(nvl, "sockpair", &nitems);
+	if (nitems != 2) {
+		nvlist_add_string(nvl, "error",
+		    "mismatched number of socket descriptors");
 		return (-1);
-	}
-
-	/*
-	 * The child will exit once its connection goes away, so make sure only
-	 * one end is inherited by the child.
-	 */
-	if (posix_spawn_file_actions_init(&fa) != 0) {
-		EPRINTLN("posix_spawn_file_actions_init");
-		goto err;
-	}
-	if (posix_spawn_file_actions_addclose(&fa, s[0]) != 0) {
-		EPRINTLN("posix_spawn_file_actions_addclose");
-		posix_spawn_file_actions_destroy(&fa);
-		goto err;
-	}
-
-	(void)snprintf(sockname, sizeof(sockname), "%d", s[1]);
-	argv = (const char *[]){
-	    "/usr/libexec/bhyve-slirp-helper", "-S", sockname, NULL
-	};
-	error = posix_spawn(&child, "/usr/libexec/bhyve-slirp-helper",
-	    &fa, NULL, __DECONST(char **, argv), environ);
-	posix_spawn_file_actions_destroy(&fa);
-	if (error != 0) {
-		EPRINTLN("posix_spawn(bhyve-slirp-helper): %s",
-		    strerror(error));
-		goto err;
 	}
 
 	config = nvlist_clone(nvl);
 	if (config == NULL) {
-		EPRINTLN("nvlist_clone");
+		nvlist_add_string(nvl, "error",
+		    "nvlist_clone");
 		goto err;
 	}
 
 	mtu_value = get_config_value_node(config, "mtu");
 	if (mtu_value != NULL) {
 		if (net_parsemtu(mtu_value, &mtu)) {
-		    	EPRINTLN("Could not parse MTU");
-		    	goto err;
+			nvlist_add_string(nvl, "error", "Could not parse MTU");
+			goto err;
 		}
 	} else {
 		mtu = DEFAULT_MTU;
@@ -144,7 +119,7 @@ slirp_init(struct net_backend *be, const char *devname __unused,
 	priv->mtu = mtu;
 	priv->buf = malloc(mtu);
 	if (priv->buf == NULL) {
-		EPRINTLN("Could not allocate buffer");
+		nvlist_add_string(nvl, "error", "Could not allocate MTU buffer");
 		goto err;
 	}
 
@@ -152,14 +127,21 @@ slirp_init(struct net_backend *be, const char *devname __unused,
 	error = nvlist_send(s[0], config);
 	nvlist_destroy(config);
 	if (error != 0) {
-		EPRINTLN("nvlist_send");
+		nvlist_add_string(nvl, "error",
+		    "nvlist_send");
 		goto err;
 	}
 
 	be->fd = s[0];
 	priv->mevp = mevent_add_disabled(be->fd, EVF_READ, cb, param);
 	if (priv->mevp == NULL) {
-		EPRINTLN("Could not register event");
+		nvlist_add_string(nvl, "error", "Could not register event");
+		goto err;
+	}
+	helper_pd = nvlist_take_descriptor(nvl, "helper_pd");
+	if (pdgetpid(helper_pd, &child) != 0) {
+		nvlist_add_string(nvl, "error",
+		    "pdgetpid failed");
 		goto err;
 	}
 

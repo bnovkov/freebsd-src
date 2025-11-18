@@ -85,11 +85,10 @@ tap_cleanup(struct net_backend *be)
 }
 
 static int
-tap_init(struct net_backend *be, const char *devname,
-    nvlist_t *nvl __unused, net_be_rxeof_t cb, void *param)
+tap_init(struct net_backend *be, const char *devname __unused, nvlist_t *nvl,
+    net_be_rxeof_t cb, void *param)
 {
 	struct tap_priv *priv = NET_BE_PRIV(be);
-	char tbuf[80];
 	int opt = 1, up = IFF_UP;
 
 #ifndef WITHOUT_CAPSICUM
@@ -97,31 +96,25 @@ tap_init(struct net_backend *be, const char *devname,
 #endif
 
 	if (cb == NULL) {
-		EPRINTLN("TAP backend requires non-NULL callback");
+		nvlist_add_string(nvl, "error",
+		    "TAP backend requires non-NULL callback");
 		return (-1);
 	}
 
-	strcpy(tbuf, "/dev/");
-	strlcat(tbuf, devname, sizeof(tbuf));
-
-	be->fd = open(tbuf, O_RDWR);
-	if (be->fd == -1) {
-		EPRINTLN("open of tap device %s failed", tbuf);
-		goto error;
-	}
+	be->fd = nvlist_take_descriptor(nvl, "devfd");
 
 	/*
 	 * Set non-blocking and register for read
 	 * notifications with the event loop
 	 */
 	if (ioctl(be->fd, FIONBIO, &opt) < 0) {
-		EPRINTLN("tap device O_NONBLOCK failed");
+		nvlist_add_string(nvl, "error", "tap device O_NONBLOCK failed");
 		goto error;
 	}
 
 	if (strncmp("ngd", be->prefix, 3) &&
 	    ioctl(be->fd, VMIO_SIOCSIFFLAGS, up)) {
-		EPRINTLN("tap device link up failed");
+		nvlist_add_string(nvl, "error", "tap device link up failed");
 		goto error;
 	}
 
@@ -136,7 +129,7 @@ tap_init(struct net_backend *be, const char *devname,
 
 	priv->mevp = mevent_add_disabled(be->fd, EVF_READ, cb, param);
 	if (priv->mevp == NULL) {
-		EPRINTLN("Could not register event");
+		nvlist_add_string(nvl, "error", "Could not register event");
 		goto error;
 	}
 
@@ -293,25 +286,6 @@ DATA_SET(net_backend_set, tap_backend);
 DATA_SET(net_backend_set, vmnet_backend);
 DATA_SET(net_backend_set, ngd_backend);
 
-int
-netbe_legacy_config(nvlist_t *nvl, const char *opts)
-{
-	char *backend, *cp;
-
-	if (opts == NULL)
-		return (0);
-
-	cp = strchr(opts, ',');
-	if (cp == NULL) {
-		set_config_value_node(nvl, "backend", opts);
-		return (0);
-	}
-	backend = strndup(opts, cp - opts);
-	set_config_value_node(nvl, "backend", backend);
-	free(backend);
-	return (pci_parse_legacy_config(nvl, cp + 1));
-}
-
 /*
  * Initialize a backend and attach to the frontend.
  * This is called during frontend initialization.
@@ -335,6 +309,7 @@ netbe_init(struct net_backend **ret, nvlist_t *nvl, net_be_rxeof_t cb,
 
 	value = get_config_value_node(nvl, "backend");
 	if (value == NULL) {
+		nvlist_add_string(nvl, "error", "missing backend argument");
 		return (-1);
 	}
 	devname = strdup(value);
@@ -367,6 +342,7 @@ netbe_init(struct net_backend **ret, nvlist_t *nvl, net_be_rxeof_t cb,
 
 	*ret = NULL;
 	if (tbe == NULL) {
+		nvlist_add_stringf(nvl, "error", "unknown backend '%s'", type);
 		free(devname);
 		return (EINVAL);
 	}

@@ -123,21 +123,15 @@ netmap_set_cap(struct net_backend *be, uint64_t features __unused,
 }
 
 static int
-netmap_init(struct net_backend *be, const char *devname,
-    nvlist_t *nvl __unused, net_be_rxeof_t cb, void *param)
+netmap_init(struct net_backend *be, const char *devname, nvlist_t *nvl,
+    net_be_rxeof_t cb, void *param)
 {
 	struct netmap_priv *priv = NET_BE_PRIV(be);
+	size_t size;
 
 	strlcpy(priv->ifname, devname, sizeof(priv->ifname));
 	priv->ifname[sizeof(priv->ifname) - 1] = '\0';
-
-	priv->nmd = nm_open(priv->ifname, NULL, NETMAP_NO_TX_POLL, NULL);
-	if (priv->nmd == NULL) {
-		EPRINTLN("Unable to nm_open(): interface '%s', errno (%s)",
-		    devname, strerror(errno));
-		return (-1);
-	}
-
+	priv->nmd = nvlist_take_binary(nvl, "nm_desc", &size);
 	priv->memid = priv->nmd->req.nr_arg2;
 	priv->tx = NETMAP_TXRING(priv->nmd->nifp, 0);
 	priv->rx = NETMAP_RXRING(priv->nmd->nifp, 0);
@@ -147,7 +141,7 @@ netmap_init(struct net_backend *be, const char *devname,
 
 	priv->mevp = mevent_add_disabled(be->fd, EVF_READ, cb, param);
 	if (priv->mevp == NULL) {
-		EPRINTLN("Could not register event");
+		nvlist_add_string(nvl, "error", "Could not register event");
 		return (-1);
 	}
 

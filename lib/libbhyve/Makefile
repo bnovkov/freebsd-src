@@ -3,6 +3,7 @@ SHLIBDIR?= /lib
 PACKAGE=lib${LIB}
 LIB=	bhyve
 SRCS=	config.c 	\
+	net_backends.c	\
 	pci.c
 INCS=	bhyve/config.h		\
 	bhyve/net_backends.h	\

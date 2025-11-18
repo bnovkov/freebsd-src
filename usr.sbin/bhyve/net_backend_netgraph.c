@@ -53,7 +53,7 @@ ng_init(struct net_backend *be, const char *devname __unused,
 {
 	struct tap_priv *p = NET_BE_PRIV(be);
 	struct ngm_connect ngc;
-	const char *value, *nodename;
+	const char *value;
 	int sbsz;
 	int ctrl_sock;
 	int flags;
@@ -74,7 +74,7 @@ ng_init(struct net_backend *be, const char *devname __unused,
 
 	value = get_config_value_node(nvl, "path");
 	if (value == NULL) {
-		EPRINTLN("path must be provided");
+		nvlist_add_string(nvl, "error", "path must be provided");
 		return (-1);
 	}
 	strncpy(ngc.path, value, NG_PATHSIZ - 1);
@@ -86,22 +86,18 @@ ng_init(struct net_backend *be, const char *devname __unused,
 
 	value = get_config_value_node(nvl, "peerhook");
 	if (value == NULL) {
-		EPRINTLN("peer hook must be provided");
+		nvlist_add_string(nvl, "error", "peer hook must be provided");
 		return (-1);
 	}
 	strncpy(ngc.peerhook, value, NG_HOOKSIZ - 1);
 
-	nodename = get_config_value_node(nvl, "socket");
-	if (NgMkSockNode(nodename,
-		&ctrl_sock, &be->fd) < 0) {
-		EPRINTLN("can't get Netgraph sockets");
-		return (-1);
-	}
+	ctrl_sock = nvlist_take_descriptor(nvl, "csp");
+	be->fd = nvlist_take_descriptor(nvl, "dsp");
 
 	if (NgSendMsg(ctrl_sock, ".",
 		NGM_GENERIC_COOKIE,
 		NGM_CONNECT, &ngc, sizeof(ngc)) < 0) {
-		EPRINTLN("can't connect to node");
+		nvlist_add_string(nvl, "error", "can't connect to node");
 		close(ctrl_sock);
 		goto error;
 	}
@@ -111,12 +107,12 @@ ng_init(struct net_backend *be, const char *devname __unused,
 	flags = fcntl(be->fd, F_GETFL);
 
 	if (flags < 0) {
-		EPRINTLN("can't get socket flags");
+		nvlist_add_string(nvl, "error", "can't get socket flags");
 		goto error;
 	}
 
 	if (fcntl(be->fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-		EPRINTLN("can't set O_NONBLOCK flag");
+		nvlist_add_string(nvl, "error", "can't set O_NONBLOCK flag");
 		goto error;
 	}
 
@@ -128,7 +124,8 @@ ng_init(struct net_backend *be, const char *devname __unused,
 	msbsz = sizeof(maxsbsz);
 	if (sysctlbyname("kern.ipc.maxsockbuf", &maxsbsz, &msbsz,
 		NULL, 0) < 0) {
-		EPRINTLN("can't get 'kern.ipc.maxsockbuf' value");
+		nvlist_add_string(nvl, "error",
+		    "can't get 'kern.ipc.maxsockbuf' value");
 		goto error;
 	}
 
@@ -142,13 +139,13 @@ ng_init(struct net_backend *be, const char *devname __unused,
 
 	if (setsockopt(be->fd, SOL_SOCKET, SO_SNDBUF, &sbsz,
 		sizeof(sbsz)) < 0) {
-		EPRINTLN("can't set TX buffer size");
+		nvlist_add_string(nvl, "error", "can't set TX buffer size");
 		goto error;
 	}
 
 	if (setsockopt(be->fd, SOL_SOCKET, SO_RCVBUF, &sbsz,
 		sizeof(sbsz)) < 0) {
-		EPRINTLN("can't set RX buffer size");
+		nvlist_add_string(nvl, "error", "can't set RX buffer size");
 		goto error;
 	}
 
@@ -163,7 +160,7 @@ ng_init(struct net_backend *be, const char *devname __unused,
 
 	p->mevp = mevent_add_disabled(be->fd, EVF_READ, cb, param);
 	if (p->mevp == NULL) {
-		EPRINTLN("Could not register event");
+		nvlist_add_string(nvl, "error", "Could not register event");
 		goto error;
 	}
 
