@@ -2351,6 +2351,8 @@ e82545_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (mac != NULL) {
 		err = net_parsemac(mac, sc->esc_mac.octet);
 		if (err) {
+			nvlist_add_string(nvl, "error",
+			    "failed to parse MAC address");
 			free(sc);
 			return (err);
 		}
@@ -2367,6 +2369,31 @@ e82545_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	/* H/w initiated reset */
 	e82545_reset(sc, 0);
+
+	return (0);
+}
+
+static int
+e82545_teardown(struct pci_devinst *pi)
+{
+	struct e82545_softc *sc;
+
+	sc = pi->pi_arg;
+
+	pthread_mutex_lock(&sc->esc_mtx);
+	netbe_rx_disable(sc->esc_be);
+	if (sc->esc_mevpitr != NULL)
+		mevent_delete(sc->esc_mevpitr);
+	pthread_mutex_unlock(&sc->esc_mtx);
+
+	pthread_cancel(sc->esc_tx_tid);
+	pthread_join(sc->esc_tx_tid, NULL);
+	pthread_cond_destroy(&sc->esc_rx_cond);
+	pthread_cond_destroy(&sc->esc_tx_cond);
+	pthread_mutex_destroy(&sc->esc_mtx);
+
+	netbe_cleanup(sc->esc_be);
+	free(sc);
 
 	return (0);
 }
@@ -2528,6 +2555,7 @@ done:
 static const struct pci_devemu pci_de_e82545 = {
 	.pe_emu = 	"e1000",
 	.pe_init =	e82545_init,
+	.pe_teardown =	e82545_teardown,
 	.pe_legacy_config = netbe_legacy_config,
 	.pe_barwrite =	e82545_write,
 	.pe_barread =	e82545_read,

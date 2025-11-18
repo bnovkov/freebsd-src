@@ -129,3 +129,10 @@ pci_parse_legacy_config(nvlist_t *nvl, const char *opt)
 /*
  * Per-device file initialization routines.
  */
+static struct devinfo e1000_info = {
+	.name = "e1000",
+	.init_fds = netbe_init_fds,
+	.legacy_config = netbe_legacy_config,
+	.validate_hotplug_request = netbe_validate_hotplug_request
+};
+DATA_SET(pci_devinfo, e1000_info);
