@@ -92,13 +92,22 @@ enum pcibar_type {
 	PCIBAR_MEM64,
 	PCIBAR_MEMHI64,
 	PCIBAR_ROM,
+	PCIBAR_MAX
 };
+
+#define PCIBAR_MEM64_MEM32_ADDR 0x1
 
 struct pcibar {
 	enum pcibar_type	type;		/* io or memory */
 	uint64_t		size;
 	uint64_t		addr;
+	enum pcibar_addr_state {
+		PCIBAR_ADDR_INVALID,
+		PCIBAR_ADDR_ASSIGNED,
+		PCIBAR_ADDR_PARTIAL
+	} state;
 	uint8_t			lobits;
+	uint8_t			flags;
 };
 
 #define PI_NAMESZ	40

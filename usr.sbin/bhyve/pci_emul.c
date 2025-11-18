@@ -29,6 +29,8 @@
 #include <sys/param.h>
 #include <sys/linker_set.h>
 #include <sys/mman.h>
+#include <sys/nv.h>
+#include <sys/vmem.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -95,19 +97,16 @@ struct businfo {
 	uint32_t membase32, memlimit32;		/* mmio window below 4GB */
 	uint64_t membase64, memlimit64;		/* mmio window above 4GB */
 	struct slotinfo slotinfo[MAXSLOTS];
+	vmem_t *resources[PCIBAR_MAX];
 };
 
 static struct businfo *pci_businfo[MAXBUSES];
 
 SET_DECLARE(pci_devemu_set, struct pci_devemu);
 
-static uint64_t pci_emul_iobase;
 static uint8_t *pci_emul_rombase;
 static uint64_t pci_emul_romoffset;
 static uint8_t *pci_emul_romlim;
-static uint64_t pci_emul_membase32;
-static uint64_t pci_emul_membase64;
-static uint64_t pci_emul_memlim64;
 
 struct pci_bar_allocation {
 	TAILQ_ENTRY(pci_bar_allocation) chain;
@@ -612,25 +611,6 @@ pci_emul_mem_handler(struct vcpu *vcpu __unused, int dir,
 	return (0);
 }
 
-
-static int
-pci_emul_alloc_resource(uint64_t *baseptr, uint64_t limit, uint64_t size,
-			uint64_t *addr)
-{
-	uint64_t base;
-
-	assert((size & (size - 1)) == 0);	/* must be a power of 2 */
-
-	base = roundup2(*baseptr, size);
-
-	if (base + size <= limit) {
-		*addr = base;
-		*baseptr = base + size;
-		return (0);
-	} else
-		return (-1);
-}
-
 /*
  * Register (or unregister) the MMIO or I/O region associated with the BAR
  * register 'idx' of an emulated pci device.
@@ -756,7 +736,79 @@ memen(struct pci_devinst *pi)
 }
 
 /*
+ * Searches all emulated PCI hierachy to find a
+ * BAR that contains the address 'addr'.
+ */
+static int
+find_assigned_bar(uint64_t addr, struct pcibar **res)
+{
+	struct pcibar *bp;
+	struct businfo *bi;
+	struct funcinfo *fi;
+	struct slotinfo *si;
+	int i, bus, slot, func;
+	struct pci_devinst *pdi;
+
+	for (bus = 0; bus < MAXBUSES; bus++) {
+		if ((bi = pci_businfo[bus]) == NULL)
+			continue;
+		for (slot = 0; slot < MAXSLOTS; slot++) {
+			si = &bi->slotinfo[slot];
+			for (func = 0; func < MAXFUNCS; func++) {
+				fi = &si->si_funcs[func];
+				if (fi->fi_devi == NULL)
+					continue;
+				pdi = fi->fi_devi;
+				for (i = 0; i <= PCI_BARMAX; i++) {
+					bp = &pdi->pi_bar[i];
+
+					if (bp->type == PCIBAR_NONE ||
+					    bp->state != PCIBAR_ADDR_ASSIGNED)
+						continue;
+					if (addr >= bp->addr &&
+					    addr < (bp->addr + bp->size)) {
+						*res = bp;
+						return (0);
+					}
+				}
+			}
+		}
+	}
+
+	return (ENOENT);
+}
+
+/*
  * Update the MMIO or I/O address that is decoded by the BAR register.
+ *
+ * The lifecycle of a BAR address is tracked using the following state machine:
+ *     +----------+
+ *  +> | invalid  | -+
+ *  |  +----------+  |
+ *  |    |           |
+ *  |    |           |
+ *  |    v           |
+ *  |  +----------+  |
+ *  |  | partial  |  |
+ *  |  +----------+  |
+ *  |    |           |
+ *  |    |           |
+ *  |    v           |
+ *  |  +----------+  |
+ *  +- | assigned | <+
+ *     +----------+
+ *       ^      |
+ *       +------+
+ * The 'assigned' state means that the BAR's address was allocated from the
+ * appropriate vmem arena, while the 'invalid' state means that the BAR does not
+ * have a valid address. The 'partial' state covers the two-step process with
+ * which a 64-bit BAR address is constructed. A guest will first update the
+ * lower 32 bits of the address, moving from an 'invalid' to a 'partial' state.
+ * Updating the upper 32 bits will then move it to the 'assigned' state. Note
+ * that a guest may also directly move a 64 bit BAR address directly from
+ * 'invalid' to 'assigned' by modifying the upper 32 bits only. A guest may also
+ * move an 'assigned' address to another valid address, effectively performing a
+ * self-referencing transition.
  *
  * If the pci device has enabled the address space decoding then intercept
  * the address range decoded by the BAR register.
@@ -764,9 +816,18 @@ memen(struct pci_devinst *pi)
 static void
 update_bar_address(struct pci_devinst *pi, uint64_t addr, int idx, int type)
 {
-	int decode;
+	bool alloc;
+	vmem_t *arena;
+	int decode, error;
+	uint64_t new_addr;
+	struct businfo *bi;
+	struct pcibar *bp, *bp2;
+	uint64_t mask, old_addr;
 
-	if (pi->pi_bar[idx].type == PCIBAR_IO)
+	bi = pci_businfo[pi->pi_bus];
+	bp = &pi->pi_bar[idx];
+
+	if (bp->type == PCIBAR_IO)
 		decode = porten(pi);
 	else
 		decode = memen(pi);
@@ -774,23 +835,136 @@ update_bar_address(struct pci_devinst *pi, uint64_t addr, int idx, int type)
 	if (decode)
 		unregister_bar(pi, idx);
 
+	old_addr = bp->addr;
+	mask = ~(bp->size - 1);
 	switch (type) {
 	case PCIBAR_IO:
+		bp->addr = addr;
+		alloc = addr != ((uint16_t)-1 & mask);
+		break;
 	case PCIBAR_MEM32:
-		pi->pi_bar[idx].addr = addr;
+		bp->addr = addr;
+		alloc = addr != ((uint32_t)-1 & mask);
 		break;
 	case PCIBAR_MEM64:
-		pi->pi_bar[idx].addr &= ~0xffffffffUL;
-		pi->pi_bar[idx].addr |= addr;
+		bp->addr &= ~0xffffffffUL;
+		bp->addr |= addr;
+		alloc = addr != ((uint32_t)-1 & mask);
+		if (alloc) {
+			assert(bp->state == PCIBAR_ADDR_INVALID);
+			bp->state = PCIBAR_ADDR_PARTIAL;
+			/*
+			 * Skip operating on a partial address since the
+			 * guest has currently only set the lower 32 bits.
+			 */
+			type = PCIBAR_NONE;
+		}
 		break;
 	case PCIBAR_MEMHI64:
-		pi->pi_bar[idx].addr &= 0xffffffff;
-		pi->pi_bar[idx].addr |= addr;
+		bp->addr &= 0xffffffff;
+		bp->addr |= addr;
+		alloc = addr != ((uint64_t)-1 & ~0xffffffffUL);
+		if (alloc)
+			type = PCIBAR_MEM64;
+		else {
+			/*
+			 * Skip operating on a partial address since the
+			 * guest is currently clearing the upper 32 bits.
+			 */
+			type = PCIBAR_NONE;
+		}
 		break;
 	default:
 		assert(0);
 	}
 
+	arena = bi->resources[type];
+	if (arena == NULL) {
+		assert(bp->state != PCIBAR_ADDR_ASSIGNED);
+		goto done;
+	}
+	if (!alloc) {
+		assert(bp->state == PCIBAR_ADDR_ASSIGNED);
+		if ((bp->flags & PCIBAR_MEM64_MEM32_ADDR) != 0) {
+			/*
+			 * We're dealing with a MEM64 address that was allocated
+			 * from the MEM32 pool. Clear the corresponding
+			 * flag and release it to the MEM32 pool.
+			 */
+			assert(bp->type == PCIBAR_MEM64);
+			bp->flags &= ~PCIBAR_MEM64_MEM32_ADDR;
+			arena = bi->resources[PCIBAR_MEM32];
+		}
+		vmem_xfree(arena, old_addr, bp->size);
+		bp->state = PCIBAR_ADDR_INVALID;
+	} else {
+		if (bp->state == PCIBAR_ADDR_ASSIGNED) {
+			/*
+			 * This BAR's address is already assigned and the guest
+			 * wants to move it elsewhere ('assigned' ->
+			 * 'assigned'). Start the process by releasing the
+			 * current address first.
+			 */
+			if ((bp->flags & PCIBAR_MEM64_MEM32_ADDR) != 0) {
+				/*
+				 * Same as in the '!alloc' case above.
+				 */
+				assert(bp->type == PCIBAR_MEM64);
+				bp->flags &= ~PCIBAR_MEM64_MEM32_ADDR;
+				vmem_xfree(bi->resources[PCIBAR_MEM32],
+				    old_addr, bp->size);
+			} else
+				vmem_xfree(arena, old_addr, bp->size);
+			bp->state = PCIBAR_ADDR_INVALID;
+		}
+
+		/*
+		 * We're about to allocate a new BAR address so
+		 * the existing one must not be valid.
+		 */
+		assert(bp->state != PCIBAR_ADDR_ASSIGNED);
+		new_addr = bp->addr;
+		if (bp->type == PCIBAR_MEM64 && new_addr < 4 * GB) {
+			/*
+			 * Comply with the remark in 'pci_emul_assign_bar'
+			 * and allocate this BAR address from the MEM32 pool.
+			 */
+			bp->flags |= PCIBAR_MEM64_MEM32_ADDR;
+			arena = bi->resources[PCIBAR_MEM32];
+		}
+		error = vmem_xalloc(arena, bp->size, bp->size, 0, 0, new_addr,
+		    new_addr + bp->size, M_BESTFIT | M_NOWAIT, &bp->addr);
+		if (error != 0) {
+			/*
+			 * The allocation failed, meaning that another BAR is
+			 * currently residing at the target address. Handle this
+			 * by finding the offending BAR, releasing its address
+			 * into the appropriate pool, and retrying the
+			 * allocation.
+			 */
+
+			error = find_assigned_bar(new_addr, &bp2);
+			assert(error == 0);
+			if ((bp2->flags & PCIBAR_MEM64_MEM32_ADDR) != 0) {
+				/* Same as the '!alloc' case above. */
+				assert(bp2->type == PCIBAR_MEM64);
+				bp2->flags &= ~PCIBAR_MEM64_MEM32_ADDR;
+				vmem_xfree(bi->resources[PCIBAR_MEM32],
+				    bp2->addr, bp2->size);
+			} else
+				vmem_xfree(arena, bp2->addr, bp2->size);
+			bp2->state = PCIBAR_ADDR_INVALID;
+
+			error = vmem_xalloc(arena, bp->size, bp->size, 0, 0,
+			    new_addr, new_addr + bp->size, M_BESTFIT | M_NOWAIT,
+			    &bp->addr);
+		}
+		assert(error == 0);
+		assert(bp->addr == new_addr);
+		bp->state = PCIBAR_ADDR_ASSIGNED;
+	}
+
+done:
 	if (decode)
 		register_bar(pi, idx);
 }
@@ -894,17 +1068,16 @@ static int
 pci_emul_assign_bar(struct pci_devinst *const pdi, const int idx,
     const enum pcibar_type type, const uint64_t size)
 {
-	int error;
-	uint64_t *baseptr, limit, addr, mask, lobits, bar;
+	uint64_t addr, mask, lobits, bar;
+	struct businfo *bi;
+	vmem_t *arena;
 
+	bi = pci_businfo[pdi->pi_bus];
+	arena = bi->resources[type];
 	switch (type) {
 	case PCIBAR_NONE:
-		baseptr = NULL;
-		addr = mask = lobits = 0;
-		break;
+		return (0);
 	case PCIBAR_IO:
-		baseptr = &pci_emul_iobase;
-		limit = PCI_EMUL_IOLIMIT;
 		mask = PCIM_BAR_IO_BASE;
 		lobits = PCIM_BAR_IO_SPACE;
 		break;
@@ -917,47 +1090,41 @@ pci_emul_assign_bar(struct pci_devinst *const pdi, const int idx,
 		 * number (128MB currently).
 		 */
 		if (size > 128 * 1024 * 1024) {
-			baseptr = &pci_emul_membase64;
-			limit = pci_emul_memlim64;
 			mask = PCIM_BAR_MEM_BASE;
 			lobits = PCIM_BAR_MEM_SPACE | PCIM_BAR_MEM_64 |
 				 PCIM_BAR_MEM_PREFETCH;
 		} else {
-			baseptr = &pci_emul_membase32;
-			limit = PCI_EMUL_MEMLIMIT32;
 			mask = PCIM_BAR_MEM_BASE;
 			lobits = PCIM_BAR_MEM_SPACE | PCIM_BAR_MEM_64;
+			pdi->pi_bar[idx].flags = PCIBAR_MEM64_MEM32_ADDR;
+			arena = bi->resources[PCIBAR_MEM32];
 		}
 		break;
 	case PCIBAR_MEM32:
-		baseptr = &pci_emul_membase32;
-		limit = PCI_EMUL_MEMLIMIT32;
 		mask = PCIM_BAR_MEM_BASE;
 		lobits = PCIM_BAR_MEM_SPACE | PCIM_BAR_MEM_32;
 		break;
 	case PCIBAR_ROM:
 		/* do not claim memory for ROM. OVMF will do it for us. */
-		baseptr = NULL;
-		limit = 0;
+		addr = 0;
 		mask = PCIM_BIOS_ADDR_MASK;
 		lobits = 0;
 		break;
 	default:
-		printf("pci_emul_alloc_base: invalid bar type %d\n", type);
-		assert(0);
+		printf("%s: invalid bar type %d\n", __func__, type);
+		return (-1);
 	}
 
-	if (baseptr != NULL) {
-		error = pci_emul_alloc_resource(baseptr, limit, size, &addr);
-		if (error != 0)
-			return (error);
-	} else {
-		addr = 0;
-	}
+	assert((size & (size - 1)) == 0); /* must be a power of 2 */
+	if (arena != NULL &&
+	    vmem_xalloc(arena, size, size, 0, 0, 0, ~0ul, M_BESTFIT, &addr) != 0)
+		return (-1);
 
 	pdi->pi_bar[idx].type = type;
 	pdi->pi_bar[idx].addr = addr;
 	pdi->pi_bar[idx].size = size;
+	pdi->pi_bar[idx].state = PCIBAR_ADDR_ASSIGNED;
+
 	/*
 	 * passthru devices are using same lobits as physical device they set
 	 * this property
@@ -1518,6 +1685,9 @@ init_bootorder(void)
 int
 init_pci(struct vmctx *ctx)
 {
+	size_t io_range_size, mem32_range_size, mem64_range_size;
+	uint64_t pci_emul_membase32, pci_emul_membase64;
+	uint64_t pci_emul_iobase, pci_emul_memlim64;
 	char node_name[sizeof("pci.XXX.XX.X")];
 	struct mem_range mr;
 	struct pci_devemu *pde;
@@ -1528,10 +1698,19 @@ init_pci(struct vmctx *ctx)
 	const char *emul;
 	size_t lowmem;
 	int bus, slot, func;
-	int error;
+	int error, nbuses;
 
 	if (vm_get_lowmem_limit(ctx) > PCI_EMUL_MEMBASE32)
 		errx(EX_OSERR, "Invalid lowmem limit");
+
+	nbuses = 0;
+	for (bus = 0; bus < MAXBUSES; bus++) {
+		snprintf(node_name, sizeof(node_name), "pci.%d", bus);
+		nvl = find_config_node(node_name);
+		if (nvl == NULL)
+			continue;
+		nbuses++;
+	}
 
 	pci_emul_iobase = PCI_EMUL_IOBASE;
 	pci_emul_membase32 = PCI_EMUL_MEMBASE32;
@@ -1540,6 +1719,10 @@ init_pci(struct vmctx *ctx)
 	    vm_get_highmem_size(ctx);
 	pci_emul_membase64 = roundup2(pci_emul_membase64, PCI_EMUL_MEMSIZE64);
 	pci_emul_memlim64 = pci_emul_membase64 + PCI_EMUL_MEMSIZE64;
+
+	io_range_size = (PCI_EMUL_IOLIMIT - pci_emul_iobase) / nbuses;
+	mem32_range_size = (PCI_EMUL_MEMLIMIT32 - pci_emul_membase32) / nbuses;
+	mem64_range_size = (pci_emul_memlim64 - pci_emul_membase64) / nbuses;
 
 	TAILQ_INIT(&boot_devices);
 
@@ -1558,6 +1741,24 @@ init_pci(struct vmctx *ctx)
 		bi->iobase = pci_emul_iobase;
 		bi->membase32 = pci_emul_membase32;
 		bi->membase64 = pci_emul_membase64;
+
+		pci_emul_iobase += io_range_size;
+		pci_emul_membase32 += mem32_range_size;
+		pci_emul_membase64 += mem64_range_size;
+
+		bi->iolimit = pci_emul_iobase - 1;
+		bi->memlimit32 = pci_emul_membase32 - 1;
+		bi->memlimit64 = pci_emul_membase64 - 1;
+
+		bi->resources[PCIBAR_IO] = vmem_create("io", bi->iobase,
+		    io_range_size, 0, 0, 0);
+		assert(bi->resources[PCIBAR_IO] != NULL);
+		bi->resources[PCIBAR_MEM32] = vmem_create("mem32",
+		    bi->membase32, mem32_range_size, 0, 0, 0);
+		assert(bi->resources[PCIBAR_MEM32] != NULL);
+		bi->resources[PCIBAR_MEM64] = vmem_create("mem64",
+		    bi->membase64, mem64_range_size, 0, 0, 0);
+		assert(bi->resources[PCIBAR_MEM64] != NULL);
 
 		/* first run: init devices */
 		for (slot = 0; slot < MAXSLOTS; slot++) {
@@ -1608,25 +1809,6 @@ init_pci(struct vmctx *ctx)
 			free(bar);
 		}
 		TAILQ_INIT(&pci_bars);
-
-		/*
-		 * Add some slop to the I/O and memory resources decoded by
-		 * this bus to give a guest some flexibility if it wants to
-		 * reprogram the BARs.
-		 */
-		pci_emul_iobase += BUSIO_ROUNDUP;
-		pci_emul_iobase = roundup2(pci_emul_iobase, BUSIO_ROUNDUP);
-		bi->iolimit = pci_emul_iobase;
-
-		pci_emul_membase32 += BUSMEM32_ROUNDUP;
-		pci_emul_membase32 = roundup2(pci_emul_membase32,
-		    BUSMEM32_ROUNDUP);
-		bi->memlimit32 = pci_emul_membase32;
-
-		pci_emul_membase64 += BUSMEM64_ROUNDUP;
-		pci_emul_membase64 = roundup2(pci_emul_membase64,
-		    BUSMEM64_ROUNDUP);
-		bi->memlimit64 = pci_emul_membase64;
 	}
 
 	/*
@@ -1787,6 +1969,9 @@ pci_bus_write_dsdt(int bus)
 
 #ifdef __amd64__
 	if (bus == 0) {
+		int error;
+		vmem_t *arena;
+
 		dsdt_indent(3);
 		dsdt_fixed_ioport(0xCF8, 8);
 		dsdt_unindent(3);
@@ -1815,6 +2000,13 @@ pci_bus_write_dsdt(int bus)
 			dsdt_line("    })");
 			goto done;
 		}
+
+		/*
+		 * Register the bus's IO BAR address range.
+		 */
+		arena = bi->resources[PCIBAR_IO];
+		error = vmem_add(arena, 0x0D00, PCI_EMUL_IOBASE - 0x0D00, 0);
+		assert(error == 0);
 	}
 #endif
 	assert(bi != NULL);
