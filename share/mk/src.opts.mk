@@ -66,6 +66,7 @@ __DEFAULT_YES_OPTIONS = \
     AUTOFS \
     BHYVE \
     BLACKLIST \
+    BLOCKLIST \
     BLUETOOTH \
     BOOT \
     BOOTPARAMD \
@@ -242,6 +243,7 @@ __LIBC_MALLOC_DEFAULT=	jemalloc
 #
 .for var in \
     BLACKLIST \
+    BLOCKLIST \
     BZIP2 \
     INET \
     INET6 \
@@ -300,7 +302,7 @@ __DEFAULT_NO_OPTIONS+=FDT
 __DEFAULT_YES_OPTIONS+=FDT
 .endif
 
-.if ${__T:Marm*} == "" && ${__T:Mriscv64*} == ""
+.if ${__T:Mriscv64*} == ""
 __DEFAULT_YES_OPTIONS+=LLDB
 .else
 __DEFAULT_NO_OPTIONS+=LLDB
@@ -389,6 +391,14 @@ BROKEN_OPTIONS+= TESTS
 .if ${MK_SOURCELESS} == "no"
 MK_SOURCELESS_HOST:=	no
 MK_SOURCELESS_UCODE:= no
+.endif
+
+.if ${MK_BLACKLIST} == "no"
+MK_BLOCKLIST:=	no
+.endif
+
+.if ${MK_BLACKLIST_SUPPORT} == "no"
+MK_BLOCKLIST_SUPPORT:=	no
 .endif
 
 .if ${MK_CDDL} == "no"

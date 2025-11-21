@@ -80,8 +80,6 @@
  *
  */
 
-#include <sys/cdefs.h>
-
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
@@ -115,7 +113,7 @@ MALLOC_DECLARE(M_ARM_SPE);
 extern u_int mp_maxid;
 extern struct taskqueue *taskqueue_arm_spe;
 
-void spe_backend_disable_smp(struct hwt_context *ctx);
+int spe_backend_disable_smp(struct hwt_context *ctx);
 
 static device_t spe_dev;
 static struct hwt_backend_ops spe_ops;
@@ -143,7 +141,7 @@ spe_backend_init_cpu(struct hwt_context *ctx)
 	int cpu_id;
 
 	spe_info = malloc(sizeof(struct arm_spe_info) * mp_ncpus,
-	    M_ARM_SPE, M_WAITOK | M_ZERO);
+	   M_ARM_SPE, M_WAITOK | M_ZERO);
 
 	sc->spe_info = spe_info;
 
@@ -196,22 +194,22 @@ spe_backend_init(struct hwt_context *ctx)
 #ifdef ARM_SPE_DEBUG
 static void hex_dump(uint8_t *buf, size_t len)
 {
-    size_t i;
+	size_t i;
 
-    printf("--------------------------------------------------------------\n");
-    for (i = 0; i < len; ++i) {
-        if (i % 8 == 0) {
-            printf(" ");
-        }
-        if (i % 16 == 0) {
-            if (i != 0) {
-                printf("\r\n");
-            }
-            printf("\t");
-        }
-        printf("%02X ", buf[i]);
-    }
-    printf("\r\n");
+	printf("--------------------------------------------------------------\n");
+	for (i = 0; i < len; ++i) {
+		if (i % 8 == 0) {
+			printf(" ");
+		}
+		if (i % 16 == 0) {
+			if (i != 0) {
+				printf("\r\n");
+			}
+			printf("\t");
+		}
+		printf("%02X ", buf[i]);
+	}
+	printf("\r\n");
 }
 #endif
 
@@ -243,26 +241,26 @@ static uint64_t
 arm_spe_min_interval(struct arm_spe_softc *sc)
 {
 	/* IMPLEMENTATION DEFINED */
-	switch PMSIDR_Interval_VAL(sc->pmsidr)
+	switch (PMSIDR_Interval_VAL(sc->pmsidr))
 	{
-		case PMSIDR_Interval_256:
-			return (256);
-		case PMSIDR_Interval_512:
-			return (512);
-		case PMSIDR_Interval_768:
-			return (768);
-		case PMSIDR_Interval_1024:
-			return (1024);
-		case PMSIDR_Interval_1536:
-			return (1536);
-		case PMSIDR_Interval_2048:
-			return (2048);
-		case PMSIDR_Interval_3072:
-			return (3072);
-		case PMSIDR_Interval_4096:
-			return (4096);
-		default:
-			return (4096);
+	case PMSIDR_Interval_256:
+		return (256);
+	case PMSIDR_Interval_512:
+		return (512);
+	case PMSIDR_Interval_768:
+		return (768);
+	case PMSIDR_Interval_1024:
+		return (1024);
+	case PMSIDR_Interval_1536:
+		return (1536);
+	case PMSIDR_Interval_2048:
+		return (2048);
+	case PMSIDR_Interval_3072:
+		return (3072);
+	case PMSIDR_Interval_4096:
+		return (4096);
+	default:
+		return (4096);
 	}
 }
 
@@ -271,10 +269,8 @@ arm_spe_set_interval(struct arm_spe_info *info, uint64_t interval)
 {
 	uint64_t min_interval = arm_spe_min_interval(info->sc);
 
-	if (interval < min_interval)
-		interval = min_interval;
-	if (interval > (1 << 24)) /* max 24 bits */
-		interval = (1 << 24);
+	interval = MAX(interval, min_interval);
+	interval = MIN(interval, 1 << 24);      /* max 24 bits */
 
 	dprintf("%s %lu\n", __func__, interval);
 
@@ -301,7 +297,7 @@ spe_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 	info->pmsicr = 0;
 	info->pmscr = PMSCR_TS | PMSCR_PA | PMSCR_CX | PMSCR_E1SPE | PMSCR_E0SPE;
 
-	if (ctx->config &&
+	if (ctx->config != NULL &&
 	    ctx->config_size == sizeof(struct arm_spe_config) &&
 	    ctx->config_version == 1) {
 		cfg = (struct arm_spe_config *)ctx->config;
@@ -324,7 +320,7 @@ spe_backend_configure(struct hwt_context *ctx, int cpu_id, int session_id)
 static void
 arm_spe_enable(void *arg __unused)
 {
-	struct arm_spe_info *info = &spe_info[PCPU_GET(cpuid)];;
+	struct arm_spe_info *info = &spe_info[PCPU_GET(cpuid)];
 	uint64_t base, limit;
 
 	dprintf("%s on cpu:%d\n", __func__, PCPU_GET(cpuid));
@@ -365,7 +361,7 @@ arm_spe_enable(void *arg __unused)
 	mtx_unlock_spin(&info->lock);
 }
 
-static void
+static int
 spe_backend_enable_smp(struct hwt_context *ctx)
 {
 	struct arm_spe_info *info;
@@ -385,7 +381,7 @@ spe_backend_enable_smp(struct hwt_context *ctx)
 	}
 	HWT_CTX_UNLOCK(ctx);
 
-	cpu_id = CPU_FFS(&ctx->cpu_map);
+	cpu_id = CPU_FFS(&ctx->cpu_map) - 1;
 	info = &spe_info[cpu_id];
 	if (info->ctx_field == ARM_SPE_CTX_PID)
 		arm64_pid_in_contextidr = true;
@@ -394,6 +390,8 @@ spe_backend_enable_smp(struct hwt_context *ctx)
 
 	smp_rendezvous_cpus(ctx->cpu_map, smp_no_rendezvous_barrier,
 	    arm_spe_enable, smp_no_rendezvous_barrier, NULL);
+
+	return (0);
 }
 
 void
@@ -431,7 +429,7 @@ arm_spe_disable(void *arg __unused)
 	mtx_unlock_spin(&info->lock);
 }
 
-void
+int
 spe_backend_disable_smp(struct hwt_context *ctx)
 {
 	struct kevent kev;
@@ -460,6 +458,14 @@ spe_backend_disable_smp(struct hwt_context *ctx)
 	ret = kqfd_register(ctx->kqueue_fd, &kev, ctx->hwt_td, M_WAITOK);
 	if (ret)
 		dprintf("%s kqfd_register ret:%d\n", __func__, ret);
+
+	return (0);
+}
+
+static void
+spe_backend_stop(struct hwt_context *ctx)
+{
+	spe_backend_disable_smp(ctx);
 }
 
 static void
@@ -490,6 +496,8 @@ spe_backend_svc_buf(struct hwt_context *ctx, void *data, size_t data_size,
 	s = (struct arm_spe_svc_buf *)data;
 	if (s->buf_idx > 1)
 		return (ENODEV);
+	if (s->ident >= mp_ncpus)
+		return (EINVAL);
 
 	info = &spe_info[s->ident];
 	mtx_lock_spin(&info->lock);
@@ -529,7 +537,6 @@ spe_backend_read(struct hwt_vm *vm, int *ident, vm_offset_t *offset,
 	struct arm_spe_softc *sc = device_get_softc(spe_dev);
 	int error = 0;
 
-
 	mtx_lock_spin(&sc->sc_lock);
 
 	/* Return the first pending buffer that needs servicing */
@@ -541,8 +548,8 @@ spe_backend_read(struct hwt_vm *vm, int *ident, vm_offset_t *offset,
 	*ident = q->ident;
 	*offset = q->offset;
 	*data = (q->buf_idx << KQ_BUF_POS_SHIFT) |
-	   (q->partial_rec << KQ_PARTREC_SHIFT) |
-	   (q->final_buf << KQ_FINAL_BUF_SHIFT);
+	    (q->partial_rec << KQ_PARTREC_SHIFT) |
+	    (q->final_buf << KQ_FINAL_BUF_SHIFT);
 
 	STAILQ_REMOVE_HEAD(&sc->pending, next);
 	sc->npending--;
@@ -562,7 +569,7 @@ static struct hwt_backend_ops spe_ops = {
 
 	.hwt_backend_configure = spe_backend_configure,
 	.hwt_backend_svc_buf = spe_backend_svc_buf,
-	.hwt_backend_stop = spe_backend_disable_smp,
+	.hwt_backend_stop = spe_backend_stop,
 
 	.hwt_backend_enable_smp = spe_backend_enable_smp,
 	.hwt_backend_disable_smp = spe_backend_disable_smp,
@@ -573,22 +580,7 @@ static struct hwt_backend_ops spe_ops = {
 int
 spe_register(device_t dev)
 {
-	int error;
-
 	spe_dev = dev;
 
-	error = hwt_backend_register(&backend);
-	if (error != 0) {
-		return (error);
-	}
-
-	return (0);
+	return (hwt_backend_register(&backend));
 }
-
-static void
-arm_spe_init(void)
-{
-	return;
-}
-SYSINIT(spe, SI_SUB_DRIVERS, SI_ORDER_FIRST, arm_spe_init, NULL);
-

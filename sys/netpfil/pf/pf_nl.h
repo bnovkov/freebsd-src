@@ -69,6 +69,8 @@ enum {
 	PFNL_CMD_CLR_ADDRS = 31,
 	PFNL_CMD_TABLE_ADD_ADDR = 32,
 	PFNL_CMD_TABLE_DEL_ADDR = 33,
+	PFNL_CMD_TABLE_SET_ADDR = 34,
+	PFNL_CMD_TABLE_GET_ADDR = 35,
 	__PFNL_CMD_MAX,
 };
 #define PFNL_CMD_MAX (__PFNL_CMD_MAX -1)
@@ -285,6 +287,7 @@ enum pf_rule_type_t {
 	PF_RT_MAX_PKT_SIZE	= 83, /* u16 */
 	PF_RT_TYPE_2		= 84, /* u16 */
 	PF_RT_CODE_2		= 85, /* u16 */
+	PF_RT_EXPTIME		= 86, /* time_t */
 };
 
 enum pf_addrule_type_t {
@@ -482,6 +485,8 @@ enum pf_table_addrs_t {
 	PF_TA_FLAGS		= 3, /* u32 */
 	PF_TA_NBR_ADDED		= 4, /* u32 */
 	PF_TA_NBR_DELETED	= 5, /* u32 */
+	PF_TA_NBR_CHANGED	= 6, /* u32 */
+	PF_TA_ADDR_COUNT	= 7, /* u32 */
 };
 
 #ifdef _KERNEL

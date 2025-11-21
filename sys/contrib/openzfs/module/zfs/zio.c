@@ -3318,8 +3318,8 @@ zio_write_gang_block(zio_t *pio, metaslab_class_t *mc)
 	} else if (any_failed && candidate > SPA_OLD_GANGBLOCKSIZE &&
 	    spa_feature_is_enabled(spa, SPA_FEATURE_DYNAMIC_GANG_HEADER) &&
 	    !spa_feature_is_active(spa, SPA_FEATURE_DYNAMIC_GANG_HEADER)) {
-		dmu_tx_t *tx =
-		    dmu_tx_create_assigned(spa->spa_dsl_pool, txg + 1);
+		dmu_tx_t *tx = dmu_tx_create_assigned(spa->spa_dsl_pool,
+		    MAX(txg, spa_syncing_txg(spa) + 1));
 		dsl_sync_task_nowait(spa->spa_dsl_pool,
 		    zio_update_feature,
 		    (void *)SPA_FEATURE_DYNAMIC_GANG_HEADER, tx);
@@ -4574,8 +4574,29 @@ zio_vdev_io_start(zio_t *zio)
 	ASSERT0(zio->io_child_error[ZIO_CHILD_VDEV]);
 
 	if (vd == NULL) {
-		if (!(zio->io_flags & ZIO_FLAG_CONFIG_WRITER))
-			spa_config_enter(spa, SCL_ZIO, zio, RW_READER);
+		if (!(zio->io_flags & ZIO_FLAG_CONFIG_WRITER)) {
+			/*
+			 * A deadlock workaround. The ddt_prune_unique_entries()
+			 * -> prune_candidates_sync() code path takes the
+			 * SCL_ZIO reader lock and may request it again here.
+			 * If there is another thread who wants the SCL_ZIO
+			 * writer lock, then scl_write_wanted will be set.
+			 * Thus, the spa_config_enter_priority() is used to
+			 * ignore pending writer requests.
+			 *
+			 * The locking should be revised to remove the need
+			 * for this workaround.  If that's not workable then
+			 * it should only be applied to the zios involved in
+			 * the pruning process.  This impacts the read/write
+			 * I/O balance while pruning.
+			 */
+			if (spa->spa_active_ddt_prune)
+				spa_config_enter_priority(spa, SCL_ZIO, zio,
+				    RW_READER);
+			else
+				spa_config_enter(spa, SCL_ZIO, zio,
+				    RW_READER);
+		}
 
 		/*
 		 * The mirror_ops handle multiple DVAs in a single BP.
@@ -5305,6 +5326,16 @@ zio_ready(zio_t *zio)
 		return (NULL);
 	}
 
+	if (zio_injection_enabled) {
+		hrtime_t target = zio_handle_ready_delay(zio);
+		if (target != 0 && zio->io_target_timestamp == 0) {
+			zio->io_stage >>= 1;
+			zio->io_target_timestamp = target;
+			zio_delay_interrupt(zio);
+			return (NULL);
+		}
+	}
+
 	if (zio->io_ready) {
 		ASSERT(IO_IS_ALLOCATING(zio));
 		ASSERT(BP_GET_BIRTH(bp) == zio->io_txg ||
@@ -5538,9 +5569,12 @@ zio_done(zio_t *zio)
 				zio->io_vd->vdev_stat.vs_slow_ios++;
 				mutex_exit(&zio->io_vd->vdev_stat_lock);
 
-				(void) zfs_ereport_post(FM_EREPORT_ZFS_DELAY,
-				    zio->io_spa, zio->io_vd, &zio->io_bookmark,
-				    zio, 0);
+				if (zio->io_vd->vdev_slow_io_events) {
+					(void) zfs_ereport_post(
+					    FM_EREPORT_ZFS_DELAY,
+					    zio->io_spa, zio->io_vd,
+					    &zio->io_bookmark, zio, 0);
+				}
 			}
 		}
 	}

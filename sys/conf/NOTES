@@ -679,6 +679,7 @@ options 	TCP_OFFLOAD		# TCP offload support.
 options  	TCP_RFC7413		# TCP Fast Open
 
 options  	TCPHPTS
+#options 	TCP_HPTS_KTEST		# Add KTEST support for HPTS
 
 # In order to enable IPSEC you MUST also add device crypto to
 # your kernel configuration
@@ -2447,7 +2448,8 @@ device		hpen		# Generic pen driver
 device		hsctrl		# System controls
 device		ps4dshock	# Sony PS4 DualShock 4 gamepad driver
 device		u2f		# FIDO/U2F authenticator
-options 	U2F_MAKE_UHID_ALIAS	# install /dev/uhid alias for /dev/u2f/
+options 	U2F_DROP_UHID_ALIAS	# Do not install /dev/uhid alias for
+				# /dev/u2f/ and rename driver from uhid to u2f
 device		xb360gp		# XBox 360 gamepad driver
 
 #####################################################################
@@ -2653,10 +2655,6 @@ device		rndtest		# FIPS 140-2 entropy tester
 
 device		ccr		# Chelsio T6
 
-device		hifn		# Hifn 7951, 7781, etc.
-options 	HIFN_DEBUG	# enable debugging support: hw.hifn.debug
-options 	HIFN_RNDTEST	# enable rndtest support
-
 device		safe		# SafeNet 1141
 options 	SAFE_DEBUG	# enable debugging support: hw.safe.debug
 options 	SAFE_RNDTEST	# enable rndtest support
@@ -2799,7 +2797,7 @@ options 	MAXFILES=999
 
 # Random number generator
 # Alternative algorithm.
-#options 	RANDOM_FENESTRASX
+options 	RANDOM_FENESTRASX
 # Allow the CSPRNG algorithm to be loaded as a module.
 #options 	RANDOM_LOADABLE
 # Select this to allow high-rate but potentially expensive
@@ -2826,6 +2824,10 @@ options 	RANDOM_ENABLE_UMA	# slab allocator
 # if desired, however it cannot be recommended for use in any
 # environment.
 options 	RANDOM_ENABLE_ETHER	# ether_input
+
+options 	RANDOM_ENABLE_KBD
+options 	RANDOM_ENABLE_MOUSE
+options 	RANDOM_ENABLE_TPM	# implies TPM_HARVEST
 
 # Module to enable execution of application via emulators like QEMU
 options         IMGACT_BINMISC
