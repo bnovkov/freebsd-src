@@ -178,6 +178,20 @@ SYSRES_MEM(PCI_EMUL_ECFG_BASE, PCI_EMUL_ECFG_SIZE);
 
 static int pci_hp_init(struct vmctx *ctx);
 
+#define PCIHP_ACPI_HID	       "PNP0A06"
+#define PCIHP_ACPI_DEVNAME     "PHPS"
+#define PCIHP_IOMEM_RANGE_NAME "PCI Hotplug metadata"
+
+static const struct acpi_device_emul pcihp_device_emul = {
+	.name = PCIHP_ACPI_DEVNAME,
+	.hid = PCIHP_ACPI_HID,
+};
+
+static int hp_busselect;
+static pthread_mutex_t hp_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t hp_ejectwrite_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t hp_ejectack_cond = PTHREAD_COND_INITIALIZER;
+
 static void pci_lintr_route(struct pci_devinst *pi);
 static void pci_lintr_update(struct pci_devinst *pi);
 
@@ -1946,7 +1960,7 @@ init_pci(struct vmctx *ctx)
 	error = register_mem(&mr);
 	assert(error == 0);
 
-	return (0);
+	return (pci_hp_init(ctx));
 }
 
 #ifdef __amd64__
@@ -3224,6 +3238,141 @@ pci_emul_snapshot(struct vm_snapshot_meta *meta __unused)
 }
 #endif
 
+/*
+ * Controls guest access to the per-bus PCI hotplug metadata structures.
+ * The access to the metadata is enforced as follows:
+ *  - PCI_EMUL_HP_PCUP_REG - PCI hotadd request bitmap, guest R/O,
+ *  - PCI_EMUL_HP_PCDW_REG - PCI hotremove request bitmap, guest R/O,
+ *  - PCI_EMUL_HP_EACK_REG - PCI eject ACK bitmap, guest W/O.
+ */
+static int
+pci_hpinfo_handler(struct vcpu *vcpu __unused, int dir, uint64_t addr, int size,
+    uint64_t *val, void *arg1 __unused, long arg2 __unused)
+{
+	struct hpinfo *hi;
+	uint64_t offset;
+	int bus, error;
+
+	/*
+	 * All per-bus 'hpinfo' structs are stored
+	 * contiguously starting from 'PCI_EMUL_HP_BASE'.
+	 */
+	bus = rounddown(addr - PCI_EMUL_HP_BASE, sizeof(struct hpinfo)) /
+	    sizeof(struct hpinfo);
+	offset = (addr - PCI_EMUL_HP_BASE) % sizeof(struct hpinfo);
+	if (bus < 0 || bus >= MAXBUSES)
+		return (-1);
+	if (size != 4)
+		return (-1);
+	if (offset < PCI_EMUL_HP_EACK_REG && dir == MEM_F_WRITE)
+		return (-1);
+
+	error = 0;
+	hi = &pci_businfo[bus]->hpinfo;
+	pthread_mutex_lock(&hp_lock);
+	switch (offset) {
+	case PCI_EMUL_HP_PCUP_REG:
+		*val = hi->pciu;
+		hi->pciu = 0;
+		break;
+	case PCI_EMUL_HP_PCDW_REG:
+		*val = hi->pcid;
+		hi->pcid = 0;
+		break;
+	case PCI_EMUL_HP_EACK_REG:
+		if (dir == MEM_F_WRITE) {
+			hi->pcid &= ~((uint32_t)*val);
+			/*
+			 * Let the hypervisor know that guest finished detaching
+			 * the device and wait until it fully removes the PCI
+			 * device to prevent the guest from picking the
+			 * partially removed device with a subsequent PCI bus
+			 * rescan.
+			 */
+			pthread_cond_signal(&hp_ejectwrite_cond);
+			pthread_cond_wait(&hp_ejectack_cond, &hp_lock);
+		} else
+			error = -1;
+		break;
+	default:
+		error = -1;
+		break;
+	}
+	pthread_mutex_unlock(&hp_lock);
+
+	return (error);
+}
+
+static int
+pci_busselect_handler(struct vcpu *vcpu __unused, int dir,
+    uint64_t addr __unused, int size, uint64_t *val, void *arg1 __unused,
+    long arg2 __unused)
+{
+	if (size != 4 || dir != MEM_F_READ)
+		return (-1);
+
+	pthread_mutex_lock(&hp_lock);
+	*val = hp_busselect;
+	pthread_mutex_unlock(&hp_lock);
+
+	return (0);
+}
+
+static int
+pci_hp_init(struct vmctx *ctx)
+{
+	int error;
+	struct mem_range hp_mr, bussel_mr;
+	struct acpi_device *dev;
+
+	error = acpi_device_create(&dev, dev, ctx, &pcihp_device_emul);
+	if (error) {
+		EPRINTLN("%s: Failed to register hotplug metadata ACPI device",
+		    __func__);
+		return (error);
+	}
+	error = acpi_device_add_res_fixed_memory32(dev, false, PCI_EMUL_HP_BASE,
+	    sizeof(struct hpinfo) * MAXBUSES);
+	if (error) {
+		EPRINTLN(
+		    "%s: Failed to initialize hotplug metadata ACPI device",
+		    __func__);
+		acpi_device_destroy(dev);
+		return (error);
+	}
+
+	bzero(&hp_mr, sizeof(hp_mr));
+	hp_mr.name = "PCI hotplug metadata";
+	hp_mr.flags = MEM_F_RW;
+	hp_mr.base = PCI_EMUL_HP_BASE;
+	hp_mr.size = sizeof(struct hpinfo) * MAXBUSES;
+	hp_mr.handler = pci_hpinfo_handler;
+	error = register_mem(&hp_mr);
+	if (error) {
+		EPRINTLN(
+		    "%s: Failed to register hotplug metadata device handler",
+		    __func__);
+		acpi_device_destroy(dev);
+		return (error);
+	}
+
+	bzero(&bussel_mr, sizeof(bussel_mr));
+	bussel_mr.name = "PCI hotplug bus select";
+	bussel_mr.flags = MEM_F_READ;
+	bussel_mr.base = PCI_EMUL_HP_BSEL_ADDR;
+	bussel_mr.size = sizeof(hp_busselect);
+	bussel_mr.handler = pci_busselect_handler;
+	error = register_mem(&bussel_mr);
+	if (error) {
+		EPRINTLN("%s: Failed to register hotplug bus select handler",
+		    __func__);
+		acpi_device_destroy(dev);
+		unregister_mem(&hp_mr);
+		return (error);
+	}
+
+	return (0);
+}
 static const struct pci_devemu pci_dummy = {
 	.pe_emu = "dummy",
 	.pe_init = pci_emul_dinit,
