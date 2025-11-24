@@ -59,6 +59,7 @@
 #ifdef __amd64__
 #include "amd64/inout.h"
 #endif
+#include "ipc.h"
 #include "mem.h"
 #include "pci_emul.h"
 #ifdef __amd64__
@@ -3342,6 +3343,9 @@ pci_hp_init(struct vmctx *ctx)
 	struct mem_range hp_mr, bussel_mr;
 	struct acpi_device *dev;
 
+	if (!get_config_bool_default("acpi_tables", false))
+		return (0);
+
 	error = acpi_device_create(&dev, dev, ctx, &pcihp_device_emul);
 	if (error) {
 		EPRINTLN("%s: Failed to register hotplug metadata ACPI device",
@@ -3390,6 +3394,268 @@ pci_hp_init(struct vmctx *ctx)
 
 	return (0);
 }
+
+/*
+ * Create and add an emulated PCI device to a running virtual machine.
+ * Scans each virtual bus until a free slot is found, creates and
+ * initializes an emulated PCI device instance and notifies the
+ * guest using an ACPI GPE interrupt.
+ *
+ * This IPC command expects the following keys in the nvlist:
+ *  - "device" - Name of the device to be added.
+ * Furthermore, the device-specific initialization routines
+ * may also expect additional name-value pairs to be present.
+ *
+ * If any error occurs, the function will store a more detailed
+ * description of the failure in the "error" element.
+ */
+static nvlist_t *
+pci_hp_add_device(struct vmctx *ctx, const nvlist_t *nvl)
+{
+#ifdef __amd64__
+	struct pci_bar_allocation *bar_tmp;
+	struct pci_bar_allocation *bar;
+	struct pci_devemu **pdpp, *pdp;
+	const char *devname;
+	struct funcinfo *fi;
+	struct slotinfo *si;
+	struct businfo *bi;
+	struct hpinfo *hi;
+	nvlist_t *reply;
+	int bus, slot;
+	bool found;
+
+	reply = nvlist_create(0);
+	if (!get_config_bool_default("acpi_tables", false)) {
+		nvlist_add_string(reply, "error", "guest is not using ACPI");
+		return (reply);
+	}
+
+	devname = nvlist_get_string(nvl, "device");
+	if (devname == NULL) {
+		nvlist_add_string(reply, "error", "missing device name");
+		return (reply);
+	}
+
+	found = false;
+	SET_FOREACH(pdpp, pci_devemu_set) {
+		pdp = *pdpp;
+		if (strcmp(devname, pdp->pe_emu) == 0) {
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		nvlist_add_string(reply, "error",
+		    "could not find requested device");
+		return (reply);
+	}
+
+	if (pdp->pe_teardown == NULL) {
+		nvlist_add_stringf(reply, "error", "%s: hotplug not supported",
+		    pdp->pe_emu);
+		return (reply);
+	}
+
+	pthread_mutex_lock(&hp_lock);
+
+	/*
+	 * Try to find a vacant hotpluggable slot.
+	 */
+	found = false;
+	for (bus = 0; bus < MAXBUSES; bus++) {
+		bi = pci_businfo[bus];
+		if (bi == NULL)
+			continue;
+		for (slot = 0; slot < MAXSLOTS; slot++) {
+			si = &bi->slotinfo[slot];
+			if (si->si_type != PCI_SLOT_HP_EMPTY)
+				continue;
+			found = true;
+			break;
+		}
+		if (found)
+			break;
+	}
+	if (!found) {
+		nvlist_add_string(reply, "error",
+		    "no vacant hotpluggable slots found");
+		pthread_mutex_unlock(&hp_lock);
+		return (reply);
+
+	}
+	bi = pci_businfo[bus];
+	fi = &si->si_funcs[0];
+	hi = &bi->hpinfo;
+	if (hi->pciu != 0) {
+		nvlist_add_string(reply, "error", "hotplug request pending");
+		pthread_mutex_unlock(&hp_lock);
+		return (reply);
+	}
+
+	fi->fi_config = nvlist_clone(nvl);
+	/* Let the emulated device know it's being hotplugged. */
+	nvlist_add_bool(fi->fi_config, "ipc", true);
+	if (pci_emul_init(ctx, pdp, bus, slot, 0, fi) != 0) {
+		/*
+		 * Hotpluggable devices should provide an extended
+		 * error message on failure.
+		 */
+		assert(nvlist_exists_string(fi->fi_config, "error"));
+		nvlist_add_string(reply, "error",
+		    nvlist_take_string(fi->fi_config, "error"));
+		nvlist_destroy(fi->fi_config);
+		fi->fi_config = NULL;
+		pthread_mutex_unlock(&hp_lock);
+		return (reply);
+	}
+
+	pci_lintr_route(fi->fi_devi);
+	TAILQ_FOREACH_SAFE(bar, &pci_bars, chain, bar_tmp) {
+		pci_emul_assign_bar(bar->pdi, bar->idx, bar->type, bar->size);
+		free(bar);
+	}
+	TAILQ_INIT(&pci_bars);
+
+	si->si_type = PCI_SLOT_HP_ACTIVE;
+	hi->pciu = (1 << slot);
+	acpi_raise_gpe(ctx, GPE_HP);
+	pthread_mutex_unlock(&hp_lock);
+
+	return (reply);
+#else
+	(void)ctx;
+	(void)nvl;
+
+	return (NULL);
+#endif /* __amd64__ */
+}
+IPC_COMMAND(pci_add, pci_hp_add_device);
+
+/*
+ * Eject a previously hotplugged emulated PCI device.
+ *
+ * This IPC command expects the following keys in the nvlist:
+ *  - "slot" - A string denoting the bus and/or slot
+ *    of the device to be removed.
+ *
+ * If any error occurs, the function will store a more detailed
+ * description of the failure in the "error" element.
+ */
+static nvlist_t *
+pci_hp_eject_device(struct vmctx *ctx, const nvlist_t *nvl)
+{
+#ifdef __amd64__
+	int bus, slot, _func __unused;
+	struct pci_devinst *pdi;
+	const char *slotarg;
+	struct funcinfo *fi;
+	struct slotinfo *si;
+	struct businfo *bi;
+	struct hpinfo *hi;
+	struct timespec ts;
+	nvlist_t *reply;
+
+	reply = nvlist_create(0);
+	if (!get_config_bool_default("acpi_tables", false)) {
+		nvlist_add_string(reply, "error", "guest is not using ACPI");
+		return (reply);
+	}
+
+	if (!nvlist_exists_string(nvl, "slot")) {
+		nvlist_add_string(reply, "error", "missing 'slot' argument");
+		return (reply);
+	}
+	slotarg = nvlist_get_string(nvl, "slot");
+	/* <bus>:<slot> */
+	if (sscanf(slotarg, "%d:%d", &bus, &slot) != 2) {
+		bus = 0;
+		/* <slot> */
+		if (sscanf(slotarg, "%d", &slot) != 1)
+			slot = -1;
+	}
+	if (bus < 0 || bus >= MAXBUSES || slot < 0 || slot >= MAXSLOTS) {
+		nvlist_add_string(reply, "error", "invalid 'slot' argument");
+		return (reply);
+	}
+
+	pthread_mutex_lock(&hp_lock);
+	bi = pci_businfo[bus];
+	if (bi == NULL) {
+		nvlist_add_stringf(reply, "error", "PCI bus %d does not exist",
+		    bus);
+		pthread_mutex_unlock(&hp_lock);
+		return (reply);
+	}
+	si = &bi->slotinfo[slot];
+	if (si->si_type != PCI_SLOT_HP_ACTIVE) {
+		nvlist_add_stringf(reply, "error",
+		    "PCI slot %d is fixed or empty", slot);
+		pthread_mutex_unlock(&hp_lock);
+		return (reply);
+	}
+	pdi = si->si_funcs[0].fi_devi;
+	assert(pdi != NULL);
+
+	/*
+	 * Raising the GPE_HP interrupt causes the guest to read the
+	 * PCID variable and (hopefully) detach the device from
+	 * the target slot.
+	 *
+	 * After the detach is complete, the guest should evaluate the slot's
+	 * _EJ0 method to let us know that the it completed the detach.
+	 * This will issue a write to the bus' EACK variable, causing
+	 * the 'pci_hpinfo_handler' to wake us up from the
+	 * 'pthread_cond_timedwait' below.
+	 */
+	hp_busselect = bus;
+	hi = &bi->hpinfo;
+	hi->pcid = (1 << slot);
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 5;
+	acpi_raise_gpe(ctx, GPE_HP);
+	pthread_cond_timedwait(&hp_ejectwrite_cond, &hp_lock, &ts);
+	if ((hi->pcid & (1 << slot)) != 0) {
+		nvlist_add_string(reply, "error",
+		    "guest did not respond to eject request");
+		hi->pcid &= ~(1 << slot);
+		pthread_mutex_unlock(&hp_lock);
+		return (reply);
+	}
+
+	/*
+	 * Detach the device instance from its slot before
+	 * releasing the guest from the _EJ0 method.
+	 *
+	 * At this point the guest should be waiting on the
+	 * 'hp_ejectack_cond' variable in the 'pci_hpinfo_handler' routine.
+	 * Releasing the guest too early opens a race between the guest's subsequent
+	 * PCI bus rescan and the 'pci_emul_teardown' below.
+	 */
+	vm_suspend_all_cpus(ctx);
+	fi = &si->si_funcs[0];
+	if (fi->fi_config != NULL)
+		free(fi->fi_config);
+	bzero(fi, sizeof(*fi));
+	si->si_type = PCI_SLOT_HP_EMPTY;
+	vm_resume_all_cpus(ctx);
+
+	pthread_cond_signal(&hp_ejectack_cond);
+	pthread_mutex_unlock(&hp_lock);
+
+	pci_emul_teardown(pdi);
+	free(pdi);
+
+	return (reply);
+#else
+	(void)ctx;
+	(void)nvl;
+
+	return (NULL);
+#endif /* __amd64__ */
+}
+IPC_COMMAND(pci_remove, pci_hp_eject_device);
+
 static const struct pci_devemu pci_dummy = {
 	.pe_emu = "dummy",
 	.pe_init = pci_emul_dinit,

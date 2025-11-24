@@ -530,6 +530,11 @@ If
 .Ar conf
 is not specified, the device emulation has no backend and can be
 considered unconnected.
+.Pp
+Certain emulated devices may be added to a running virtual machine.
+The following emulated devices are hotpluggable:
+.Bl -bullet
+.El
 .Ss Network device backends
 .Sm off
 .Bl -bullet
@@ -1257,6 +1262,62 @@ triple fault (amd64 only)
 exited due to an error
 .It 5
 suspended
+.El
+.Sh IPC COMMANDS
+Client applications may control a
+.Nm
+instance using an
+.Xr nvlist 9
+-based protocol.
+Each
+.Nm
+instance listens for incoming command requests using a
+.Xr unix 4
+socket at /var/run/bhyve/<VM-name>.
+An IPC command is invoked by sending an
+.Xr nvlist 9
+object containing the
+.Ar command
+name value pair to the aforementioned socket.
+Each command may require additional name value pairs to be present.
+All commands use the
+.Ar error
+key to store an extended error message on failure.
+.Pp
+.Nm
+currently supports the following IPC commands:
+.Bl -tag -width "pci_remove"
+.It Cm "pci_add"
+Adds an emulated PCI device to the virtual machine using the first
+unpopulated virtual PCI slot.
+Only available on amd64 hosts.
+Requires the following name value pairs
+to be present:
+.Bl -column
+.It "device" - name of the emulated device
+.El
+.Pp
+Additional name value pairs may be required depending on the device's
+configuration options. See
+.Sx "PCI EMULATION"
+for available configuration options.
+.It Cm "pci_remove"
+Removes a previously added emulated PCI device from the virtual machine.
+Only available on amd64 hosts.
+Requires the following name value pairs
+to be present:
+.Bl -column
+.It "slot" - virtual PCI slot that the device is attached to.
+Can be specified in one of the following formats:
+.Pp
+.Bl -bullet -compact
+.It
+.Ar pcislot
+.It
+.Sm off
+.Ar bus Cm \&: Ar pcislot
+.Sm on
+.El
 .El
 .Sh EXAMPLES
 If not using a boot ROM, the guest operating system must have been loaded with
