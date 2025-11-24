@@ -1343,14 +1343,30 @@ pci_emul_init(struct vmctx *ctx, struct pci_devemu *pde, int bus, int slot,
 
 	if (get_config_bool_default("pci.enable_bars", !bootrom_boot()))
 		pci_set_cfgdata8(pdi, PCIR_COMMAND, PCIM_CMD_BUSMASTEREN);
-
-	err = (*pde->pe_init)(pdi, fi->fi_config);
-	if (err == 0)
-		fi->fi_devi = pdi;
+	/*
+	 * If we've been called as part of a hotplug request, call
+	 * pci_validate_hotplug_request to check if the caller provided
+	 * all required name/value pairs.
+	 *
+	 * Otherwise, invoke libbhyve's pci_init_fds to populate the
+	 * configuration nvlist with the appropriate file descriptors.
+	 */
+	if (nvlist_exists_bool(fi->fi_config, "ipc"))
+		err = !pci_validate_hotplug_request(fi->fi_config, pde->pe_emu);
 	else
+		err = pci_init_fds(fi->fi_config, pde->pe_emu);
+	if (err != 0) {
 		free(pdi);
+		return (err);
+	}
+	err = (*pde->pe_init)(pdi, fi->fi_config);
+	if (err != 0) {
+		free(pdi);
+		return (err);
+	}
+	fi->fi_devi = pdi;
 
-	return (err);
+	return (0);
 }
 
 #ifdef __amd64__
