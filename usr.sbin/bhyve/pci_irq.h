@@ -31,6 +31,7 @@
 #define	__PCI_IRQ_H__
 
 struct pci_devinst;
+struct vmctx;
 
 #if defined(__amd64__)
 #include "amd64/pci_irq_machdep.h"
@@ -44,6 +45,7 @@ struct pci_devinst;
 
 void	pci_irq_assert(struct pci_devinst *pi);
 void	pci_irq_deassert(struct pci_devinst *pi);
-void	pci_irq_route(struct pci_devinst *pi, struct pci_irq *irq);
+void	pci_irq_route(struct vmctx *ctx, struct pci_irq *irq, int slot, int lintr_pin);
+void	pci_irq_route_dev(struct pci_devinst *pi, struct pci_irq *irq);
 
 #endif

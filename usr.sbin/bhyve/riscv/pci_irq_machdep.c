@@ -30,7 +30,7 @@
 #include "pci_emul.h"
 #include "pci_irq.h"
 
-static int gic_irqs[4];
+static int aplic_irqs[4];
 
 void
 pci_irq_init(int intrs[static 4])
@@ -38,29 +38,29 @@ pci_irq_init(int intrs[static 4])
 	int i;
 
 	for (i = 0; i < 4; ++i)
-		gic_irqs[i] = intrs[i];
+		aplic_irqs[i] = intrs[i];
 }
 
 void
 pci_irq_assert(struct pci_devinst *pi)
 {
-	vm_assert_irq(pi->pi_vmctx, pi->pi_lintr.irq.gic_irq);
+	vm_assert_irq(pi->pi_vmctx, pi->pi_lintr.irq.aplic_irq);
 }
 
 void
 pci_irq_deassert(struct pci_devinst *pi)
 {
-	vm_deassert_irq(pi->pi_vmctx, pi->pi_lintr.irq.gic_irq);
+	vm_deassert_irq(pi->pi_vmctx, pi->pi_lintr.irq.aplic_irq);
 }
 
 void
-pci_irq_route(struct pci_devinst *pi, struct pci_irq *irq)
+pci_irq_route(struct vmctx *ctx __unused, struct pci_irq *irq, int slot,
+    int lintr_pin)
 {
 	/*
 	 * Assign swizzled IRQ for this INTx if one is not yet assigned. Must
 	 * match fdt_add_pcie().
 	 */
-	if (irq->gic_irq == 0)
-		irq->gic_irq =
-		    gic_irqs[(pi->pi_slot + pi->pi_lintr.pin - 1) % 4];
+	if (irq->aplic_irq == 0)
+		irq->aplic_irq = aplic_irqs[(slot + lintr_pin - 1) % 4];
 }

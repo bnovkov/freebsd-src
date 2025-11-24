@@ -2234,7 +2234,7 @@ pci_lintr_route(struct pci_devinst *pi)
 	assert(bi != NULL);
 	ii = &bi->slotinfo[pi->pi_slot].si_intpins[pi->pi_lintr.pin - 1];
 	irq = &ii->ii_irq;
-	pci_irq_route(pi, irq);
+	pci_irq_route_dev(pi, irq);
 	pi->pi_lintr.irq = *irq;
 	pci_set_cfgdata8(pi, PCIR_INTLINE, pci_irq_intline(irq));
 }

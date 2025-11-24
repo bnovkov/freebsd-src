@@ -38,6 +38,8 @@
 #include "pci_emul.h"
 #include "pci_lpc.h"
 
+#define IOAPIC_PCI_INT_BASE 16
+
 /*
  * Assign PCI INTx interrupts to I/O APIC pins in a round-robin
  * fashion.  Note that we have no idea what the HPET is using, but the
@@ -59,15 +61,15 @@ ioapic_init(struct vmctx *ctx)
 	}
 
 	/* Ignore the first 16 pins. */
-	if (pci_pins <= 16) {
+	if (pci_pins <= IOAPIC_PCI_INT_BASE) {
 		pci_pins = 0;
 		return;
 	}
-	pci_pins -= 16;
+	pci_pins -= IOAPIC_PCI_INT_BASE;
 }
 
 int
-ioapic_pci_alloc_irq(struct pci_devinst *pi)
+ioapic_pci_alloc_irq(int slot, int pin)
 {
 	static int last_pin;
 
@@ -75,7 +77,7 @@ ioapic_pci_alloc_irq(struct pci_devinst *pi)
 		return (-1);
 	if (bootrom_boot()) {
 		/* For external bootrom use fixed mapping. */
-		return (16 + (4 + pi->pi_slot + pi->pi_lintr.pin) % 8);
+		return (IOAPIC_PCI_INT_BASE + (4 + slot + pin) % 8);
 	}
-	return (16 + (last_pin++ % pci_pins));
+	return (IOAPIC_PCI_INT_BASE + (last_pin++ % pci_pins));
 }

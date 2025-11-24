@@ -199,16 +199,15 @@ pci_irq_deassert(struct pci_devinst *pi)
 }
 
 static int
-pirq_alloc_pin(struct pci_devinst *pi)
+pirq_alloc_pin(struct vmctx *ctx, int slot, int lintr_pin)
 {
-	struct vmctx *ctx = pi->pi_vmctx;
 	int best_count, best_irq, best_pin, irq, pin;
 
 	pirq_cold = 0;
 
 	if (bootrom_boot()) {
 		/* For external bootrom use fixed mapping. */
-		best_pin = (4 + pi->pi_slot + pi->pi_lintr.pin) % 8;
+		best_pin = (4 + slot + lintr_pin) % 8;
 	} else {
 		/* Find the least-used PIRQ pin. */
 		best_pin = 0;
@@ -251,14 +250,14 @@ pirq_irq(int pin)
 }
 
 void
-pci_irq_route(struct pci_devinst *pi, struct pci_irq *irq)
+pci_irq_route(struct vmctx *ctx, struct pci_irq *irq, int slot, int lintr_pin)
 {
 	/*
 	 * Attempt to allocate an I/O APIC pin for this intpin if one
 	 * is not yet assigned.
 	 */
 	if (irq->ioapic_irq == 0)
-		irq->ioapic_irq = ioapic_pci_alloc_irq(pi);
+		irq->ioapic_irq = ioapic_pci_alloc_irq(slot, lintr_pin);
 	assert(irq->ioapic_irq > 0);
 
 	/*
@@ -266,7 +265,7 @@ pci_irq_route(struct pci_devinst *pi, struct pci_irq *irq)
 	 * not yet assigned.
 	 */
 	if (irq->pirq_pin == 0)
-		irq->pirq_pin = pirq_alloc_pin(pi);
+		irq->pirq_pin = pirq_alloc_pin(ctx, slot, lintr_pin);
 	assert(irq->pirq_pin > 0);
 }
 
