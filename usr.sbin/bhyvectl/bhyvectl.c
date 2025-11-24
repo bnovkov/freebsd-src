@@ -36,6 +36,7 @@
 #include <sys/sysctl.h>
 #include <sys/un.h>
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -47,6 +48,7 @@
 #include <getopt.h>
 #include <libutil.h>
 
+#include <bhyve/pci.h>
 #include <machine/cpufunc.h>
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
@@ -88,6 +90,8 @@ enum {
 	SET_SUSPEND_FILE,
 	SET_RUNDIR,
 #endif
+	PCI_ADD,
+	PCI_REMOVE,
 	OPT_LAST,
 };
 
@@ -136,6 +140,8 @@ setup_options(void)
 		{ "get-debug-cpus",	NO_ARG,	&get_debug_cpus,	1 },
 		{ "get-suspended-cpus", NO_ARG,	&get_suspended_cpus, 	1 },
 		{ "get-cpu-topology",	NO_ARG, &get_cpu_topology,	1 },
+		{ "pci-add",		REQ_ARG, 0,	PCI_ADD },
+		{ "pci-remove",		REQ_ARG, 0,	PCI_REMOVE },
 #ifdef BHYVE_SNAPSHOT
 		{ "checkpoint", 	REQ_ARG, 0,	SET_CHECKPOINT_FILE},
 		{ "suspend", 		REQ_ARG, 0,	SET_SUSPEND_FILE},
@@ -307,6 +313,57 @@ done:
 	return (err);
 }
 
+static int
+pci_request_add(const char *vmname, const char *opt, const char *rundir)
+{
+	nvlist_t *nvl;
+	char *device, *config, *str, *cp;
+
+	nvl = nvlist_create(0);
+	nvlist_add_string(nvl, "cmd", "pci_add");
+
+	config = NULL;
+	str = strdup(opt);
+	device = str;
+	if ((cp = strchr(str, ',')) != NULL) {
+		*cp = '\0';
+		config = cp + 1;
+	}
+
+	if (pci_parse_config(nvl, device, config) != 0) {
+		fprintf(stderr, "%s: failed to parse device config: %s\n",
+		    __func__, nvlist_get_string(nvl, "error"));
+		free(str);
+		return (-1);
+	}
+
+	if (pci_init_fds(nvl, device) != 0) {
+		fprintf(stderr,
+		    "%s: failed to initialize device descriptors: %s\n",
+		    __func__, nvlist_get_string(nvl, "error"));
+		free(str);
+		return (-1);
+	}
+
+	nvlist_add_string(nvl, "device", device);
+	assert(nvlist_error(nvl) == 0);
+	free(str);
+
+	return (ipc_send_message(vmname, nvl, rundir));
+}
+
+static int
+pci_request_remove(const char *vmname, const char *bdf, const char *rundir)
+{
+	nvlist_t *nvl;
+
+	nvl = nvlist_create(0);
+	nvlist_add_string(nvl, "cmd", "pci_remove");
+	nvlist_add_string(nvl, "slot", bdf);
+
+	return (ipc_send_message(vmname, nvl, rundir));
+}
+
 #ifdef BHYVE_SNAPSHOT
 static int
 open_directory(const char *file)
@@ -365,6 +422,8 @@ main(int argc, char *argv[])
 	action_opts = 0;
 	vcpuid = 0;
 	vmname = NULL;
+	pci_devname = NULL;
+	pci_bdf = NULL;
 	progname = basename(argv[0]);
 
 	while ((ch = getopt_long(argc, argv, "", opts, NULL)) != -1) {
@@ -408,6 +467,12 @@ main(int argc, char *argv[])
 			break;
 
 #endif
+		case PCI_ADD:
+			pci_devname = optarg;
+			break;
+		case PCI_REMOVE:
+			pci_bdf = optarg;
+			break;
 		default:
 			usage(opts);
 		}
@@ -562,6 +627,12 @@ main(int argc, char *argv[])
 				vm_suspend_opt,
 				rundir);
 #endif
+
+	if (!error && pci_devname != NULL)
+		error = pci_request_add(vmname, pci_devname, rundir);
+
+	if (!error && pci_bdf != NULL)
+		error = pci_request_remove(vmname, pci_bdf, rundir);
 
 	if (error)
 		printf("errno = %d\n", errno);

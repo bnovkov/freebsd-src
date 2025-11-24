@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 8, 2026
+.Dd August 1, 2026
 .Dt BHYVECTL 8
 .Os
 .Sh NAME
@@ -43,6 +43,8 @@
 .Op Fl -checkpoint= Ns Ar <file>
 .Op Fl -rundir= Ns Ar <path>
 .Op Fl -suspend= Ns Ar <file>
+.Op Fl -pci-add= Ns Ar emulation Ns Op Cm \&, Ns Ar conf
+.Op Fl -pci-remove= Ns Ar slot
 .Sh DESCRIPTION
 The
 .Nm
@@ -83,6 +85,32 @@ Specify path to the directory containing the checkpoint socket.
 If not specified,
 .Pa /var/run/bhyve
 is used.
+.It Fl -pci-add= Ns Ar emulation Ns Op Cm \&, Ns Ar conf
+Add an emulated PCI device to a running virtual machine.
+The
+.Ar emulation
+and
+.Ar conf
+arguments follow the same format as the
+.Xr bhyve 8
+.Fl s
+flag.
+See the
+.Xr bhyve 8
+.Sx "PCI EMULATION"
+section for available options for the
+.Ar emulation
+and
+.Ar conf
+arguments.
+.It Fl -pci-remove= Ns Ar slot
+Request removal of a previously added emulated PCI device.
+See the
+.Xr bhyve 8
+.Sx "IPC COMMANDS"
+section for available formats for the
+.Ar slot
+argument
 .El
 .Pp
 .Em Note :
@@ -104,6 +132,14 @@ Destroy the VM called fbsd10:
 .Pp
 Running VMs will be visible in
 .Pa /dev/vmm/ .
+.Pp
+Add an 'e1000' PCI device to the 'fbsd16' VM:
+.Pp
+.Dl bhyvectl --vm=fbsd10 --pci-add=e1000,tap0
+.Pp
+Remove a previously hotplugged PCI device from the 'fbsd16' VM:
+.Pp
+.Dl bhyvectl --vm=fbsd10 --pci-remove=0:3:0
 .Sh COMPATIBILITY
 The snapshot file format is not yet stable and is subject to future changes.
 Backwards compatibility support for the current snapshot file format is not
