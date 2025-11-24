@@ -99,11 +99,18 @@ struct slotinfo {
 	enum slottype si_type;
 };
 
+struct hpinfo {
+	uint32_t pciu; /* PCI hotadd request bitmap. Guest R/O. */
+	uint32_t pcid; /* PCI hotremove request bitmap. Guest R/O. */
+	uint32_t eack; /* PCI eject ACK bitmap. Guest W/O. */
+};
+
 struct businfo {
 	uint16_t iobase, iolimit;		/* I/O window */
 	uint32_t membase32, memlimit32;		/* mmio window below 4GB */
 	uint64_t membase64, memlimit64;		/* mmio window above 4GB */
 	struct slotinfo slotinfo[MAXSLOTS];
+	struct hpinfo hpinfo;
 	vmem_t *resources[PCIBAR_MAX];
 };
 
@@ -161,6 +168,15 @@ SYSRES_MEM(PCI_EMUL_ECFG_BASE, PCI_EMUL_ECFG_SIZE);
 
 #define	PCI_EMUL_MEMLIMIT32	PCI_EMUL_ECFG_BASE
 #define PCI_EMUL_MEMSIZE64	(32*GB)
+
+#define PCI_EMUL_HP_BASE	0xFED60000
+#define PCI_EMUL_HP_PCUP_REG	0x0
+#define PCI_EMUL_HP_PCDW_REG	0x4
+#define PCI_EMUL_HP_EACK_REG	0x8
+
+#define PCI_EMUL_HP_BSEL_ADDR	0xFED62000
+
+static int pci_hp_init(struct vmctx *ctx);
 
 static void pci_lintr_route(struct pci_devinst *pi);
 static void pci_lintr_update(struct pci_devinst *pi);
@@ -1803,8 +1819,18 @@ init_pci(struct vmctx *ctx)
 				fi->fi_pde = pde;
 				error = pci_emul_init(ctx, pde, bus, slot,
 				    func, fi);
-				if (error)
+				if (error) {
+					if (nvlist_exists_string(fi->fi_config,
+						"error"))
+						EPRINTLN("pci slot %d:%d:%d:"
+							 " failed to initialize"
+							 " device \"%s\": %s",
+						    bus, slot, func, emul,
+						    nvlist_get_string(nvl,
+							"error"));
+
 					return (error);
+				}
 				si->si_type = PCI_SLOT_FIXED;
 			}
 		}
@@ -1957,6 +1983,140 @@ pci_pirq_prt_entry(int bus __unused, int slot, int pin, struct pci_irq *irq,
 	free(name);
 }
 #endif
+
+/*
+ * Emits per-bus ACPI hotplugging metadata and
+ * hotadd/remove methods for hotpluggable slots.
+ *
+ * Each virtual bus tracks hotplugging event information
+ * using three variables:
+ *  - 'PCUP' - tracks pending hotplug requests,
+ *  - 'PCDW' - tracks pending hotremove requests,
+ *  - 'EACK' - tracks completed hotremove requests.
+ *
+ * These variables are used by the following per-bus hotplugging methods:
+ *  - 'PCNT' - notifies the guest about pending hotremove/add events on the bus
+ *             by invoking the 'HPNT' method.
+ *  - 'PCEJ' - takes a slot number as an argument and notifies the hypervisor
+ *             about a completed hotremove request on the target slot.
+ *             Evaluated by the guest once it detaches the target PCI device.
+ *  - 'HPNT' - notifies the guest about each slot with a pending hotplug/remove event.
+ *             The first argument is a bitmask of pending hotplug events
+ *             (i.e., either the bus's 'PCIU' or 'PCID' variable), and the second
+ *             argument is a device object notification value that is
+ *             passed to the 'Notify' method (either 'ACPI_NOTIFY_BUS_CHECK'
+ *             or 'ACPI_NOTIFY_EJECT_REQUEST').
+ *
+ * All per-bus hotplug metadata variables are placed in an
+ * address region starting at the 'PCI_EMUL_HP_BASE' address.
+ */
+static void
+pci_bus_write_hotplug_dsdt(int bus, struct businfo *bi)
+{
+	int slot, nhpslots;
+	struct slotinfo *si;
+
+	nhpslots = 0;
+	for (slot = 0; slot < MAXSLOTS; slot++) {
+		si = &bi->slotinfo[slot];
+		if (si->si_type == PCI_SLOT_FIXED)
+			continue;
+		nhpslots++;
+	}
+
+	if (nhpslots == 0) {
+		/* Nothing to do if there are no empty slots on this bus. */
+		return;
+	}
+
+	/*
+	 * Bus hotplug metadata.
+	 * Matches the layout of the `hpinfo` struct.
+	 */
+	dsdt_line("Scope (\\_SB.PC%02X)", bus);
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("OperationRegion (PCST, SystemMemory, 0x%08X, 0x%zX)",
+	    (uint32_t)(PCI_EMUL_HP_BASE + (bus * sizeof(struct hpinfo))),
+	    sizeof(struct hpinfo));
+	dsdt_line("Field (PCST, DWordAcc, NoLock, WriteAsZeros)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("PCUP,   32,");
+	dsdt_line("PCDW,   32,");
+	dsdt_line("EACK,   32");
+	dsdt_unindent(1);
+	dsdt_line("}");
+	dsdt_line("Mutex (BLCK, 0x00)");
+	dsdt_line("Method (PCEJ, 1, NotSerialized)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("Acquire (BLCK, 0xFFFF)");
+	dsdt_line("EACK = (One << Arg0)");
+	dsdt_line("Release (BLCK)");
+	dsdt_line("Return (Zero)");
+	dsdt_unindent(1);
+	dsdt_line("}");
+
+	dsdt_line("Method (PCNT, 0, NotSerialized)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("HPNT (PCUP, One)");
+	dsdt_line("HPNT (PCDW, 0x03)");
+	dsdt_unindent(1);
+	dsdt_line("}");
+
+	/*
+	 * Emit device information for each hot-pluggable slot.
+	 */
+	for (slot = 0; slot < MAXSLOTS; slot++) {
+		si = &bi->slotinfo[slot];
+		if (si->si_type == PCI_SLOT_FIXED)
+			continue;
+
+		dsdt_line("Device (S%02X)", slot);
+		dsdt_line("{");
+		dsdt_indent(1);
+		dsdt_line("Name (_ADR, 0x%08X)", slot << 16);
+		dsdt_line("Name (_SUN, 0x%02X)", slot);
+		dsdt_line("Method (_EJ0, 1, NotSerialized)");
+		dsdt_line("{");
+		dsdt_indent(1);
+		dsdt_line("PCEJ (_SUN)");
+		dsdt_unindent(1);
+		dsdt_line("}");
+		dsdt_unindent(1);
+		dsdt_line("}");
+		dsdt_line("");
+	}
+
+	/*
+	 * The HPNT method is responsible for notifying the
+	 * guest about hotplug events on a given slot.
+	 */
+	nhpslots = 0;
+	dsdt_line("Method (HPNT, 2, NotSerialized)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	for (slot = 0; slot < MAXSLOTS; slot++) {
+		si = &bi->slotinfo[slot];
+		if (si->si_type == PCI_SLOT_FIXED)
+			continue;
+
+		dsdt_line("%sIf ((Arg0 & 0x%02X))", nhpslots == 0 ? "" : "Else",
+		    1 << slot);
+		dsdt_line("{");
+		dsdt_indent(1);
+		dsdt_line("Notify (S%02X, Arg1)", slot);
+		dsdt_unindent(1);
+		dsdt_line("}");
+		nhpslots++;
+	}
+	dsdt_unindent(1);
+	dsdt_line("}");
+	dsdt_unindent(1);
+	dsdt_line("}  // Scope (_SB.PC%02X)", bus);
+}
 
 /*
  * A bhyve virtual machine has a flat PCI hierarchy with a root port
@@ -2118,7 +2278,10 @@ pci_bus_write_dsdt(int bus)
 				pi->pi_d->pe_write_dsdt(pi);
 		}
 	}
+
+	pci_bus_write_hotplug_dsdt(bus, bi);
 	dsdt_unindent(2);
+
 #ifdef __amd64__
 done:
 #endif
@@ -2137,11 +2300,52 @@ pci_write_dsdt(void)
 	dsdt_line("  Store (Arg0, PICM)");
 	dsdt_line("}");
 	dsdt_line("");
+	/* ACPI PCI Hotplug bus select variable. */
+	dsdt_line("OperationRegion (BREG, SystemMemory, 0x%08x, 0x04)",
+	    PCI_EMUL_HP_BSEL_ADDR);
+	dsdt_line("Field (BREG, DWordAcc, NoLock, WriteAsZeros)");
+	dsdt_line("{");
+	dsdt_line(" BSEL,   32");
+	dsdt_line("}");
 	dsdt_line("Scope (_SB)");
 	dsdt_line("{");
 	for (bus = 0; bus < MAXBUSES; bus++)
 		pci_bus_write_dsdt(bus);
+	dsdt_line("} // _SB");
+	dsdt_line("");
+
+	/*
+	 * Generate the hotplug GPE interrupt handler.
+	 * The handler will read the current value of the
+	 * 'BSEL' variable (i.e., hp_busselect) and invoke the
+	 * corresponding bus's PCNT method to notify the
+	 * guest about the pending hotplug event.
+	 */
+	dsdt_line("Scope (_GPE)");
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("Method (_E%02x, 0, NotSerialized)", GPE_HP);
+	dsdt_line("{");
+	dsdt_indent(1);
+	dsdt_line("Local0 = BSEL");
+	for (bus = 0; bus < MAXBUSES; bus++) {
+		if (pci_businfo[bus] == NULL)
+			continue;
+
+		dsdt_line("%sIf ((Local0 == 0x%02X))", bus == 0 ? "" : "Else",
+		    bus);
+		dsdt_line("{");
+		dsdt_indent(1);
+		dsdt_line("Acquire (\\_SB.PC%02X.BLCK, 0xFFFF)", bus);
+		dsdt_line("\\_SB.PC%02X.PCNT ()", bus);
+		dsdt_line("Release (\\_SB.PC%02X.BLCK)", bus);
+		dsdt_unindent(1);
+		dsdt_line("}");
+	}
+	dsdt_unindent(1);
 	dsdt_line("}");
+	dsdt_unindent(1);
+	dsdt_line("} // _GPE");
 	dsdt_unindent(1);
 }
 
