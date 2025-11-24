@@ -56,6 +56,7 @@ struct pci_devemu {
 
 	/* instance creation */
 	int       (*pe_init)(struct pci_devinst *, nvlist_t *);
+	int       (*pe_teardown)(struct pci_devinst *);
 	int	(*pe_legacy_config)(nvlist_t *, const char *);
 	const char *pe_alias;
 

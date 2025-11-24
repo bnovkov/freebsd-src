@@ -1379,6 +1379,33 @@ pci_emul_init(struct vmctx *ctx, struct pci_devemu *pde, int bus, int slot,
 	return (err);
 }
 
+#ifdef __amd64__
+/*
+ * Release all resources held by an emulated PCI device instance.
+ */
+static void
+pci_emul_teardown(struct pci_devinst *pdi)
+{
+	struct businfo *bi;
+	struct pcibar *bp;
+	vmem_t *arena;
+	int i;
+
+	bi = pci_businfo[pdi->pi_bus];
+	for (i = 0; i <= PCI_BARMAX; i++) {
+		bp = &pdi->pi_bar[i];
+		if (bp->type == PCIBAR_NONE)
+			continue;
+		unregister_bar(pdi, i);
+		arena = bi->resources[bp->type];
+		assert(arena != NULL);
+		vmem_free(arena, bp->addr, bp->size);
+	}
+	if (pdi->pi_d->pe_teardown != NULL)
+		(*pdi->pi_d->pe_teardown)(pdi);
+}
+#endif
+
 void
 pci_populate_msicap(struct msicap *msicap, int msgnum, int nextptr)
 {
