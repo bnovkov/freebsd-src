@@ -87,9 +87,16 @@ struct intxinfo {
 	struct pci_irq	ii_irq;
 };
 
+enum slottype {
+	PCI_SLOT_HP_EMPTY,
+	PCI_SLOT_HP_ACTIVE,
+	PCI_SLOT_FIXED,
+};
+
 struct slotinfo {
 	struct intxinfo si_intpins[4];
 	struct funcinfo si_funcs[MAXFUNCS];
+	enum slottype si_type;
 };
 
 struct businfo {
@@ -1763,6 +1770,7 @@ init_pci(struct vmctx *ctx)
 		/* first run: init devices */
 		for (slot = 0; slot < MAXSLOTS; slot++) {
 			si = &bi->slotinfo[slot];
+			si->si_type = PCI_SLOT_HP_EMPTY;
 			for (func = 0; func < MAXFUNCS; func++) {
 				fi = &si->si_funcs[func];
 				snprintf(node_name, sizeof(node_name),
@@ -1797,6 +1805,7 @@ init_pci(struct vmctx *ctx)
 				    func, fi);
 				if (error)
 					return (error);
+				si->si_type = PCI_SLOT_FIXED;
 			}
 		}
 
