@@ -1839,6 +1839,32 @@ init_pci(struct vmctx *ctx)
 			}
 		}
 	}
+	if (get_config_bool_default("acpi_tables", false)) {
+		/*
+		 * Setup fixed IRQ mappings for the hotpluggable
+		 * slot. This makes sure we emit the proper ACPI
+		 * _PRT entries when building the DSDT tables
+		 * later on.
+		 */
+		for (bus = 0; bus < MAXBUSES; bus++) {
+			if ((bi = pci_businfo[bus]) == NULL)
+				continue;
+			for (slot = 0; slot < MAXSLOTS; slot++) {
+				si = &bi->slotinfo[slot];
+				if (si->si_type == PCI_SLOT_FIXED)
+					continue;
+				for (int pin = 0; pin < 4; pin++) {
+					struct intxinfo *ii;
+
+					ii = &si->si_intpins[pin];
+					pci_irq_route(ctx, &ii->ii_irq, slot,
+					    pin + 1);
+					ii->ii_count++;
+				}
+			}
+		}
+	}
+
 #ifdef __amd64__
 	lpc_pirq_routed();
 #endif
