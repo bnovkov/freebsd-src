@@ -586,6 +586,8 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (value != NULL) {
 		err = net_parsemac(value, sc->vsc_config.mac);
 		if (err) {
+			nvlist_add_string(nvl, "error",
+			    "failed to parse MAC address");
 			free(sc);
 			return (err);
 		}
@@ -596,6 +598,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (value != NULL) {
 		err = net_parsemtu(value, &mtu);
 		if (err) {
+			nvlist_add_string(nvl, "error", "failed to parse MTU");
 			free(sc);
 			return (err);
 		}
@@ -603,6 +606,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		if (mtu < VTNET_MIN_MTU || mtu > VTNET_MAX_MTU) {
 			err = EINVAL;
 			errno = EINVAL;
+			nvlist_add_string(nvl, "error", "invalid MTU value");
 			free(sc);
 			return (err);
 		}
@@ -643,6 +647,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	/* use BAR 1 to map MSI-X table and PBA, if we're using MSI-X */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix())) {
+		nvlist_add_string(nvl, "error", "failed to setup interrupts");
 		free(sc);
 		return (1);
 	}
@@ -668,6 +673,27 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 	snprintf(tname, sizeof(tname), "vtnet-%d:%d tx", pi->pi_slot,
 	    pi->pi_func);
 	pthread_set_name_np(sc->tx_tid, tname);
+
+	return (0);
+}
+
+static int
+pci_vtnet_teardown(struct pci_devinst *pi)
+{
+	struct pci_vtnet_softc *sc;
+
+	sc = pi->pi_arg;
+
+	pthread_cancel(sc->tx_tid);
+	pthread_join(sc->tx_tid, NULL);
+	pthread_cond_destroy(&sc->tx_cond);
+	pthread_mutex_destroy(&sc->tx_mtx);
+	pthread_mutex_destroy(&sc->rx_mtx);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+
+	if (sc->vsc_be != NULL)
+		netbe_cleanup(sc->vsc_be);
+	free(sc);
 
 	return (0);
 }
@@ -803,6 +829,7 @@ done:
 static const struct pci_devemu pci_de_vnet = {
 	.pe_emu = 	"virtio-net",
 	.pe_init =	pci_vtnet_init,
+	.pe_teardown =	pci_vtnet_teardown,
 	.pe_legacy_config = netbe_legacy_config,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,

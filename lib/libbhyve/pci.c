@@ -135,4 +135,13 @@ static struct devinfo e1000_info = {
 	.legacy_config = netbe_legacy_config,
 	.validate_hotplug_request = netbe_validate_hotplug_request
 };
+
+static struct devinfo virtio_net_info = {
+	.name = "virtio-net",
+	.init_fds = netbe_init_fds,
+	.legacy_config = netbe_legacy_config,
+	.validate_hotplug_request = netbe_validate_hotplug_request
+};
+
 DATA_SET(pci_devinfo, e1000_info);
+DATA_SET(pci_devinfo, virtio_net_info);
