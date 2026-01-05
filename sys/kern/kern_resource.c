@@ -642,6 +642,25 @@ lim_cb(void *arg)
 		    lim_cb, p, C_PREL(1));
 }
 
+static inline bool
+rlim_is_per_uid(int which)
+{
+	KASSERT(which >= 0 && which < RLIM_NLIMITS,
+	    ("request for invalid resource limit"));
+
+	switch (which) {
+		case RLIMIT_KQUEUES:
+		case RLIMIT_NPROC:
+		case RLIMIT_NPTS:
+		case RLIMIT_PIPEBUF:
+		case RLIMIT_UMTXP:
+		case RLIMIT_VMM:
+			return true;
+		default:
+			return false;
+	}
+}
+
 int
 kern_setrlimit(struct thread *td, u_int which, struct rlimit *limp)
 {
@@ -1474,12 +1493,20 @@ lim_cur_proc(struct proc *p, int which)
 void
 lim_rlimit(struct thread *td, int which, struct rlimit *rlp)
 {
+	struct uidinfo *ui;
 	struct proc *p = td->td_proc;
 
 	MPASS(td == curthread);
 	KASSERT(which >= 0 && which < RLIM_NLIMITS,
 	    ("request for invalid resource limit"));
-	*rlp = td->td_limit->pl_rlimit[which];
+	if (!rlim_is_per_uid(which)) {
+		*rlp = td->td_limit->pl_rlimit[which];
+	} else {
+		ui = p->p_ucred->cr_ruidinfo;
+		mtx_lock(&ui->ui_limlock);
+		*rlp = ui->ui_limit->pl_rlimit[which];
+		mtx_unlock(&ui->ui_limlock);
+	}
 	if (p->p_sysent->sv_fixlimit != NULL)
 		p->p_sysent->sv_fixlimit(rlp, which);
 }
@@ -1536,6 +1563,7 @@ uifind(uid_t uid)
 {
 	struct uidinfo *new_uip, *uip;
 	struct ucred *cred;
+	struct rlimit *rlp;
 
 	cred = curthread->td_ucred;
 	if (cred->cr_uidinfo->ui_uid == uid) {
@@ -1555,6 +1583,15 @@ uifind(uid_t uid)
 		return (uip);
 
 	new_uip = malloc(sizeof(*new_uip), M_UIDINFO, M_WAITOK | M_ZERO);
+	new_uip->ui_limit = malloc(sizeof(struct plimit), M_UIDINFO, M_WAITOK | M_ZERO);
+	for (int lim=0; lim < RLIM_NLIMITS; lim++) {
+		if (!rlim_is_per_uid(lim))
+			continue;
+		rlp = &new_uip->ui_limit->pl_rlimit[lim];
+		rlp->rlim_cur = rlp->rlim_max = RLIM_INFINITY;
+	}
+	refcount_init(&new_uip->ui_limit->pl_refcnt, 1);
+	mtx_init(&new_uip->ui_limlock, "uidlim", NULL, MTX_DEF);
 	racct_create(&new_uip->ui_racct);
 	refcount_init(&new_uip->ui_ref, 1);
 	new_uip->ui_uid = uid;
@@ -1572,6 +1609,7 @@ uifind(uid_t uid)
 	} else {
 		rw_wunlock(&uihashtbl_lock);
 		racct_destroy(&new_uip->ui_racct);
+		free(new_uip->ui_limit, M_UIDINFO);
 		free(new_uip, M_UIDINFO);
 	}
 	return (uip);

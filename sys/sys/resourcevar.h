@@ -130,6 +130,8 @@ struct uidinfo {
 #ifdef	RACCT
 	struct racct *ui_racct;		/* (a) resource accounting */
 #endif
+	struct mtx   ui_limlock; /* (a) uid limits lock */
+	struct plimit *ui_limit; /* (b) per uid limits */
 };
 
 struct proc;
