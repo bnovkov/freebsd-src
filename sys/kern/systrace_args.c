@@ -3555,6 +3555,15 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 5;
 		break;
 	}
+	/* setrlimit_uid */
+	case 603: {
+		struct setrlimit_uid_args *p = params;
+		uarg[a++] = p->which; /* u_int */
+		uarg[a++] = (intptr_t)p->rlp; /* struct rlimit * */
+		uarg[a++] = p->uid; /* uid_t */
+		*n_args = 3;
+		break;
+	}
 	default:
 		*n_args = 0;
 		break;
@@ -9521,6 +9530,22 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
+	/* setrlimit_uid */
+	case 603:
+		switch (ndx) {
+		case 0:
+			p = "u_int";
+			break;
+		case 1:
+			p = "userland struct rlimit *";
+			break;
+		case 2:
+			p = "uid_t";
+			break;
+		default:
+			break;
+		};
+		break;
 	default:
 		break;
 	};
@@ -11546,6 +11571,11 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* renameat2 */
 	case 602:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* setrlimit_uid */
+	case 603:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

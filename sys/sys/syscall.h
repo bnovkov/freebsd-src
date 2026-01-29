@@ -541,4 +541,5 @@
 #define	SYS_pdrfork	600
 #define	SYS_pdwait	601
 #define	SYS_renameat2	602
-#define	SYS_MAXSYSCALL	603
+#define	SYS_setrlimit_uid	603
+#define	SYS_MAXSYSCALL	604

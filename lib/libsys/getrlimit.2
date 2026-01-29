@@ -30,7 +30,8 @@
 .Os
 .Sh NAME
 .Nm getrlimit ,
-.Nm setrlimit
+.Nm setrlimit ,
+.Nm setrlimit_uid
 .Nd control maximum system resource consumption
 .Sh LIBRARY
 .Lb libc
@@ -42,12 +43,20 @@
 .Fn getrlimit "int resource" "struct rlimit *rlp"
 .Ft int
 .Fn setrlimit "int resource" "const struct rlimit *rlp"
+.Fn setrlimit_uid "int resource" "const struct rlimit *rlp" "uid_t uid"
 .Sh DESCRIPTION
 Limits on the consumption of system resources by the current process
 and each process it creates may be obtained with the
 .Fn getrlimit
 system call, and set with the
 .Fn setrlimit
+system call.
+.Pp
+Limits on the consumption of system resources for a specific UID
+and each process it creates may be obtained with the
+.Fn getrlimit
+system call, and set with the
+.Fn setrlimit_uid
 system call.
 .Pp
 The
@@ -169,6 +178,20 @@ is to affect all future processes created by the shell;
 .Ic limit
 is thus a built-in command to
 .Xr csh 1 .
+This does not apply to the limits which are tracked globally for each user.
+These per-UID limits are:
+.Bl -dash -compact
+.It
+RLIMIT_KQUEUES
+.It
+RLIMIT_NPROC
+.It
+RLIMIT_NPTS
+.It
+RLIMIT_UMTXP
+.It
+RLIMIT_VMM
+.El
 .Pp
 The system refuses to extend the data or stack space when the limits
 would be exceeded in the normal way: a
@@ -226,6 +249,17 @@ The limit specified to
 .Fn setrlimit
 would have
 raised the maximum limit value, and the caller is not the super-user.
+.It Bq Er EPERM
+The caller attempted to change a per-UID limit using
+.Fn setrlimit_uid
+and was not the super-user.
+.It Bq Er ENOENT
+The caller attempted to change a per-UID limit using
+.Fn setrlimit_uid
+and there are no active sessions for the request UID.
+.It Bq Er EINVAL
+The caller attempted to change a per-process limit using
+.Fn setrlimit_uid .
 .El
 .Sh SEE ALSO
 .Xr csh 1 ,
@@ -242,8 +276,15 @@ and
 .Fn setrlimit
 functions are expected to conform to
 .St -p1003.1-2001 .
+Per-UID limits and the
+.Fn setrlimit_uid
+function are non-standard.
 .Sh HISTORY
 The
 .Fn getrlimit
 system call appeared in
 .Bx 4.2 .
+The
+.Fn setrlimit_uid
+system call appeared in
+.Fx 16.0 .

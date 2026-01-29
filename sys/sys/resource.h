@@ -41,6 +41,11 @@ typedef	__id_t		id_t;
 #define	_ID_T_DECLARED
 #endif
 
+#ifndef _UID_T_DECLARED
+typedef __uid_t         uid_t;
+#define _UID_T_DECLARED
+#endif
+
 #ifndef _RLIM_T_DECLARED
 typedef	__rlim_t	rlim_t;
 #define	_RLIM_T_DECLARED
@@ -192,6 +197,7 @@ int	getrlimit(int, struct rlimit *);
 int	getrusage(int, struct rusage *);
 int	setpriority(int, int, int);
 int	setrlimit(int, const struct rlimit *);
+int	setrlimit_uid(int, const struct rlimit *, uid_t);
 #if __BSD_VISIBLE
 int	getrlimitusage(unsigned which, int flags, rlim_t *res);
 #endif

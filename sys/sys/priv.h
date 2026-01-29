@@ -162,6 +162,7 @@
 #define	PRIV_PROC_SETLOGIN	161	/* Can call setlogin. */
 #define	PRIV_PROC_SETRLIMIT	162	/* Can raise resources limits. */
 #define	PRIV_PROC_SETLOGINCLASS	163	/* Can call setloginclass(2). */
+#define	PRIV_PROC_SETRLIMIT_UID	164	/* Can call setrlimit_uid(2). */
 
 /*
  * System V IPC privileges.

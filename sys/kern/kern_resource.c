@@ -55,6 +55,7 @@
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <sys/umtxvar.h>
 
 #include <vm/vm.h>
@@ -654,7 +655,7 @@ rlim_is_per_uid(int which)
 		case RLIMIT_NPTS:
 		case RLIMIT_PIPEBUF:
 		case RLIMIT_UMTXP:
-		case RLIMIT_VMM:
+		case RLIMIT_VMS:
 			return true;
 		default:
 			return false;
@@ -939,6 +940,66 @@ sys_getrlimitusage(struct thread *td, struct getrlimitusage_args *uap)
 	if (error == 0)
 		error = copyout(&res, uap->res, sizeof(res));
 	return (error);
+}
+#ifndef _SYS_SYSPROTO_H_
+struct setrlimit_uid_args {
+	u_int	which;
+	struct	rlimit *rlp;
+	uid_t   uid;
+};
+#endif
+int
+sys_setrlimit_uid(struct thread *td, struct setrlimit_uid_args *uap)
+{
+	struct rlimit alim;
+	int error;
+
+	if ((error = copyin(uap->rlp, &alim, sizeof(struct rlimit))))
+		return (error);
+	return (kern_setrlimit_uid(td, uap->which, &alim, uap->uid));
+}
+
+int
+kern_setrlimit_uid(struct thread *td, u_int which, struct rlimit *limp, uid_t uid)
+{
+	struct rlimit *alimp;
+	struct uidinfo *ui;
+	int error;
+
+	if (which >= RLIM_NLIMITS || !rlim_is_per_uid(which))
+		return (EINVAL);
+
+	/* Preserve 'setrlimit' bugs. */
+	if (limp->rlim_cur < 0)
+		limp->rlim_cur = RLIM_INFINITY;
+	if (limp->rlim_max < 0)
+		limp->rlim_max = RLIM_INFINITY;
+
+	ui = uifind(uid);
+	if (ui == NULL)
+		return (ENOENT);
+
+	/*
+	 * Allow a calling process owned by 'uid' to lower the per-UID limit.
+	 */
+	if (td->td_ucred->cr_uid != uid &&
+	    (error = priv_check(td, PRIV_PROC_SETRLIMIT_UID)))
+		return (error);
+
+	mtx_lock(&ui->ui_limlock);
+	alimp = &ui->ui_limit->pl_rlimit[which];
+	if (limp->rlim_cur > alimp->rlim_max ||
+	    limp->rlim_max > alimp->rlim_max)
+		if ((error = priv_check(td, PRIV_PROC_SETRLIMIT_UID))) {
+			mtx_unlock(&ui->ui_limlock);
+			return (error);
+		}
+	if (limp->rlim_cur > limp->rlim_max)
+		limp->rlim_cur = limp->rlim_max;
+	*alimp = *limp;
+	mtx_unlock(&ui->ui_limlock);
+
+	return (0);
 }
 
 /*

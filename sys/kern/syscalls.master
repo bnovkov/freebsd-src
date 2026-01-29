@@ -3429,4 +3429,11 @@
 		    int flags
 		);
 	}
+603	AUE_SETRLIMIT_UID	STD|CAPENABLED {
+		int setrlimit_uid(
+		    u_int which,
+		    _In_ struct rlimit *rlp,
+		    uid_t uid
+		);
+	}
 ; vim: syntax=off
