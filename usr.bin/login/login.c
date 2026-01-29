@@ -151,6 +151,18 @@ static int		 pam_silent = PAM_SILENT;
 static int		 pam_cred_established;
 static int		 pam_session_established;
 
+static struct {
+	const char *cap;
+	u_int rlim;
+} peruid_lims[] = {
+	{ "maxproc", RLIMIT_NPROC },
+	{ "pseudoterminals", RLIMIT_NPTS },
+	{ "kqueues", RLIMIT_KQUEUES },
+	{ "umtxp", RLIMIT_UMTXP },
+	{ "pipebuf", RLIMIT_PIPEBUF },
+	{ "vmms", RLIMIT_VMM }
+};
+
 int
 main(int argc, char *argv[])
 {
@@ -174,6 +186,8 @@ main(int argc, char *argv[])
 #ifdef USE_BSM_AUDIT
 	char auditsuccess = 1;
 #endif
+	struct rlimit rlim;
+	rlim_t lim;
 
 	sa.sa_flags = SA_RESTART;
 	(void)sigfillset(&sa.sa_mask);
@@ -581,6 +595,19 @@ main(int argc, char *argv[])
 	pam_end(pamh, 0);
 	pamh = NULL;
 
+	/* Install per-UID setrlimit(2) limits. */
+	for (size_t i = 0; i < nitems(peruid_lims); i++) {
+		lim = login_getcapnum(lc, peruid_lims[i].cap, RLIM_INFINITY,
+		    -1);
+		rlim.rlim_cur = rlim.rlim_max = lim;
+		if (setrlimit_uid(peruid_lims[i].rlim, &rlim, pwd->pw_uid) !=
+		    0) {
+			syslog(LOG_ERR,
+			    "setrlimit_uid() for limit '%s' failed - exiting",
+			    peruid_lims[i].cap);
+			exit(1);
+		}
+	}
 	/*
 	 * We don't need to be root anymore, so set the login name and
 	 * the UID.
