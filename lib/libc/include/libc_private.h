@@ -226,6 +226,7 @@ enum {
 	INTERPOS_sendmsg,
 	INTERPOS_sendto,
 	INTERPOS_setcontext,
+	INTERPOS_setrlimit_uid,
 	INTERPOS_sigaction,
 	INTERPOS_sigprocmask,
 	INTERPOS_sigsuspend,

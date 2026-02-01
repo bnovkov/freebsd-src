@@ -29,6 +29,7 @@ SRCS+= \
 	recvmmsg.c \
 	send.c \
 	sendmmsg.c \
+	setrlimit_uid.c \
 	shm_open.c \
 	stat.c \
 	vadvise.c \

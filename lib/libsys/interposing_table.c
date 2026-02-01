@@ -56,6 +56,7 @@ static interpos_func_t __libsys_interposing[INTERPOS_MAX] = {
 	SLOT(sendmsg, __sys_sendmsg),
 	SLOT(sendto, __sys_sendto),
 	SLOT(setcontext, __sys_setcontext),
+	SLOT(setrlimit_uid, __sys_setrlimit_uid),
 	SLOT(sigaction, __sys_sigaction),
 	SLOT(sigprocmask, __sys_sigprocmask),
 	SLOT(sigsuspend, __sys_sigsuspend),

@@ -86,6 +86,7 @@ INTERPOSED = \
 	sendmsg \
 	sendto \
 	setcontext \
+	setrlimit_uid \
 	sigaction \
 	sigprocmask \
 	sigsuspend \
