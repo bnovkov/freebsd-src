@@ -289,6 +289,12 @@ function core.kernelList()
 				kernels[n] = kernels[n + 1]
 			end
 		end
+
+		-- The config/boot bits use the env var as a fallback if the
+		-- menu's kernel selector remains untouched, so we want to
+		-- update our notion of the default kernel to one that is
+		-- actually present.
+		loader.setenv("kernel", kernels[1])
 	end
 
 	core.cached_kernels = kernels
@@ -413,7 +419,7 @@ end
 
 function core.isSingleUserBoot()
 	local single_user = loader.getenv("boot_single")
-	return single_user ~= nil and single_user:lower() == "yes"
+	return single_user ~= nil and single_user:lower() ~= "no"
 end
 
 function core.isUEFIBoot()

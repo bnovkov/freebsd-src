@@ -32,6 +32,7 @@ struct itimerspec;
 struct itimerval;
 struct jail;
 struct kevent;
+struct kexec_segment;
 struct kld_file_stat;
 struct mac;
 struct module_stat;
@@ -65,7 +66,7 @@ struct uuid;
 union semun;
 
 __BEGIN_DECLS
-typedef void (__sys_exit_t)(int);
+typedef void (__sys__exit_t)(int);
 typedef int (__sys_fork_t)(void);
 typedef ssize_t (__sys_read_t)(int, void *, size_t);
 typedef ssize_t (__sys_write_t)(int, const void *, size_t);
@@ -121,8 +122,6 @@ typedef int (__sys_munmap_t)(void *, size_t);
 typedef int (__sys_mprotect_t)(void *, size_t, int);
 typedef int (__sys_madvise_t)(void *, size_t, int);
 typedef int (__sys_mincore_t)(const void *, size_t, char *);
-typedef int (__sys_getgroups_t)(int, gid_t *);
-typedef int (__sys_setgroups_t)(int, const gid_t *);
 typedef int (__sys_getpgrp_t)(void);
 typedef int (__sys_setpgid_t)(int, int);
 typedef int (__sys_setitimer_t)(int, const struct itimerval *, struct itimerval *);
@@ -468,8 +467,15 @@ typedef int (__sys_setcred_t)(u_int, const struct setcred *, size_t);
 typedef int (__sys_exterrctl_t)(u_int, u_int, void *);
 typedef int (__sys_inotify_add_watch_at_t)(int, int, const char *, uint32_t);
 typedef int (__sys_inotify_rm_watch_t)(int, int);
+typedef int (__sys_getgroups_t)(int, gid_t *);
+typedef int (__sys_setgroups_t)(int, const gid_t *);
+typedef int (__sys_jail_attach_jd_t)(int);
+typedef int (__sys_jail_remove_jd_t)(int);
+typedef int (__sys_kexec_load_t)(uint64_t, u_long, struct kexec_segment *, u_long);
+typedef int (__sys_pdrfork_t)(int *, int, int);
+typedef int (__sys_pdwait_t)(int, int *, int, struct __wrusage *, struct __siginfo *);
 
-void __sys_exit(int rval);
+_Noreturn void __sys__exit(int rval);
 int __sys_fork(void);
 ssize_t __sys_read(int fd, void * buf, size_t nbyte);
 ssize_t __sys_write(int fd, const void * buf, size_t nbyte);
@@ -525,8 +531,6 @@ int __sys_munmap(void * addr, size_t len);
 int __sys_mprotect(void * addr, size_t len, int prot);
 int __sys_madvise(void * addr, size_t len, int behav);
 int __sys_mincore(const void * addr, size_t len, char * vec);
-int __sys_getgroups(int gidsetsize, gid_t * gidset);
-int __sys_setgroups(int gidsetsize, const gid_t * gidset);
 int __sys_getpgrp(void);
 int __sys_setpgid(int pid, int pgid);
 int __sys_setitimer(int which, const struct itimerval * itv, struct itimerval * oitv);
@@ -872,6 +876,13 @@ int __sys_setcred(u_int flags, const struct setcred * wcred, size_t size);
 int __sys_exterrctl(u_int op, u_int flags, void * ptr);
 int __sys_inotify_add_watch_at(int fd, int dfd, const char * path, uint32_t mask);
 int __sys_inotify_rm_watch(int fd, int wd);
+int __sys_getgroups(int gidsetsize, gid_t * gidset);
+int __sys_setgroups(int gidsetsize, const gid_t * gidset);
+int __sys_jail_attach_jd(int fd);
+int __sys_jail_remove_jd(int fd);
+int __sys_kexec_load(uint64_t entry, u_long nseg, struct kexec_segment * segments, u_long flags);
+int __sys_pdrfork(int * fdp, int pdflags, int rfflags);
+int __sys_pdwait(int fd, int * status, int options, struct __wrusage * wrusage, struct __siginfo * info);
 __END_DECLS
 
 #endif /* __LIBSYS_H_ */

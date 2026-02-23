@@ -1,5 +1,5 @@
 #
-# SPDX-License-Idendifier: BSD-2-Clause
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2025 FreeBSD Foundation
 #
@@ -7,15 +7,12 @@
 # under sponsorship from the FreeBSD Foundation.
 #
 
-PACKAGE=	kerberos-lib
-
 .include <src.opts.mk>
 
 .include "../Makefile.inc"
 
 LIB=		krb5profile
-LIBADD=	com_err krb5support
-VERSION_MAP=	${.CURDIR}/version.map
+INTERNALLIB=
 
 SRCS=	prof_file.c \
 	prof_get.c \
@@ -32,6 +29,7 @@ INCS=	profile.h
 DEFINES=-DHAS_STDARG -DLIBDIR=\"${KRB5_LIBDIR}\"
 
 CFLAGS+=${DEFINES} \
+	-fPIC \
 	-I${KRB5_DIR}/util/profile \
 	-I${KRB5_DIR}/util/et \
 	-I${KRB5_SRCTOP}/include \

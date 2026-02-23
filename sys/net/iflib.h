@@ -127,7 +127,8 @@ typedef struct if_pkt_info {
 	uint8_t			ipi_ip_tos;	/* IP ToS field data */
 	uint8_t			ipi_mflags;	/* packet mbuf flags */
 	uint8_t			__spare0__;
-	uint8_t		__spare1__;
+	uint8_t			__spare1__;
+	struct mbuf		*ipi_mbuf;		/* mbuf for ktls */
 } *if_pkt_info_t;
 
 typedef struct if_irq {
@@ -191,7 +192,7 @@ typedef struct if_softc_ctx {
 	int isc_vectors;
 	int isc_nrxqsets;
 	int isc_ntxqsets;
-	uint16_t __spare0__;
+	uint16_t isc_tx_pad;
 	uint32_t __spare1__;
 	int isc_msix_bar;		/* can be model specific - initialize in attach_pre */
 	int isc_tx_nsegments;		/* can be model specific - initialize in attach_pre */
@@ -272,7 +273,7 @@ struct if_shared_ctx {
 	int isc_ntxqs;			/* # of tx queues per tx qset - usually 1 */
 	int isc_nrxqs;			/* # of rx queues per rx qset - intel 1, chelsio 2, broadcom 3 */
 	int __spare0__;
-	int isc_tx_reclaim_thresh;
+	int __spare1__;
 	int isc_flags;
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1984-2025  Mark Nudelman
+ * Copyright (C) 1984-2026  Mark Nudelman
  *
  * You may distribute under the terms of either the GNU General Public
  * License or the Less License, as specified in the README file.
@@ -32,7 +32,7 @@ extern int jump_sline;
 extern lbool quitting;
 extern int wscroll;
 extern int top_scroll;
-extern int ignore_eoi;
+extern lbool ignore_eoi;
 extern int hshift;
 extern int bs_mode;
 extern int proc_backspace;
@@ -53,6 +53,8 @@ extern int no_paste;
 extern lbool pasting;
 extern int no_edit_warn;
 extern POSITION soft_eof;
+extern POSITION search_incr_start;
+extern char *first_cmd_at_prompt;
 #if SHELL_ESCAPE || PIPEC
 extern void *ml_shell;
 #endif
@@ -90,6 +92,8 @@ static int save_proc_backspace;
 static int screen_trashed_value = 0;
 static lbool literal_char = FALSE;
 static lbool ignoring_input = FALSE;
+static struct scrpos search_incr_pos = { NULL_POSITION, 0 };
+static int search_incr_hshift;
 #if HAVE_TIME
 static time_type ignoring_input_time;
 #endif
@@ -149,7 +153,7 @@ static void start_mca(int action, constant char *prompt, void *mlist, int cmdfla
 	set_mlist(mlist, cmdflags);
 }
 
-public int in_mca(void)
+public lbool in_mca(void)
 {
 	return (mca != 0 && mca != A_PREFIX);
 }
@@ -209,6 +213,13 @@ static void mca_search1(void)
 
 static void mca_search(void)
 {
+	if (incr_search)
+	{
+		/* Remember where the incremental search started. */
+		get_scrpos(&search_incr_pos, TOP);
+		search_incr_start = search_pos(search_type);
+		search_incr_hshift = hshift;
+	}
 	mca_search1();
 	set_mlist(ml_search, 0);
 }
@@ -464,7 +475,7 @@ static int mca_opt_nonfirst_char(char c)
 		}
 	} else if (!ambig)
 	{
-		bell();
+		lbell();
 	}
 	return (MCA_MORE);
 }
@@ -563,7 +574,10 @@ static int mca_search_char(char c)
 	 */
 	if (!cmdbuf_empty() || literal_char)
 	{
+		lbool was_literal_char = literal_char;
 		literal_char = FALSE;
+		if (was_literal_char)
+			mca_search1();
 		return (NO_MCA);
 	}
 
@@ -625,6 +639,17 @@ static int mca_search_char(char c)
 		return (MCA_MORE);
 	}
 	return (NO_MCA);
+}
+
+/*
+ * Jump back to the starting position of an incremental search.
+ */
+static void jump_search_incr_pos(void)
+{
+	if (search_incr_pos.pos == NULL_POSITION)
+		return;
+	hshift = search_incr_hshift;
+	jump_loc(search_incr_pos.pos, search_incr_pos.ln);
 }
 
 /*
@@ -747,6 +772,9 @@ static int mca_char(char c)
 			constant char *pattern = get_cmdbuf();
 			if (pattern == NULL)
 				return (MCA_MORE);
+			/* Defer searching if more chars of the pattern are available. */
+			if (ttyin_ready())
+				return (MCA_MORE);
 			/*
 			 * Must save updown_match because mca_search
 			 * reinits it. That breaks history scrolling.
@@ -757,17 +785,21 @@ static int mca_char(char c)
 			if (*pattern == '\0')
 			{
 				/* User has backspaced to an empty pattern. */
-				undo_search(1);
+				undo_search(TRUE);
+				jump_search_incr_pos();
 			} else
 			{
 				if (search(st | SRCH_INCR, pattern, 1) != 0)
+				{
 					/* No match, invalid pattern, etc. */
-					undo_search(1);
+					undo_search(TRUE);
+					jump_search_incr_pos();
+				}
 			}
 			/* Redraw the search prompt and search string. */
 			if (is_screen_trashed() || !full_screen)
 			{
-				clear();
+				lclear();
 				repaint();
 			}
 			mca_search1();
@@ -795,6 +827,7 @@ static void clear_buffers(void)
 #if HILITE_SEARCH
 	clr_hilite();
 #endif
+	set_line_contig_pos(NULL_POSITION);
 }
 
 public void screen_trashed_num(int trashed)
@@ -822,7 +855,7 @@ static void make_display(void)
 	 * We need to clear and repaint screen before any change.
 	 */
 	if (!full_screen && !(quit_if_one_screen && one_screen))
-		clear();
+		lclear();
 	/*
 	 * If nothing is displayed yet, display starting from initial_scrpos.
 	 */
@@ -835,9 +868,9 @@ static void make_display(void)
 	} else if (is_screen_trashed() || !full_screen)
 	{
 		int save_top_scroll = top_scroll;
-		int save_ignore_eoi = ignore_eoi;
+		lbool save_ignore_eoi = ignore_eoi;
 		top_scroll = 1;
-		ignore_eoi = 0;
+		ignore_eoi = FALSE;
 		if (is_screen_trashed() == 2)
 		{
 			/* Special case used by ignore_eoi: re-open the input file
@@ -889,6 +922,12 @@ static void prompt(void)
 	    next_ifile(curr_ifile) == NULL_IFILE)
 		quit(QUIT_OK);
 	quit_if_one_screen = FALSE; /* only get one chance at this */
+	if (first_cmd_at_prompt != NULL)
+	{
+		ungetsc(first_cmd_at_prompt);
+		first_cmd_at_prompt = NULL;
+		return;
+	}
 
 #if MSDOS_COMPILER==WIN32C
 	/* 
@@ -962,6 +1001,7 @@ static void prompt(void)
 		put_line(FALSE);
 	}
 	clear_eol();
+	resume_screen();
 }
 
 /*
@@ -1268,29 +1308,31 @@ static void multi_search(constant char *pattern, int n, int silent)
 /*
  * Forward forever, or until a highlighted line appears.
  */
-static int forw_loop(int until_hilite)
+static int forw_loop(int action)
 {
-	POSITION curr_len;
+	POSITION prev_hilite;
 
 	if (ch_getflags() & CH_HELPFILE)
 		return (A_NOACTION);
 
 	cmd_exec();
 	jump_forw_buffered();
-	curr_len = ch_length();
-	highest_hilite = until_hilite ? curr_len : NULL_POSITION;
-	ignore_eoi = 1;
+	highest_hilite = prev_hilite = 0;
+	ignore_eoi = TRUE;
 	while (!sigs)
 	{
-		if (until_hilite && highest_hilite > curr_len)
+		if (action != A_F_FOREVER && highest_hilite > prev_hilite)
 		{
-			bell();
-			break;
+			lbell();
+			if (action == A_F_UNTIL_HILITE)
+				break;
+			prev_hilite = highest_hilite;
 		}
 		make_display();
 		forward(1, FALSE, FALSE, FALSE);
 	}
-	ignore_eoi = 0;
+	highest_hilite = NULL_POSITION;
+	ignore_eoi = FALSE;
 	ch_set_eof();
 
 	/*
@@ -1298,7 +1340,7 @@ static int forw_loop(int until_hilite)
 	 * a non-abort signal (e.g. window-change).  
 	 */
 	if (sigs && !ABORT_SIGS())
-		return (until_hilite ? A_F_UNTIL_HILITE : A_F_FOREVER);
+		return (action);
 
 	return (A_NOACTION);
 }
@@ -1365,7 +1407,6 @@ public void commands(void)
 #endif
 
 	search_type = SRCH_FORW;
-	wscroll = (sc_height + 1) / 2;
 	newaction = A_NOACTION;
 
 	for (;;)
@@ -1471,7 +1512,9 @@ public void commands(void)
 				 * want erase_char/kill_char to be treated
 				 * as line editing characters.
 				 */
-				constant char tbuf[2] = { c, '\0' };
+				char tbuf[2];
+				tbuf[0] = c;
+				tbuf[1] = '\0';
 				action = fcmd_decode(tbuf, &extra);
 			}
 			/*
@@ -1628,6 +1671,8 @@ public void commands(void)
 			break;
 
 		case A_F_FOREVER:
+		case A_F_FOREVER_BELL:
+		case A_F_UNTIL_HILITE:
 			/*
 			 * Forward forever, ignoring EOF.
 			 */
@@ -1635,11 +1680,7 @@ public void commands(void)
 				error("Warning: command may not work correctly when file is viewed via LESSOPEN", NULL_PARG);
 			if (show_attn)
 				set_attnpos(bottompos);
-			newaction = forw_loop(0);
-			break;
-
-		case A_F_UNTIL_HILITE:
-			newaction = forw_loop(1);
+			newaction = forw_loop(action);
 			break;
 
 		case A_F_SCROLL:
@@ -2107,7 +2148,7 @@ public void commands(void)
 			cmd_exec();
 			if (new_ifile == NULL_IFILE)
 			{
-				bell();
+				lbell();
 				break;
 			}
 			if (edit_ifile(new_ifile) != 0)
@@ -2261,6 +2302,7 @@ public void commands(void)
 			pos_rehead();
 			hshift -= (int) number;
 			screen_trashed();
+			cmd_exec();
 			break;
 
 		case A_RSHIFT:
@@ -2274,6 +2316,7 @@ public void commands(void)
 			pos_rehead();
 			hshift += (int) number;
 			screen_trashed();
+			cmd_exec();
 			break;
 
 		case A_LLSHIFT:
@@ -2283,6 +2326,7 @@ public void commands(void)
 			pos_rehead();
 			hshift = 0;
 			screen_trashed();
+			cmd_exec();
 			break;
 
 		case A_RRSHIFT:
@@ -2292,6 +2336,7 @@ public void commands(void)
 			pos_rehead();
 			hshift = rrshift();
 			screen_trashed();
+			cmd_exec();
 			break;
 
 		case A_PREFIX:
@@ -2313,7 +2358,7 @@ public void commands(void)
 			break;
 
 		default:
-			bell();
+			lbell();
 			break;
 		}
 	}

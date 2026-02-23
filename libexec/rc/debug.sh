@@ -1,6 +1,4 @@
 :
-# SPDX-License-Identifier: BSD-2-Clause
-
 # NAME:
 #	debug.sh - selectively debug scripts
 #
@@ -83,16 +81,11 @@
 #	Simon J. Gerraty <sjg@crufty.net>
 
 # RCSid:
-#	$Id: debug.sh,v 1.46 2024/12/13 03:55:52 sjg Exp $
+#	$Id: debug.sh,v 1.47 2025/08/07 21:59:54 sjg Exp $
 #
 #	@(#) Copyright (c) 1994-2024 Simon J. Gerraty
 #
-#	This file is provided in the hope that it will
-#	be of use.  There is absolutely NO WARRANTY.
-#	Permission to copy, redistribute or otherwise
-#	use this file is hereby granted provided that
-#	the above copyright notice and this notice are
-#	left intact.
+#	SPDX-License-Identifier: BSD-2-Clause
 #
 #	Please send copies of changes and bug-fixes to:
 #	sjg@crufty.net
@@ -208,7 +201,7 @@ _debugOn() {
 	DEBUG_DO=
 	DEBUG_SKIP=:
 	DEBUG_X=-x
-	# do this firt to reduce noise
+	# do this first to reduce noise
 	case ",$DEBUG_SH," in
 	*,$1:debug_add:*) _debugAdd $1;;
 	*,$2:debug_add:*) _debugAdd $2;;

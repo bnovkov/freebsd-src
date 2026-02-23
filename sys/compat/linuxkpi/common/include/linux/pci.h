@@ -76,24 +76,6 @@ struct pci_device_id {
 MODULE_PNP_INFO("U32:vendor;U32:device;V32:subvendor;V32:subdevice",	\
     _bus, lkpi_ ## _table, _table, nitems(_table) - 1)
 
-/* Linux has an empty element at the end of the ID table -> nitems() - 1. */
-#define	MODULE_DEVICE_TABLE(_bus, _table)				\
-									\
-static device_method_t _ ## _bus ## _ ## _table ## _methods[] = {	\
-	DEVMETHOD_END							\
-};									\
-									\
-static driver_t _ ## _bus ## _ ## _table ## _driver = {			\
-	"lkpi_" #_bus #_table,						\
-	_ ## _bus ## _ ## _table ## _methods,				\
-	0								\
-};									\
-									\
-DRIVER_MODULE(lkpi_ ## _table, _bus, _ ## _bus ## _ ## _table ## _driver,\
-	0, 0);								\
-									\
-MODULE_DEVICE_TABLE_BUS_ ## _bus(_bus, _table)
-
 #define	PCI_ANY_ID			-1U
 
 #define PCI_DEVFN(slot, func)   ((((slot) & 0x1f) << 3) | ((func) & 0x07))
@@ -223,11 +205,11 @@ enum pcie_link_width {
 
 typedef int pci_power_t;
 
-#define PCI_D0	PCI_POWERSTATE_D0
-#define PCI_D1	PCI_POWERSTATE_D1
-#define PCI_D2	PCI_POWERSTATE_D2
-#define PCI_D3hot	PCI_POWERSTATE_D3
-#define PCI_D3cold	4
+#define PCI_D0		PCI_POWERSTATE_D0
+#define PCI_D1		PCI_POWERSTATE_D1
+#define PCI_D2		PCI_POWERSTATE_D2
+#define PCI_D3hot	PCI_POWERSTATE_D3_HOT
+#define PCI_D3cold	PCI_POWERSTATE_D3_COLD
 
 #define PCI_POWER_ERROR	PCI_POWERSTATE_UNKNOWN
 
@@ -252,6 +234,20 @@ extern const char *pci_power_names[6];
 #if defined(LINUXKPI_VERSION) && (LINUXKPI_VERSION <= 61000)
 #define	PCI_IRQ_LEGACY			PCI_IRQ_INTX
 #endif
+
+/*
+ * Linux PCI code uses `PCI_SET_ERROR_RESPONSE()` to indicate to the caller of
+ * a `pci_read_*()` function that the read failed. An example of failure is
+ * whether the device was disconnected. It is a bit weird because Linux
+ * `pci_read_*()` can return an error value, as the read value is stored in a
+ * integer passed by pointer.
+ *
+ * We don't set PCI_ERROR_RESPONSE anywhere as of this commit, but the DRM
+ * drivers started to use `PCI_POSSIBLE_ERROR()`.
+ */
+#define	PCI_ERROR_RESPONSE		(~0ULL)
+#define	PCI_SET_ERROR_RESPONSE(val)	(*(val) = ((typeof(*(val))) PCI_ERROR_RESPONSE))
+#define	PCI_POSSIBLE_ERROR(val)		((val) == ((typeof(val)) PCI_ERROR_RESPONSE))
 
 struct pci_dev;
 
@@ -355,7 +351,6 @@ struct pci_dev {
 	TAILQ_HEAD(, pci_mmio_region)	mmio;
 };
 
-int pci_request_region(struct pci_dev *pdev, int bar, const char *res_name);
 int pci_alloc_irq_vectors(struct pci_dev *pdev, int minv, int maxv,
     unsigned int flags);
 bool pci_device_is_present(struct pci_dev *pdev);
@@ -365,10 +360,13 @@ void __iomem **linuxkpi_pcim_iomap_table(struct pci_dev *pdev);
 void *linuxkpi_pci_iomap_range(struct pci_dev *, int,
     unsigned long, unsigned long);
 void *linuxkpi_pci_iomap(struct pci_dev *, int, unsigned long);
+void *linuxkpi_pcim_iomap(struct pci_dev *, int, unsigned long);
 void linuxkpi_pci_iounmap(struct pci_dev *pdev, void *res);
 int linuxkpi_pcim_iomap_regions(struct pci_dev *pdev, uint32_t mask,
     const char *name);
+int linuxkpi_pci_request_region(struct pci_dev *, int, const char *);
 int linuxkpi_pci_request_regions(struct pci_dev *pdev, const char *res_name);
+int linuxkpi_pcim_request_all_regions(struct pci_dev *, const char *);
 void linuxkpi_pci_release_region(struct pci_dev *pdev, int bar);
 void linuxkpi_pci_release_regions(struct pci_dev *pdev);
 int linuxkpi_pci_enable_msix(struct pci_dev *pdev, struct msix_entry *entries,
@@ -561,12 +559,16 @@ done:
 	return (pdev->bus->self);
 }
 
+#define	pci_request_region(pdev, bar, res_name)				\
+    linuxkpi_pci_request_region(pdev, bar, res_name)
 #define	pci_release_region(pdev, bar)					\
     linuxkpi_pci_release_region(pdev, bar)
-#define	pci_release_regions(pdev)					\
-    linuxkpi_pci_release_regions(pdev)
 #define	pci_request_regions(pdev, res_name)				\
     linuxkpi_pci_request_regions(pdev, res_name)
+#define	pci_release_regions(pdev)					\
+    linuxkpi_pci_release_regions(pdev)
+#define	pcim_request_all_regions(pdev, name)				\
+    linuxkpi_pcim_request_all_regions(pdev, name)
 
 static inline void
 lkpi_pci_disable_msix(struct pci_dev *pdev)
@@ -803,6 +805,8 @@ static inline void pci_disable_sriov(struct pci_dev *dev)
     linuxkpi_pci_iomap_range(pdev, mmio_bar, mmio_off, mmio_size)
 #define	pci_iomap(pdev, mmio_bar, mmio_size)				\
     linuxkpi_pci_iomap(pdev, mmio_bar, mmio_size)
+#define	pcim_iomap(pdev, bar, maxlen)					\
+    linuxkpi_pcim_iomap(pdev, bar, maxlen)
 #define	pci_iounmap(pdev, res)						\
     linuxkpi_pci_iounmap(pdev, res)
 
@@ -822,6 +826,19 @@ lkpi_pci_restore_state(struct pci_dev *pdev)
 
 #define pci_save_state(dev)	lkpi_pci_save_state(dev)
 #define pci_restore_state(dev)	lkpi_pci_restore_state(dev)
+
+static inline int
+linuxkpi_pci_enable_wake(struct pci_dev *pdev, pci_power_t state, bool ena)
+{
+	/*
+	 * We do not currently support this in device.h either to
+	 * check if the device is allowed to wake up in first place.
+	 */
+	pr_debug("%s: TODO\n", __func__);
+	return (0);
+}
+#define	pci_enable_wake(dev, state, ena)				\
+    linuxkpi_pci_enable_wake(dev, state, ena)
 
 static inline int
 pci_reset_function(struct pci_dev *pdev)
@@ -1101,19 +1118,28 @@ pci_num_vf(struct pci_dev *dev)
 static inline enum pci_bus_speed
 pcie_get_speed_cap(struct pci_dev *dev)
 {
+	struct pci_dev *pbus;
 	device_t root;
 	uint32_t lnkcap, lnkcap2;
 	int error, pos;
 
-	root = device_get_parent(dev->dev.bsddev);
-	if (root == NULL)
-		return (PCI_SPEED_UNKNOWN);
-	root = device_get_parent(root);
-	if (root == NULL)
-		return (PCI_SPEED_UNKNOWN);
-	root = device_get_parent(root);
-	if (root == NULL)
-		return (PCI_SPEED_UNKNOWN);
+	/*
+	 * We should always be called on a PCI device.
+	 * The only current consumer I could find was amdgpu which either
+	 * calls us directly on a pdev(drmn?) or with the result of
+	 * pci_upstream_bridge().
+	 *
+	 * Treat "drmn" as special again as it is not a PCI device.
+	 */
+	if (dev->pdrv != NULL && dev->pdrv->isdrm) {
+		pbus = pci_upstream_bridge(dev);
+		if (pbus == NULL)
+			return (PCI_SPEED_UNKNOWN);
+	} else
+		pbus = dev;
+
+	/* "root" may be misleading as it may not be that. */
+	root = pbus->dev.bsddev;
 
 	if (pci_get_vendor(root) == PCI_VENDOR_ID_VIA ||
 	    pci_get_vendor(root) == PCI_VENDOR_ID_SERVERWORKS)
@@ -1324,6 +1350,12 @@ struct pci_dev *lkpi_pci_get_domain_bus_and_slot(int domain,
 #define	pci_get_domain_bus_and_slot(domain, bus, devfn)	\
 	lkpi_pci_get_domain_bus_and_slot(domain, bus, devfn)
 
+struct pci_dev *lkpi_pci_get_slot(struct pci_bus *, unsigned int);
+#ifndef	WANT_NATIVE_PCI_GET_SLOT
+#define	pci_get_slot(_pbus, _devfn)				\
+    lkpi_pci_get_slot(_pbus, _devfn)
+#endif
+
 static inline int
 pci_domain_nr(struct pci_bus *pbus)
 {
@@ -1444,6 +1476,9 @@ linuxkpi_pci_get_device(uint32_t vendor, uint32_t device, struct pci_dev *odev)
 
 	return (lkpi_pci_get_device(vendor, device, odev));
 }
+
+#define	for_each_pci_dev(_pdev)						\
+    while ((_pdev = linuxkpi_pci_get_device(PCI_ANY_ID, PCI_ANY_ID, _pdev)) != NULL)
 
 /* This is a FreeBSD extension so we can use bus_*(). */
 static inline void

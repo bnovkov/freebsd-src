@@ -120,7 +120,8 @@ enum	{
 
 enum	{ PF_NOPFROUTE, PF_FASTROUTE, PF_ROUTETO, PF_DUPTO, PF_REPLYTO };
 enum	{ PF_LIMIT_STATES, PF_LIMIT_SRC_NODES, PF_LIMIT_FRAGS,
-	  PF_LIMIT_TABLE_ENTRIES, PF_LIMIT_MAX };
+	  PF_LIMIT_TABLE_ENTRIES, PF_LIMIT_ANCHORS, PF_LIMIT_ETH_ANCHORS,
+	  PF_LIMIT_MAX };
 #define PF_POOL_IDMASK		0x0f
 enum	{ PF_POOL_NONE, PF_POOL_BITMASK, PF_POOL_RANDOM,
 	  PF_POOL_SRCHASH, PF_POOL_ROUNDROBIN };
@@ -130,6 +131,7 @@ enum	{ PF_ADDR_ADDRMASK, PF_ADDR_NOROUTE, PF_ADDR_DYNIFTL,
 #define PF_POOL_TYPEMASK	0x0f
 #define PF_POOL_STICKYADDR	0x20
 #define PF_POOL_ENDPI		0x40
+#define PF_POOL_IPV6NH		0x80
 #define	PF_WSCALE_FLAG		0x80
 #define	PF_WSCALE_MASK		0x0f
 
@@ -245,6 +247,12 @@ enum	{ PF_ADDR_ADDRMASK, PF_ADDR_NOROUTE, PF_ADDR_DYNIFTL,
 #define SCNT_SRC_NODE_REMOVALS	2
 #define SCNT_MAX		3
 
+/* fragment counters */
+#define NCNT_FRAG_SEARCH	0
+#define NCNT_FRAG_INSERT	1
+#define NCNT_FRAG_REMOVALS	2
+#define NCNT_MAX		3
+
 #define	PF_TABLE_NAME_SIZE	32
 #define	PF_QNAME_SIZE		64
 
@@ -282,7 +290,7 @@ struct pf_status {
 	uint64_t	lcounters[LCNT_MAX];
 	uint64_t	fcounters[FCNT_MAX];
 	uint64_t	scounters[SCNT_MAX];
-	uint64_t	pcounters[2][2][3];
+	uint64_t	pcounters[2][2][2];
 	uint64_t	bcounters[2][2];
 	uint32_t	running;
 	uint32_t	states;
@@ -490,7 +498,15 @@ struct pf_osfp_ioctl {
 
 #define	PF_ANCHOR_NAME_SIZE	 64
 #define	PF_ANCHOR_MAXPATH	(MAXPATHLEN - PF_ANCHOR_NAME_SIZE - 1)
+#define	PF_ANCHOR_HIWAT		512
 #define	PF_OPTIMIZER_TABLE_PFX	"__automatic_"
+
+enum {
+	PF_LIMITER_NOMATCH,
+	PF_LIMITER_BLOCK
+};
+
+#define	PF_LIMITER_DEFAULT	PF_LIMITER_BLOCK
 
 struct pf_rule {
 	struct pf_rule_addr	 src;
@@ -628,6 +644,8 @@ struct pf_rule {
 #define	PFRULE_PFLOW		0x00040000
 #define	PFRULE_ALLOW_RELATED	0x00080000
 #define	PFRULE_AFTO		0x00200000  /* af-to rule */
+#define	PFRULE_ONCE		0x00400000  /* one shot rule */
+#define	PFRULE_EXPIRED		0x00800000  /* one shot rule hit by pkt */
 
 #ifdef _KERNEL
 #define	PFRULE_REFS		0x0080	/* rule has references */

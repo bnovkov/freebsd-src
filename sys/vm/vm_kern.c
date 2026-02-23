@@ -323,7 +323,9 @@ kmem_alloc_attr_domainset(struct domainset *ds, vm_size_t size, int flags,
 
 	start_segind = -1;
 
-	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
+	if (vm_domainset_iter_policy_init(&di, ds, &domain, &flags) != 0)
+		return (NULL);
+
 	do {
 		addr = kmem_alloc_attr_domain(domain, size, flags, low, high,
 		    memattr);
@@ -417,7 +419,9 @@ kmem_alloc_contig_domainset(struct domainset *ds, vm_size_t size, int flags,
 
 	start_segind = -1;
 
-	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
+	if (vm_domainset_iter_policy_init(&di, ds, &domain, &flags))
+		return (NULL);
+
 	do {
 		addr = kmem_alloc_contig_domain(domain, size, flags, low, high,
 		    alignment, boundary, memattr);
@@ -517,7 +521,9 @@ kmem_malloc_domainset(struct domainset *ds, vm_size_t size, int flags)
 	void *addr;
 	int domain;
 
-	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
+	if (vm_domainset_iter_policy_init(&di, ds, &domain, &flags) != 0)
+		return (NULL);
+
 	do {
 		addr = kmem_malloc_domain(domain, size, flags);
 		if (addr != NULL)
@@ -947,14 +953,6 @@ kmem_bootstrap_free(vm_offset_t start, vm_size_t size)
 	end = trunc_page(start + size);
 	start = round_page(start);
 
-#ifdef __amd64__
-	/*
-	 * Preloaded files do not have execute permissions by default on amd64.
-	 * Restore the default permissions to ensure that the direct map alias
-	 * is updated.
-	 */
-	pmap_change_prot(start, end - start, VM_PROT_RW);
-#endif
 	for (va = start; va < end; va += PAGE_SIZE) {
 		pa = pmap_kextract(va);
 		m = PHYS_TO_VM_PAGE(pa);

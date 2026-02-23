@@ -1,5 +1,5 @@
 #
-# SPDX-License-Idendifier: BSD-2-Clause
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2025 FreeBSD Foundation
 #
@@ -21,7 +21,6 @@ SRCS=	dump.c \
 	kdb5_mkey.c \
 	kdb5_stash.c \
 	kdb5_util.c \
-	ovload.c \
 	strtok.c \
 	tabdump.c \
 	tdumputil.c \
@@ -34,7 +33,8 @@ MAN=	kdb5_util.8
 CFLAGS+=-I. \
 	-I${KRB5_DIR}/include \
 	-I${KRB5_DIR}/lib \
-	-I${KRB5_SRCTOP}/include
+	-I${KRB5_SRCTOP}/include \
+	-I${KRB5_OBJTOP}/util/profile
 
 MAN=	kdb5_util.8
 

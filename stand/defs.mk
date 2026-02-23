@@ -38,6 +38,7 @@ MK_UBSAN:=	no
 WARNS?=		1
 
 BOOTSRC=	${SRCTOP}/stand
+EDK2INC=	${SYSDIR}/contrib/edk2/Include
 EFISRC=		${BOOTSRC}/efi
 EFIINC=		${EFISRC}/include
 # For amd64, there's a bit of mixed bag. Some of the tree (i386, lib*32) is
@@ -55,12 +56,11 @@ LIBLUASRC=	${BOOTSRC}/liblua
 LIBOFWSRC=	${BOOTSRC}/libofw
 LUASRC=		${SRCTOP}/contrib/lua/src
 SASRC=		${BOOTSRC}/libsa
+SAZFSSRC=	${SASRC}/zfs
 SYSDIR=		${SRCTOP}/sys
 UBOOTSRC=	${BOOTSRC}/uboot
-ZFSSRC=		${SASRC}/zfs
-OZFS=		${SRCTOP}/sys/contrib/openzfs
-ZFSOSSRC=	${OZFS}/module/os/freebsd/
-ZFSOSINC=	${OZFS}/include/os/freebsd
+ZFSOSSRC=	${ZFSTOP}/module/os/freebsd/
+ZFSOSINC=	${ZFSTOP}/include/os/freebsd
 LIBCSRC=	${SRCTOP}/lib/libc
 
 BOOTOBJ=	${OBJTOP}/stand
@@ -157,11 +157,6 @@ CFLAGS.gcc+=	-mcmodel=medany
 CFLAGS+=	-msoft-float
 .endif
 
-# -msoft-float seems to be insufficient for powerpcspe
-.if ${MACHINE_ARCH} == "powerpcspe"
-CFLAGS+=	-mno-spe
-.endif
-
 .if ${MACHINE_CPUARCH} == "i386" || (${MACHINE_CPUARCH} == "amd64" && ${DO32:U0} == 1)
 CFLAGS+=	-march=i386
 CFLAGS.gcc+=	-mpreferred-stack-boundary=2
@@ -206,6 +201,8 @@ LOADER_INTERP?=${LOADER_DEFAULT_INTERP}
 
 # Make sure we use the machine link we're about to create
 CFLAGS+=-I.
+
+.include "${BOOTSRC}/veriexec.mk"
 
 all: ${PROG}
 

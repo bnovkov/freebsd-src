@@ -4,6 +4,7 @@
 # parts to omit (eg CDDL or SOURCELESS_HOST). Some of these will cause
 # config.mk to define symbols in various opt_*.h files.
 
+
 #
 # Define MK_* variables (which are either "yes" or "no") for users
 # to set via WITH_*/WITHOUT_* in /etc/src.conf and override in the
@@ -13,16 +14,11 @@
 # that haven't been converted over.
 #
 
-# Note: bsd.own.mk must be included before the rest of kern.opts.mk to make
-# building on 10.x and earlier work. This should be removed when that's no
-# longer supported since it confounds the defaults (since it uses the host's
-# notion of defaults rather than what's default in current when building
-# within sys/modules).
-.include <bsd.own.mk>
-
 # These options are used by the kernel build process (kern.mk and kmod.mk)
 # They have to be listed here so we can build modules outside of the
 # src tree.
+
+.include <bsd.init.mk>
 
 KLDXREF_CMD?=	kldxref
 
@@ -60,6 +56,7 @@ __DEFAULT_NO_OPTIONS = \
     KERNEL_RETPOLINE \
     RATELIMIT \
     REPRODUCIBLE_BUILD \
+    REPRODUCIBLE_PATHS \
     VERIEXEC
 
 # Some options are totally broken on some architectures. We disable them. If you

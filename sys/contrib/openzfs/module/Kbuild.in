@@ -2,9 +2,9 @@
 # first.  This ensures its module initialization function is run before
 # any of the other module initialization functions which depend on it.
 
-ZFS_MODULE_CFLAGS += -std=gnu99 -Wno-declaration-after-statement
+ZFS_MODULE_CFLAGS += -std=gnu11 -Wno-declaration-after-statement
 ZFS_MODULE_CFLAGS += -Wmissing-prototypes
-ZFS_MODULE_CFLAGS += @KERNEL_DEBUG_CFLAGS@  @NO_FORMAT_ZERO_LENGTH@
+ZFS_MODULE_CFLAGS += @KERNEL_DEBUG_CFLAGS@ @KERNEL_NO_FORMAT_ZERO_LENGTH@
 
 ifneq ($(KBUILD_EXTMOD),)
 zfs_include = @abs_top_srcdir@/include
@@ -135,6 +135,7 @@ ICP_OBJS_X86_64 := \
 	asm-x86_64/sha2/sha256-x86_64.o \
 	asm-x86_64/sha2/sha512-x86_64.o \
 	asm-x86_64/modes/aesni-gcm-x86_64.o \
+	asm-x86_64/modes/aesni-gcm-avx2-vaes.o \
 	asm-x86_64/modes/gcm_pclmulqdq.o \
 	asm-x86_64/modes/ghash-x86_64.o
 
@@ -292,10 +293,9 @@ ZSTD_UPSTREAM_OBJS := \
 
 zfs-objs += $(addprefix zstd/,$(ZSTD_OBJS) $(ZSTD_UPSTREAM_OBJS))
 
-# Disable aarch64 neon SIMD instructions for kernel mode
 $(addprefix $(obj)/zstd/,$(ZSTD_OBJS) $(ZSTD_UPSTREAM_OBJS)) : ccflags-y += -I$(zstd_include) $(ZFS_ZSTD_FLAGS)
 $(addprefix $(obj)/zstd/,$(ZSTD_OBJS) $(ZSTD_UPSTREAM_OBJS)) : asflags-y += -I$(zstd_include)
-$(addprefix $(obj)/zstd/,$(ZSTD_UPSTREAM_OBJS)) : ccflags-y += -include $(zstd_include)/aarch64_compat.h -include $(zstd_include)/zstd_compat_wrapper.h -Wp,-w
+$(addprefix $(obj)/zstd/,$(ZSTD_UPSTREAM_OBJS)) : ccflags-y += -include $(zstd_include)/zstd_compat_wrapper.h -Wp,-w
 $(obj)/zstd/zfs_zstd.o : ccflags-y += -include $(zstd_include)/zstd_compat_wrapper.h
 
 
@@ -406,6 +406,7 @@ ZFS_OBJS := \
 	zfs_byteswap.o \
 	zfs_chksum.o \
 	zfs_debug_common.o \
+	zfs_crrd.o \
 	zfs_fm.o \
 	zfs_fuid.o \
 	zfs_impl.o \
@@ -432,6 +433,7 @@ ZFS_OBJS := \
 ZFS_OBJS_OS := \
 	abd_os.o \
 	arc_os.o \
+	kasan_compat.o \
 	mmp_os.o \
 	policy.o \
 	qat.o \
@@ -494,3 +496,34 @@ UBSAN_SANITIZE_zfs/sa.o := n
 ifeq ($(CONFIG_ALTIVEC),y)
 $(obj)/zfs/vdev_raidz_math_powerpc_altivec.o : c_flags += -maltivec
 endif
+
+# The following recipes attempt to fix out of src-tree builds, where $(src) != $(obj), so that the
+# subdir %.c/%.S -> %.o targets will work as expected. The in-kernel pattern targets do not seem to
+# be working on subdirs since about ~6.10
+zobjdirs = $(dir $(zfs-objs)) $(dir $(spl-objs))                                             \
+  $(dir $(zfs-$(CONFIG_X86))) $(dir $(zfs-$(CONFIG_UML_X86))) $(dir $(zfs-$(CONFIG_ARM64)))  \
+  $(dir $(zfs-$(CONFIG_PPC64))) $(dir $(zfs-$(CONFIG_PPC)))
+
+z_cdirs = $(sort $(filter-out lua/setjmp/ $(addprefix icp/asm-aarch64/, aes/ blake3/ modes/ sha2/) \
+  $(addprefix icp/asm-x86_64/, aes/ blake3/ modes/ sha2/)                                          \
+  $(addprefix icp/asm-ppc/, aes/ blake3/ modes/ sha2/)                                             \
+  $(addprefix icp/asm-ppc64/, aes/ blake3/ modes/ sha2/), $(zobjdirs)))
+z_sdirs = $(sort $(filter lua/setjmp/ $(addprefix icp/asm-aarch64/, aes/ blake3/ modes/ sha2/)     \
+  $(addprefix icp/asm-x86_64/, aes/ blake3/ modes/ sha2/)                                          \
+  $(addprefix icp/asm-ppc/, aes/ blake3/ modes/ sha2/)                                             \
+  $(addprefix icp/asm-ppc64/, aes/ blake3/ modes/ sha2/), $(zobjdirs)))
+
+define ZKMOD_C_O_MAKE_TARGET
+$1%.o: $(src)/$1%.c FORCE
+	$$(call if_changed_rule,cc_o_c)
+	$$(call cmd,force_checksrc)
+endef
+
+define ZKMOD_S_O_MAKE_TARGET
+$1%.o: $(src)/$1%.S FORCE
+	$$(call if_changed_rule,as_o_S)
+	$$(call cmd,force_checksrc)
+endef
+
+$(foreach target,$(z_cdirs), $(eval $(call ZKMOD_C_O_MAKE_TARGET,$(target))))
+$(foreach target,$(z_sdirs), $(eval $(call ZKMOD_S_O_MAKE_TARGET,$(target))))

@@ -1,8 +1,8 @@
-.include <bsd.init.mk>
+.include <src.opts.mk>
 .include "../clang.pre.mk"
 
-.if defined(TOOLS_PREFIX)
-# Build static library during cross-tools stage
+.if defined(TOOLS_PREFIX) || ${MK_LLVM_LINK_STATIC_LIBRARIES} == "yes"
+# Build static library during cross-tools stage, or when explicitly requested.
 LIB=		clang
 INTERNALLIB=
 .else
@@ -13,6 +13,10 @@ PRIVATELIB=
 .if ${MACHINE} == "powerpc"
 # Work around "relocation R_PPC_GOT16 out of range" errors
 PICFLAG=        -fPIC
+.endif
+.if ${MACHINE_CPUARCH} == "aarch64"
+# Only required for GCC
+LIBADD+=	compiler_rt
 .endif
 .endif
 
@@ -872,7 +876,7 @@ SRCS+=		${SRCS_ALL:O}
 
 LIBDEPS+=	llvm
 
-.if defined(TOOLS_PREFIX)
+.if defined(TOOLS_PREFIX) || ${MK_LLVM_LINK_STATIC_LIBRARIES} == "yes"
 LIBPRIV=
 LIBEXT=		a
 .else

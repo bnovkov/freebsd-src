@@ -541,8 +541,9 @@ vdev_initialize_thread(void *arg)
 
 	abd_t *deadbeef = vdev_initialize_block_alloc();
 
-	vd->vdev_initialize_tree = zfs_range_tree_create(NULL, ZFS_RANGE_SEG64,
-	    NULL, 0, 0);
+	vd->vdev_initialize_tree = zfs_range_tree_create_flags(
+	    NULL, ZFS_RANGE_SEG64, NULL, 0, 0,
+	    ZFS_RT_F_DYN_NAME, vdev_rt_name(vd, "vdev_initialize_tree"));
 
 	for (uint64_t i = 0; !vd->vdev_detached &&
 	    i < vd->vdev_top->vdev_ms_count; i++) {
@@ -631,7 +632,7 @@ vdev_initialize(vdev_t *vd)
 	ASSERT(MUTEX_HELD(&vd->vdev_initialize_lock));
 	ASSERT(vd->vdev_ops->vdev_op_leaf);
 	ASSERT(vdev_is_concrete(vd));
-	ASSERT3P(vd->vdev_initialize_thread, ==, NULL);
+	ASSERT0P(vd->vdev_initialize_thread);
 	ASSERT(!vd->vdev_detached);
 	ASSERT(!vd->vdev_initialize_exit_wanted);
 	ASSERT(!vd->vdev_top->vdev_removing);
@@ -652,7 +653,7 @@ vdev_uninitialize(vdev_t *vd)
 	ASSERT(MUTEX_HELD(&vd->vdev_initialize_lock));
 	ASSERT(vd->vdev_ops->vdev_op_leaf);
 	ASSERT(vdev_is_concrete(vd));
-	ASSERT3P(vd->vdev_initialize_thread, ==, NULL);
+	ASSERT0P(vd->vdev_initialize_thread);
 	ASSERT(!vd->vdev_detached);
 	ASSERT(!vd->vdev_initialize_exit_wanted);
 	ASSERT(!vd->vdev_top->vdev_removing);
@@ -671,7 +672,7 @@ vdev_initialize_stop_wait_impl(vdev_t *vd)
 	while (vd->vdev_initialize_thread != NULL)
 		cv_wait(&vd->vdev_initialize_cv, &vd->vdev_initialize_lock);
 
-	ASSERT3P(vd->vdev_initialize_thread, ==, NULL);
+	ASSERT0P(vd->vdev_initialize_thread);
 	vd->vdev_initialize_exit_wanted = B_FALSE;
 }
 
@@ -684,7 +685,7 @@ vdev_initialize_stop_wait(spa_t *spa, list_t *vd_list)
 	(void) spa;
 	vdev_t *vd;
 
-	ASSERT(MUTEX_HELD(&spa_namespace_lock) ||
+	ASSERT(spa_namespace_held() ||
 	    spa->spa_export_thread == curthread);
 
 	while ((vd = list_remove_head(vd_list)) != NULL) {
@@ -727,7 +728,7 @@ vdev_initialize_stop(vdev_t *vd, vdev_initializing_state_t tgt_state,
 	if (vd_list == NULL) {
 		vdev_initialize_stop_wait_impl(vd);
 	} else {
-		ASSERT(MUTEX_HELD(&spa_namespace_lock) ||
+		ASSERT(spa_namespace_held() ||
 		    vd->vdev_spa->spa_export_thread == curthread);
 		list_insert_tail(vd_list, vd);
 	}
@@ -760,7 +761,7 @@ vdev_initialize_stop_all(vdev_t *vd, vdev_initializing_state_t tgt_state)
 	spa_t *spa = vd->vdev_spa;
 	list_t vd_list;
 
-	ASSERT(MUTEX_HELD(&spa_namespace_lock) ||
+	ASSERT(spa_namespace_held() ||
 	    spa->spa_export_thread == curthread);
 
 	list_create(&vd_list, sizeof (vdev_t),
@@ -780,7 +781,7 @@ vdev_initialize_stop_all(vdev_t *vd, vdev_initializing_state_t tgt_state)
 void
 vdev_initialize_restart(vdev_t *vd)
 {
-	ASSERT(MUTEX_HELD(&spa_namespace_lock) ||
+	ASSERT(spa_namespace_held() ||
 	    vd->vdev_spa->spa_load_thread == curthread);
 	ASSERT(!spa_config_held(vd->vdev_spa, SCL_ALL, RW_WRITER));
 

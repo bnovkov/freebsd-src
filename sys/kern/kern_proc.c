@@ -237,15 +237,12 @@ proc_dtor(void *mem, int size, void *arg)
 	struct proc *p;
 	struct thread *td;
 
-	/* INVARIANTS checks go here */
-	p = (struct proc *)mem;
+	p = mem;
 	td = FIRST_THREAD_IN_PROC(p);
 	if (td != NULL) {
-#ifdef INVARIANTS
-		KASSERT((p->p_numthreads == 1),
-		    ("bad number of threads in exiting process"));
-		KASSERT(STAILQ_EMPTY(&p->p_ktr), ("proc_dtor: non-empty p_ktr"));
-#endif
+		KASSERT(p->p_numthreads == 1,
+		    ("too many threads in exiting process"));
+
 		/* Free all OSD associated to this thread. */
 		osd_thread_exit(td);
 		ast_kclear(td);
@@ -253,12 +250,12 @@ proc_dtor(void *mem, int size, void *arg)
 		/* Make sure all thread destructors are executed */
 		EVENTHANDLER_DIRECT_INVOKE(thread_dtor, td);
 	}
+	KASSERT(STAILQ_EMPTY(&p->p_ktr), ("proc_dtor: non-empty p_ktr"));
 	EVENTHANDLER_DIRECT_INVOKE(process_dtor, p);
 #ifdef KDTRACE_HOOKS
 	kdtrace_proc_dtor(p);
 #endif
-	if (p->p_ksi != NULL)
-		KASSERT(! KSI_ONQ(p->p_ksi), ("SIGCHLD queue"));
+	KASSERT(p->p_ksi == NULL || !KSI_ONQ(p->p_ksi), ("SIGCHLD queue"));
 }
 
 /*
@@ -281,6 +278,7 @@ proc_init(void *mem, int size, int flags)
 	p->p_stats = pstats_alloc();
 	p->p_pgrp = NULL;
 	TAILQ_INIT(&p->p_kqtim_stop);
+	STAILQ_INIT(&p->p_ktr);
 	return (0);
 }
 
@@ -1112,13 +1110,14 @@ fill_kinfo_proc_only(struct proc *p, struct kinfo_proc *kp)
 		if (cred->cr_flags & CRED_FLAG_CAPMODE)
 			kp->ki_cr_flags |= KI_CRF_CAPABILITY_MODE;
 		/* XXX bde doesn't like KI_NGROUPS */
-		if (cred->cr_ngroups > KI_NGROUPS) {
+		if (1 + cred->cr_ngroups > KI_NGROUPS) {
 			kp->ki_ngroups = KI_NGROUPS;
 			kp->ki_cr_flags |= KI_CRF_GRP_OVERFLOW;
 		} else
-			kp->ki_ngroups = cred->cr_ngroups;
-		bcopy(cred->cr_groups, kp->ki_groups,
-		    kp->ki_ngroups * sizeof(gid_t));
+			kp->ki_ngroups = 1 + cred->cr_ngroups;
+		kp->ki_groups[0] = cred->cr_gid;
+		bcopy(cred->cr_groups, kp->ki_groups + 1,
+		    (kp->ki_ngroups - 1) * sizeof(gid_t));
 		kp->ki_rgid = cred->cr_rgid;
 		kp->ki_svgid = cred->cr_svgid;
 		/* If jailed(cred), emulate the old P_JAILED flag. */
@@ -1438,7 +1437,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_sid);
 	CP(*ki, *ki32, ki_tsid);
 	CP(*ki, *ki32, ki_jobc);
-	CP(*ki, *ki32, ki_tdev);
+	FU64_CP(*ki, *ki32, ki_tdev);
 	CP(*ki, *ki32, ki_tdev_freebsd11);
 	CP(*ki, *ki32, ki_siglist);
 	CP(*ki, *ki32, ki_sigmask);
@@ -1465,7 +1464,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_slptime);
 	CP(*ki, *ki32, ki_swtime);
 	CP(*ki, *ki32, ki_cow);
-	CP(*ki, *ki32, ki_runtime);
+	FU64_CP(*ki, *ki32, ki_runtime);
 	TV_CP(*ki, *ki32, ki_start);
 	TV_CP(*ki, *ki32, ki_childtime);
 	CP(*ki, *ki32, ki_flag);
@@ -1504,6 +1503,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	PTRTRIM_CP(*ki, *ki32, ki_kstack);
 	PTRTRIM_CP(*ki, *ki32, ki_udata);
 	PTRTRIM_CP(*ki, *ki32, ki_tdaddr);
+	PTRTRIM_CP(*ki, *ki32, ki_pd);
 	CP(*ki, *ki32, ki_sflag);
 	CP(*ki, *ki32, ki_tdflags);
 	PTRTRIM_CP(*ki, *ki32, ki_uerrmsg);
@@ -2943,8 +2943,11 @@ sysctl_kern_proc_groups(SYSCTL_HANDLER_ARGS)
 	cred = crhold(p->p_ucred);
 	PROC_UNLOCK(p);
 
-	error = SYSCTL_OUT(req, cred->cr_groups,
-	    cred->cr_ngroups * sizeof(gid_t));
+	error = SYSCTL_OUT(req, &cred->cr_gid, sizeof(gid_t));
+	if (error == 0)
+		error = SYSCTL_OUT(req, cred->cr_groups,
+		    cred->cr_ngroups * sizeof(gid_t));
+
 	crfree(cred);
 	return (error);
 }

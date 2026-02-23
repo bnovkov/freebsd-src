@@ -503,7 +503,6 @@ nat44_config(struct ip_fw_chain *chain, struct nat44_cfg_nat *ucfg)
 	gencnt = chain->gencnt;
 	ptr = lookup_nat_name(&chain->nat, ucfg->name);
 	if (ptr == NULL) {
-		IPFW_UH_WUNLOCK(chain);
 		/* New rule: allocate and init new instance. */
 		ptr = malloc(sizeof(struct cfg_nat), M_IPFW, M_WAITOK | M_ZERO);
 		ptr->lib = LibAliasInit(NULL);
@@ -514,7 +513,6 @@ nat44_config(struct ip_fw_chain *chain, struct nat44_cfg_nat *ucfg)
 		LIST_REMOVE(ptr, _next);
 		flush_nat_ptrs(chain, ptr->id);
 		IPFW_WUNLOCK(chain);
-		IPFW_UH_WUNLOCK(chain);
 	}
 
 	/*
@@ -543,7 +541,6 @@ nat44_config(struct ip_fw_chain *chain, struct nat44_cfg_nat *ucfg)
 	del_redir_spool_cfg(ptr, &ptr->redir_chain);
 	/* Add new entries. */
 	add_redir_spool_cfg((char *)(ucfg + 1), ptr);
-	IPFW_UH_WLOCK(chain);
 
 	/* Extra check to avoid race with another ipfw_nat_cfg() */
 	tcfg = NULL;
@@ -999,9 +996,11 @@ ipfw_nat_del(struct sockopt *sopt)
 {
 	struct cfg_nat *ptr;
 	struct ip_fw_chain *chain = &V_layer3_chain;
-	int i;
+	int error, i;
 
-	sooptcopyin(sopt, &i, sizeof i, sizeof i);
+	error = sooptcopyin(sopt, &i, sizeof i, sizeof i);
+	if (error != 0)
+		return (error);
 	/* XXX validate i */
 	IPFW_UH_WLOCK(chain);
 	ptr = lookup_nat(&chain->nat, i);
@@ -1047,7 +1046,6 @@ retry:
 				len += sizeof(struct cfg_spool_legacy);
 		}
 	}
-	IPFW_UH_RUNLOCK(chain);
 
 	data = malloc(len, M_TEMP, M_WAITOK | M_ZERO);
 	bcopy(&nat_cnt, data, sizeof(nat_cnt));
@@ -1055,7 +1053,6 @@ retry:
 	nat_cnt = 0;
 	len = sizeof(nat_cnt);
 
-	IPFW_UH_RLOCK(chain);
 	if (gencnt != chain->gencnt) {
 		free(data, M_TEMP);
 		goto retry;
@@ -1104,7 +1101,7 @@ ipfw_nat_get_log(struct sockopt *sopt)
 {
 	uint8_t *data;
 	struct cfg_nat *ptr;
-	int i, size;
+	int error, i, size;
 	struct ip_fw_chain *chain;
 	IPFW_RLOCK_TRACKER;
 
@@ -1134,9 +1131,9 @@ ipfw_nat_get_log(struct sockopt *sopt)
 		i += LIBALIAS_BUF_SIZE;
 	}
 	IPFW_RUNLOCK(chain);
-	sooptcopyout(sopt, data, size);
+	error = sooptcopyout(sopt, data, size);
 	free(data, M_IPFW);
-	return(0);
+	return (error);
 }
 
 static int
@@ -1166,7 +1163,7 @@ vnet_ipfw_nat_uninit(const void *arg __unused)
 }
 
 static void
-ipfw_nat_init(void)
+ipfw_nat_init(void *dummy __unused)
 {
 
 	/* init ipfw hooks */
@@ -1183,7 +1180,7 @@ ipfw_nat_init(void)
 }
 
 static void
-ipfw_nat_destroy(void)
+ipfw_nat_destroy(void *dummy __unused)
 {
 
 	EVENTHANDLER_DEREGISTER(ifaddr_event, ifaddr_event_tag);

@@ -60,12 +60,13 @@
 #include "opt_geom.h"
 #include "opt_md.h"
 
-#include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bio.h>
 #include <sys/buf.h>
+#include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/devicestat.h>
+#include <sys/disk.h>
 #include <sys/fcntl.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
@@ -76,11 +77,11 @@
 #include <sys/mdioctl.h>
 #include <sys/mount.h>
 #include <sys/mutex.h>
-#include <sys/sx.h>
 #include <sys/namei.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/rwlock.h>
+#include <sys/sx.h>
 #include <sys/sbuf.h>
 #include <sys/sched.h>
 #include <sys/sf_buf.h>
@@ -88,9 +89,6 @@
 #include <sys/uio.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
-#include <sys/disk.h>
-#include <sys/param.h>
-#include <sys/bus.h>
 
 #include <geom/geom.h>
 #include <geom/geom_int.h>
@@ -1619,7 +1617,6 @@ mdresize(struct md_s *sc, struct md_req *mdr)
 			    0, 0);
 			swap_release_by_cred(IDX_TO_OFF(oldpages -
 			    newpages), sc->cred);
-			sc->s_swap.object->charge = IDX_TO_OFF(newpages);
 			sc->s_swap.object->size = newpages;
 			VM_OBJECT_WUNLOCK(sc->s_swap.object);
 		} else if (newpages > oldpages) {
@@ -1639,7 +1636,6 @@ mdresize(struct md_s *sc, struct md_req *mdr)
 				}
 			}
 			VM_OBJECT_WLOCK(sc->s_swap.object);
-			sc->s_swap.object->charge = IDX_TO_OFF(newpages);
 			sc->s_swap.object->size = newpages;
 			VM_OBJECT_WUNLOCK(sc->s_swap.object);
 		}

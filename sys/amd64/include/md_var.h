@@ -45,6 +45,7 @@ extern int	hw_ibrs_disable;
 extern int	hw_ssb_disable;
 extern int	nmi_flush_l1d_sw;
 extern int	syscall_ret_l1d_flush_mode;
+extern int	lass_enabled;
 
 extern vm_paddr_t intel_graphics_stolen_base;
 extern vm_paddr_t intel_graphics_stolen_size;
@@ -58,6 +59,7 @@ extern vm_paddr_t KERNend;
 extern bool efi_boot;
 
 struct	__mcontext;
+struct	pcpu;
 struct	savefpu;
 struct	sysentvec;
 
@@ -98,6 +100,10 @@ void	get_fpcontext(struct thread *td, struct __mcontext *mcp,
 	    char **xfpusave, size_t *xfpusave_len);
 int	set_fpcontext(struct thread *td, struct __mcontext *mcp,
 	    char *xfpustate, size_t xfpustate_len);
+
+void	wrmsr_early_safe_start(void);
+void	wrmsr_early_safe_end(void);
+int	wrmsr_early_safe(u_int msr, uint64_t data);
 
 #endif /* !_MACHINE_MD_VAR_H_ */
 

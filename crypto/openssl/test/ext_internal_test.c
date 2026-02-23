@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -61,12 +61,15 @@ static EXT_LIST ext_list[] = {
     EXT_ENTRY(extended_master_secret),
     EXT_ENTRY(signature_algorithms_cert),
     EXT_ENTRY(post_handshake_auth),
+    EXT_ENTRY(client_cert_type),
+    EXT_ENTRY(server_cert_type),
     EXT_ENTRY(signature_algorithms),
     EXT_ENTRY(supported_versions),
     EXT_ENTRY(psk_kex_modes),
     EXT_ENTRY(key_share),
     EXT_ENTRY(cookie),
     EXT_ENTRY(cryptopro_bug),
+    EXT_ENTRY(compress_certificate),
     EXT_ENTRY(early_data),
     EXT_ENTRY(certificate_authorities),
     EXT_ENTRY(padding),
@@ -85,14 +88,14 @@ static int test_extension_list(void)
         if (!TEST_size_t_eq(i, ext_list[i].idx)) {
             retval = 0;
             TEST_error("TLSEXT_IDX_%s=%zd, found at=%zd\n",
-                       ext_list[i].name, ext_list[i].idx, i);
+                ext_list[i].name, ext_list[i].idx, i);
         }
         type = ossl_get_extension_type(ext_list[i].idx);
         if (!TEST_uint_eq(type, ext_list[i].type)) {
             retval = 0;
             TEST_error("TLSEXT_IDX_%s=%zd expected=0x%05X got=0x%05X",
-                       ext_list[i].name, ext_list[i].idx, ext_list[i].type,
-                       type);
+                ext_list[i].name, ext_list[i].idx, ext_list[i].type,
+                type);
         }
     }
     return retval;

@@ -187,14 +187,13 @@ struct nfsv4_opflag nfsv4_opflag[NFSV42_NOPS] = {
 	{ 0, 0, 0, 0, LK_EXCLUSIVE, 1, 1 },		/* Read Plus */
 	{ 0, 1, 0, 0, LK_SHARED, 1, 0 },		/* Seek */
 	{ 0, 0, 0, 0, LK_EXCLUSIVE, 1, 1 },		/* Write Same */
-	{ 0, 0, 0, 0, LK_EXCLUSIVE, 1, 1 },		/* Clone */
+	{ 2, 1, 1, 0, LK_SHARED, 1, 0 },		/* Clone */
 	{ 0, 1, 0, 0, LK_SHARED, 1, 1 },		/* Getxattr */
 	{ 0, 1, 1, 1, LK_EXCLUSIVE, 1, 1 },		/* Setxattr */
 	{ 0, 1, 0, 0, LK_SHARED, 1, 1 },		/* Listxattrs */
 	{ 0, 1, 1, 1, LK_EXCLUSIVE, 1, 1 },		/* Removexattr */
 };
 
-static int ncl_mbuf_mhlen = MHLEN;
 struct nfsrv_lughash {
 	struct mtx		mtx;
 	struct nfsuserhashhead	lughead;
@@ -216,13 +215,20 @@ NFSD_VNET_DEFINE_STATIC(u_char *, nfsrv_dnsname) = NULL;
  * marked 0 in this array, the code will still work, just not quite as
  * efficiently.)
  */
-static int nfs_bigreply[NFSV42_NPROCS] = { 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-    1, 0, 0, 1, 0, 0, 0, 0, 0, 0 };
+static bool nfs_bigreply[NFSV42_NPROCS] = {
+	[NFSPROC_GETACL] = true,
+	[NFSPROC_GETEXTATTR] = true,
+	[NFSPROC_LISTEXTATTR] = true,
+	[NFSPROC_LOOKUP] = true,
+	[NFSPROC_READ] = true,
+	[NFSPROC_READDIR] = true,
+	[NFSPROC_READDIRPLUS] = true,
+	[NFSPROC_READDS] = true,
+	[NFSPROC_READLINK] = true,
+};
 
 /* local functions */
-static int nfsrv_skipace(struct nfsrv_descript *nd, int *acesizep);
+static int nfsrv_skipace(struct nfsrv_descript *nd, acl_type_t, int *acesizep);
 static void nfsv4_wanted(struct nfsv4lock *lp);
 static uint32_t nfsv4_filesavail(struct statfs *, struct mount *);
 static int nfsrv_getuser(int procnum, uid_t uid, gid_t gid, char *name);
@@ -232,6 +238,9 @@ static int nfsrv_getrefstr(struct nfsrv_descript *, u_char **, u_char **,
 static void nfsrv_refstrbigenough(int, u_char **, u_char **, int *);
 static uint32_t vtonfsv4_type(struct vattr *);
 static __enum_uint8(vtype) nfsv4tov_type(uint32_t, uint16_t *);
+static void nfsv4_setsequence(struct nfsmount *, struct nfsrv_descript *,
+    struct nfsclsession *, bool, struct ucred *);
+static uint32_t nfs_trueform(struct vnode *);
 
 static struct {
 	int	op;
@@ -310,6 +319,7 @@ static struct {
 	{ NFSV4OP_LAYOUTERROR, 1, "LayoutError", 11, },
 	{ NFSV4OP_VERIFY, 3, "AppendWrite", 11, },
 	{ NFSV4OP_OPENATTR, 3, "OpenAttr", 8, },
+	{ NFSV4OP_SAVEFH, 5, "Clone", 5, },
 };
 
 /*
@@ -319,7 +329,7 @@ static int nfs_bigrequest[NFSV42_NPROCS] = {
 	0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
-	0, 1, 0
+	0, 1, 0, 0
 };
 
 /*
@@ -631,6 +641,7 @@ nfscl_fillsattr(struct nfsrv_descript *nd, struct vattr *vap,
 		if ((flags & NFSSATTR_FULL) && vap->va_size != VNOVAL)
 			NFSSETBIT_ATTRBIT(&attrbits, NFSATTRBIT_SIZE);
 		if ((flags & NFSSATTR_FULL) && vap->va_flags != VNOVAL) {
+			NFSSETBIT_ATTRBIT(&attrbits, NFSATTRBIT_ARCHIVE);
 			NFSSETBIT_ATTRBIT(&attrbits, NFSATTRBIT_HIDDEN);
 			NFSSETBIT_ATTRBIT(&attrbits, NFSATTRBIT_SYSTEM);
 		}
@@ -648,7 +659,7 @@ nfscl_fillsattr(struct nfsrv_descript *nd, struct vattr *vap,
 			NFSSETBIT_ATTRBIT(&attrbits, NFSATTRBIT_TIMECREATE);
 		(void) nfsv4_fillattr(nd, vp->v_mount, vp, NULL, vap, NULL, 0,
 		    &attrbits, NULL, NULL, 0, 0, 0, 0, (uint64_t)0, NULL,
-		    false, false, false);
+		    false, false, false, 0, NULL, false);
 		break;
 	}
 }
@@ -759,7 +770,7 @@ nfsm_dissct(struct nfsrv_descript *nd, int siz, int how)
 		nd->nd_dpos += siz;
 	} else if (nd->nd_md->m_next == NULL) {
 		return (retp);
-	} else if (siz > ncl_mbuf_mhlen) {
+	} else if (siz > MHLEN) {
 		panic("nfs S too big");
 	} else {
 		MGET(mp2, how, MT_DATA);
@@ -1137,20 +1148,20 @@ nfsmout:
  */
 int
 nfsrv_dissectacl(struct nfsrv_descript *nd, NFSACL_T *aclp, bool server,
-    int *aclerrp, int *aclsizep, __unused NFSPROC_T *p)
+    bool posixacl, int *aclerrp, int *aclsizep)
 {
-	u_int32_t *tl;
+	uint32_t *tl;
 	int i, aclsize;
 	int acecnt, error = 0, aceerr = 0, acesize;
 
 	*aclerrp = 0;
-	if (aclp)
+	if (aclp != NULL)
 		aclp->acl_cnt = 0;
 	/*
 	 * Parse out the ace entries and expect them to conform to
 	 * what can be supported by R/W/X bits.
 	 */
-	NFSM_DISSECT(tl, u_int32_t *, NFSX_UNSIGNED);
+	NFSM_DISSECT(tl, uint32_t *, NFSX_UNSIGNED);
 	aclsize = NFSX_UNSIGNED;
 	acecnt = fxdr_unsigned(int, *tl);
 	/*
@@ -1166,20 +1177,28 @@ nfsrv_dissectacl(struct nfsrv_descript *nd, NFSACL_T *aclp, bool server,
 	if (nfsrv_useacl == 0)
 		aceerr = NFSERR_ATTRNOTSUPP;
 	for (i = 0; i < acecnt; i++) {
-		if (aclp && !aceerr)
-			error = nfsrv_dissectace(nd, &aclp->acl_entry[i],
-			    server, &aceerr, &acesize, p);
+		if (aclp != NULL && aceerr == 0) {
+			if (posixacl)
+				error = nfsrv_dissectposixace(nd,
+				    &aclp->acl_entry[i], server, &aceerr,
+				    &acesize);
+			else
+				error = nfsrv_dissectace(nd,
+				    &aclp->acl_entry[i], server, &aceerr,
+				    &acesize);
+		} else if (posixacl)
+			error = nfsrv_skipace(nd, ACL_TYPE_ACCESS, &acesize);
 		else
-			error = nfsrv_skipace(nd, &acesize);
-		if (error)
+			error = nfsrv_skipace(nd, ACL_TYPE_NFS4, &acesize);
+		if (error != 0)
 			goto nfsmout;
 		aclsize += acesize;
 	}
-	if (aclp && !aceerr)
+	if (aclp != NULL && aceerr == 0)
 		aclp->acl_cnt = acecnt;
-	if (aceerr)
+	if (aceerr != 0)
 		*aclerrp = aceerr;
-	if (aclsizep)
+	if (aclsizep != NULL)
 		*aclsizep = aclsize;
 nfsmout:
 	NFSEXITCODE2(error, nd);
@@ -1190,16 +1209,22 @@ nfsmout:
  * Skip over an NFSv4 ace entry. Just dissect the xdr and discard it.
  */
 static int
-nfsrv_skipace(struct nfsrv_descript *nd, int *acesizep)
+nfsrv_skipace(struct nfsrv_descript *nd, acl_type_t acltype, int *acesizep)
 {
-	u_int32_t *tl;
+	uint32_t *tl;
 	int error, len = 0;
 
-	NFSM_DISSECT(tl, u_int32_t *, 4 * NFSX_UNSIGNED);
-	len = fxdr_unsigned(int, *(tl + 3));
+	if (acltype == ACL_TYPE_NFS4) {
+		NFSM_DISSECT(tl, uint32_t *, 4 * NFSX_UNSIGNED);
+		len = fxdr_unsigned(int, *(tl + 3));
+		*acesizep = NFSM_RNDUP(len) + (4 * NFSX_UNSIGNED);
+	} else {
+		NFSM_DISSECT(tl, uint32_t *, 3 * NFSX_UNSIGNED);
+		len = fxdr_unsigned(int, *(tl + 2));
+		*acesizep = NFSM_RNDUP(len) + (3 * NFSX_UNSIGNED);
+	}
 	error = nfsm_advance(nd, NFSM_RNDUP(len), -1);
 nfsmout:
-	*acesizep = NFSM_RNDUP(len) + (4 * NFSX_UNSIGNED);
 	NFSEXITCODE2(error, nd);
 	return (error);
 }
@@ -1302,7 +1327,8 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
     struct nfsv3_pathconf *pc, struct statfs *sbp, struct nfsstatfs *sfp,
     struct nfsfsinfo *fsp, NFSACL_T *aclp, int compare, int *retcmpp,
     u_int32_t *leasep, u_int32_t *rderrp, bool *has_namedattrp,
-    NFSPROC_T *p, struct ucred *cred)
+    uint32_t *clone_blksizep, uint32_t *trueformp, NFSPROC_T *p,
+    struct ucred *cred)
 {
 	u_int32_t *tl;
 	int i = 0, j, k, l = 0, m, bitpos, attrsum = 0;
@@ -1427,6 +1453,11 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 				NFSCLRBIT_ATTRBIT(&checkattrbits, NFSATTRBIT_ACL);
 				NFSCLRBIT_ATTRBIT(&checkattrbits, NFSATTRBIT_ACLSUPPORT);
 		   	   }
+			   /* Some filesystem do not support POSIX ACL   */
+			   if (nfsrv_useacl == 0 || nfs_supportsposixacls(vp) == 0) {
+				NFSCLRBIT_ATTRBIT(&checkattrbits, NFSATTRBIT_POSIXACCESSACL);
+				NFSCLRBIT_ATTRBIT(&checkattrbits, NFSATTRBIT_POSIXDEFAULTACL);
+			   }
 			   /* Some filesystems do not support uf_hidden */
 			   if (vp == NULL || VOP_PATHCONF(vp,
 				_PC_HAS_HIDDENSYSTEM, &has_pathconf) != 0)
@@ -1437,6 +1468,13 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 				 NFSCLRBIT_ATTRBIT(&checkattrbits,
 				    NFSATTRBIT_SYSTEM);
 			   }
+			   /* Some filesystems do not support block cloning */
+			   if (vp == NULL || VOP_PATHCONF(vp,
+				_PC_CLONE_BLKSIZE, &has_pathconf) != 0)
+			       has_pathconf = 0;
+			   if (has_pathconf == 0)
+				 NFSCLRBIT_ATTRBIT(&checkattrbits,
+				    NFSATTRBIT_CLONEBLKSIZE);
 			   if (!NFSEQUAL_ATTRBIT(&retattrbits, &checkattrbits)
 			       || retnotsup)
 				*retcmpp = NFSERR_NOTSAME;
@@ -1610,8 +1648,8 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 				NFSACL_T *naclp;
 
 				naclp = acl_alloc(M_WAITOK);
-				error = nfsrv_dissectacl(nd, naclp, true,
-				    &aceerr, &cnt, p);
+				error = nfsrv_dissectacl(nd, naclp, true, false,
+				    &aceerr, &cnt);
 				if (error) {
 				    acl_free(naclp);
 				    goto nfsmout;
@@ -1621,8 +1659,8 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 				    *retcmpp = NFSERR_NOTSAME;
 				acl_free(naclp);
 			    } else {
-				error = nfsrv_dissectacl(nd, NULL, true,
-				    &aceerr, &cnt, p);
+				error = nfsrv_dissectacl(nd, NULL, true, false,
+				    &aceerr, &cnt);
 				if (error)
 				    goto nfsmout;
 				*retcmpp = NFSERR_ATTRNOTSUPP;
@@ -1631,14 +1669,13 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 			} else {
 				if (vp != NULL && aclp != NULL)
 				    error = nfsrv_dissectacl(nd, aclp, false,
-					&aceerr, &cnt, p);
+					false, &aceerr, &cnt);
 				else
 				    error = nfsrv_dissectacl(nd, NULL, false,
-					&aceerr, &cnt, p);
+					false, &aceerr, &cnt);
 				if (error)
 				    goto nfsmout;
 			}
-			
 			attrsum += cnt;
 			break;
 		case NFSATTRBIT_ACLSUPPORT:
@@ -1655,9 +1692,17 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 			attrsum += NFSX_UNSIGNED;
 			break;
 		case NFSATTRBIT_ARCHIVE:
-			NFSM_DISSECT(tl, u_int32_t *, NFSX_UNSIGNED);
-			if (compare && !(*retcmpp))
-				*retcmpp = NFSERR_ATTRNOTSUPP;
+			NFSM_DISSECT(tl, uint32_t *, NFSX_UNSIGNED);
+			if (compare) {
+				if (!(*retcmpp) && ((*tl == newnfs_true &&
+				    (nap->na_flags & UF_ARCHIVE) == 0) ||
+				    (*tl == newnfs_false &&
+				     (nap->na_flags & UF_ARCHIVE) != 0)))
+					*retcmpp = NFSERR_NOTSAME;
+			} else if (nap != NULL) {
+				if (*tl == newnfs_true)
+					nap->na_flags |= UF_ARCHIVE;
+			}
 			attrsum += NFSX_UNSIGNED;
 			break;
 		case NFSATTRBIT_CANSETTIME:
@@ -1681,11 +1726,18 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 			attrsum += NFSX_UNSIGNED;
 			break;
 		case NFSATTRBIT_CASEINSENSITIVE:
-			NFSM_DISSECT(tl, u_int32_t *, NFSX_UNSIGNED);
+			NFSM_DISSECT(tl, uint32_t *, NFSX_UNSIGNED);
 			if (compare) {
 				if (!(*retcmpp)) {
-				    if (*tl != newnfs_false)
-					*retcmpp = NFSERR_NOTSAME;
+					if (vp == NULL || VOP_PATHCONF(vp,
+					    _PC_CASE_INSENSITIVE,
+					    &has_pathconf) != 0)
+						has_pathconf = 0;
+					if ((has_pathconf != 0 &&
+					     *tl != newnfs_true) ||
+					    (has_pathconf == 0 &&
+					    *tl != newnfs_false))
+						*retcmpp = NFSERR_NOTSAME;
 				}
 			} else if (pc != NULL) {
 				pc->pc_caseinsensitive =
@@ -2374,6 +2426,23 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 			if (compare && !(*retcmpp) && i != nfs_srvmaxio)
 				*retcmpp = NFSERR_NOTSAME;
 			break;
+		case NFSATTRBIT_CLONEBLKSIZE:
+			NFSM_DISSECT(tl, uint32_t *, NFSX_UNSIGNED);
+			if (compare) {
+				if (!(*retcmpp)) {
+					if (vp == NULL || VOP_PATHCONF(vp,
+					    _PC_CLONE_BLKSIZE, &has_pathconf)
+					    != 0)
+						has_pathconf = 0;
+					if (has_pathconf !=
+					    fxdr_unsigned(uint32_t, *tl))
+						*retcmpp = NFSERR_NOTSAME;
+				}
+			} else if (clone_blksizep != NULL) {
+				*clone_blksizep = fxdr_unsigned(uint32_t, *tl);
+			}
+			attrsum += NFSX_UNSIGNED;
+			break;
 		case NFSATTRBIT_CHANGEATTRTYPE:
 			NFSM_DISSECT(tl, uint32_t *, NFSX_UNSIGNED);
 			if (compare) {
@@ -2390,6 +2459,105 @@ nfsv4_loadattr(struct nfsrv_descript *nd, vnode_t vp,
 				}
 			}
 			attrsum += NFSX_UNSIGNED;
+			break;
+		case NFSATTRBIT_ACLTRUEFORM:
+			NFSM_DISSECT(tl, uint32_t *, NFSX_UNSIGNED);
+			if (compare) {
+				if (!(*retcmpp)) {
+					tuint = nfs_trueform(vp);
+					if (tuint != fxdr_unsigned(uint32_t,
+					    *tl))
+						*retcmpp = NFSERR_NOTSAME;
+				}
+			} else if (trueformp != NULL) {
+				*trueformp = fxdr_unsigned(uint32_t, *tl);
+			}
+			attrsum += NFSX_UNSIGNED;
+			break;
+		case NFSATTRBIT_ACLTRUEFORMSCOPE:
+			NFSM_DISSECT(tl, uint32_t *, NFSX_UNSIGNED);
+			if (compare) {
+				if (!(*retcmpp)) {
+					if (fxdr_unsigned(uint32_t, *tl) !=
+					    NFSV4_ACL_SCOPE_FILE_SYSTEM)
+						*retcmpp = NFSERR_NOTSAME;
+				}
+			}
+			attrsum += NFSX_UNSIGNED;
+			break;
+		case NFSATTRBIT_POSIXACCESSACL:
+			if (compare) {
+			  if (!(*retcmpp)) {
+			    if (nfsrv_useacl && nfs_supportsposixacls(vp)) {
+				NFSACL_T *naclp;
+
+				naclp = acl_alloc(M_WAITOK);
+				error = nfsrv_dissectacl(nd, naclp, true, true,
+				    &aceerr, &cnt);
+				if (error) {
+				    acl_free(naclp);
+				    goto nfsmout;
+				}
+				if (aceerr || aclp == NULL ||
+				    nfsrv_compareacl(aclp, naclp))
+				    *retcmpp = NFSERR_NOTSAME;
+				acl_free(naclp);
+			    } else {
+				error = nfsrv_dissectacl(nd, NULL, true, true,
+				    &aceerr, &cnt);
+				if (error)
+				    goto nfsmout;
+				*retcmpp = NFSERR_ATTRNOTSUPP;
+			    }
+			  }
+			} else {
+				if (vp != NULL && aclp != NULL)
+				    error = nfsrv_dissectacl(nd, aclp, false,
+					true, &aceerr, &cnt);
+				else
+				    error = nfsrv_dissectacl(nd, NULL, false,
+					true, &aceerr, &cnt);
+				if (error)
+				    goto nfsmout;
+			}
+			attrsum += cnt;
+			break;
+		case NFSATTRBIT_POSIXDEFAULTACL:
+			if (compare) {
+			  if (!(*retcmpp)) {
+			    if (nfsrv_useacl && nfs_supportsposixacls(vp)) {
+				NFSACL_T *naclp;
+
+				naclp = acl_alloc(M_WAITOK);
+				error = nfsrv_dissectacl(nd, naclp, true, true,
+				    &aceerr, &cnt);
+				if (error) {
+				    acl_free(naclp);
+				    goto nfsmout;
+				}
+				if (aceerr || aclp == NULL ||
+				    nfsrv_compareacl(aclp, naclp))
+				    *retcmpp = NFSERR_NOTSAME;
+				acl_free(naclp);
+			    } else {
+				error = nfsrv_dissectacl(nd, NULL, true, true,
+				    &aceerr, &cnt);
+				if (error)
+				    goto nfsmout;
+				*retcmpp = NFSERR_ATTRNOTSUPP;
+			    }
+			  }
+			} else {
+				if (vp != NULL && aclp != NULL)
+				    error = nfsrv_dissectacl(nd, aclp, false,
+					true, &aceerr, &cnt);
+				else
+				    error = nfsrv_dissectacl(nd, NULL, false,
+					true, &aceerr, &cnt);
+				if (error)
+				    goto nfsmout;
+			}
+			attrsum += cnt;
 			break;
 		default:
 			printf("EEK! nfsv4_loadattr unknown attr=%d\n",
@@ -2648,7 +2816,8 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
     nfsattrbit_t *attrbitp, struct ucred *cred, NFSPROC_T *p, int isdgram,
     int reterr, int supports_nfsv4acls, int at_root, uint64_t mounted_on_fileno,
     struct statfs *pnfssf, bool xattrsupp, bool has_hiddensystem,
-    bool has_namedattr)
+    bool has_namedattr, uint32_t clone_blksize, fsid_t *fsidp,
+    bool has_caseinsensitive)
 {
 	int bitpos, retnum = 0;
 	u_int32_t *tl;
@@ -2661,7 +2830,8 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 	struct statfs *fs;
 	struct nfsfsinfo fsinf;
 	struct timespec temptime;
-	NFSACL_T *aclp, *naclp = NULL;
+	NFSACL_T *aclp, *naclp = NULL, *paclp, *npaclp = NULL, *daclp;
+	NFSACL_T *ndaclp = NULL;
 	short irflag;
 #ifdef QUOTA
 	struct dqblk dqb;
@@ -2680,11 +2850,21 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 	 */
 	if (p == NULL && cred == NULL) {
 		NFSCLRNOTSETABLE_ATTRBIT(retbitp, nd);
-		aclp = saclp;
+		/* Only one of the ACL types can be set for a call. */
+		if (NFSISSET_ATTRBIT(retbitp, NFSATTRBIT_ACL))
+			aclp = saclp;
+		else if (NFSISSET_ATTRBIT(retbitp, NFSATTRBIT_POSIXACCESSACL))
+			paclp = saclp;
+		else if (NFSISSET_ATTRBIT(retbitp, NFSATTRBIT_POSIXDEFAULTACL))
+			daclp = saclp;
 	} else {
 		NFSCLRNOTFILLABLE_ATTRBIT(retbitp, nd);
 		naclp = acl_alloc(M_WAITOK);
 		aclp = naclp;
+		npaclp = acl_alloc(M_WAITOK);
+		paclp = npaclp;
+		ndaclp = acl_alloc(M_WAITOK);
+		daclp = ndaclp;
 	}
 	nfsvno_getfs(&fsinf, isdgram);
 	/*
@@ -2719,12 +2899,12 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 	 */
 	if (NFSISSET_ATTRBIT(retbitp, NFSATTRBIT_ACLSUPPORT) &&
 	    (nfsrv_useacl == 0 || ((cred != NULL || p != NULL) &&
-		supports_nfsv4acls == 0))) {
+		supports_nfsv4acls != SUPPACL_NFSV4))) {
 		NFSCLRBIT_ATTRBIT(retbitp, NFSATTRBIT_ACLSUPPORT);
 	}
 	if (NFSISSET_ATTRBIT(retbitp, NFSATTRBIT_ACL)) {
 		if (nfsrv_useacl == 0 || ((cred != NULL || p != NULL) &&
-		    supports_nfsv4acls == 0)) {
+		    supports_nfsv4acls != SUPPACL_NFSV4)) {
 			NFSCLRBIT_ATTRBIT(retbitp, NFSATTRBIT_ACL);
 		} else if (naclp != NULL) {
 			if (NFSVOPLOCK(vp, LK_SHARED) == 0) {
@@ -2746,6 +2926,49 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 		}
 	}
 
+	/* and the POSIX draft ACL. */
+	if (NFSISSET_ATTRBIT(retbitp, NFSATTRBIT_POSIXACCESSACL)) {
+		if (nfsrv_useacl == 0 || ((cred != NULL || p != NULL) &&
+		    supports_nfsv4acls != SUPPACL_POSIX)) {
+			NFSCLRBIT_ATTRBIT(retbitp, NFSATTRBIT_POSIXACCESSACL);
+		} else if (npaclp != NULL) {
+			if (NFSVOPLOCK(vp, LK_SHARED) == 0) {
+				error = VOP_ACCESSX(vp, VREAD_ACL, cred, p);
+				if (error == 0)
+					error = VOP_GETACL(vp, ACL_TYPE_ACCESS,
+					    npaclp, cred, p);
+				NFSVOPUNLOCK(vp);
+			} else
+				error = NFSERR_PERM;
+			if (error != 0) {
+				if (reterr) {
+					nd->nd_repstat = NFSERR_INVAL;
+					free(fs, M_STATFS);
+					return (0);
+				}
+				NFSCLRBIT_ATTRBIT(retbitp,
+				    NFSATTRBIT_POSIXACCESSACL);
+			}
+		}
+	}
+	if (NFSISSET_ATTRBIT(retbitp, NFSATTRBIT_POSIXDEFAULTACL)) {
+		if (nfsrv_useacl == 0 || ((cred != NULL || p != NULL) &&
+		    supports_nfsv4acls != SUPPACL_POSIX)) {
+			NFSCLRBIT_ATTRBIT(retbitp, NFSATTRBIT_POSIXDEFAULTACL);
+		} else if (ndaclp != NULL) {
+			if (NFSVOPLOCK(vp, LK_SHARED) == 0) {
+				error = VOP_ACCESSX(vp, VREAD_ACL, cred, p);
+				if (error == 0)
+					error = VOP_GETACL(vp, ACL_TYPE_DEFAULT,
+					    ndaclp, cred, p);
+				NFSVOPUNLOCK(vp);
+			} else
+				error = NFSERR_PERM;
+			if (error != 0)
+				ndaclp->acl_cnt = 0;
+		}
+	}
+
 	/*
 	 * Put out the attribute bitmap for the ones being filled in
 	 * and get the field for the number of attributes returned.
@@ -2763,14 +2986,25 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 		case NFSATTRBIT_SUPPORTEDATTRS:
 			NFSSETSUPP_ATTRBIT(&attrbits, nd);
 			if (nfsrv_useacl == 0 || ((cred != NULL || p != NULL)
-			    && supports_nfsv4acls == 0)) {
+			    && supports_nfsv4acls != SUPPACL_NFSV4)) {
 			    NFSCLRBIT_ATTRBIT(&attrbits,NFSATTRBIT_ACLSUPPORT);
 			    NFSCLRBIT_ATTRBIT(&attrbits,NFSATTRBIT_ACL);
+			}
+			if (nfsrv_useacl == 0 || ((cred != NULL || p != NULL)
+			    && supports_nfsv4acls != SUPPACL_POSIX)) {
+				NFSCLRBIT_ATTRBIT(&attrbits,
+				    NFSATTRBIT_POSIXACCESSACL);
+				NFSCLRBIT_ATTRBIT(&attrbits,
+				    NFSATTRBIT_POSIXDEFAULTACL);
 			}
 			if (!has_hiddensystem) {
 			    NFSCLRBIT_ATTRBIT(&attrbits, NFSATTRBIT_HIDDEN);
 			    NFSCLRBIT_ATTRBIT(&attrbits, NFSATTRBIT_SYSTEM);
+			    NFSCLRBIT_ATTRBIT(&attrbits, NFSATTRBIT_ARCHIVE);
 			}
+			if (clone_blksize == 0)
+			    NFSCLRBIT_ATTRBIT(&attrbits,
+				NFSATTRBIT_CLONEBLKSIZE);
 			retnum += nfsrv_putattrbit(nd, &attrbits);
 			break;
 		case NFSATTRBIT_TYPE:
@@ -2819,10 +3053,12 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 			break;
 		case NFSATTRBIT_FSID:
 			NFSM_BUILD(tl, u_int32_t *, NFSX_V4FSID);
+			if (fsidp == NULL)
+				fsidp = &mp->mnt_stat.f_fsid;
 			*tl++ = 0;
-			*tl++ = txdr_unsigned(mp->mnt_stat.f_fsid.val[0]);
+			*tl++ = txdr_unsigned(fsidp->val[0]);
 			*tl++ = 0;
-			*tl = txdr_unsigned(mp->mnt_stat.f_fsid.val[1]);
+			*tl = txdr_unsigned(fsidp->val[1]);
 			retnum += NFSX_V4FSID;
 			break;
 		case NFSATTRBIT_UNIQUEHANDLES:
@@ -2851,6 +3087,14 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 			*tl = txdr_unsigned(NFSV4ACE_SUPTYPES);
 			retnum += NFSX_UNSIGNED;
 			break;
+		case NFSATTRBIT_ARCHIVE:
+			NFSM_BUILD(tl, uint32_t *, NFSX_UNSIGNED);
+			if ((vap->va_flags & UF_ARCHIVE) != 0)
+				*tl = newnfs_true;
+			else
+				*tl = newnfs_false;
+			retnum += NFSX_UNSIGNED;
+			break;
 		case NFSATTRBIT_CANSETTIME:
 			NFSM_BUILD(tl, u_int32_t *, NFSX_UNSIGNED);
 			if (fsinf.fs_properties & NFSV3FSINFO_CANSETTIME)
@@ -2860,8 +3104,11 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 			retnum += NFSX_UNSIGNED;
 			break;
 		case NFSATTRBIT_CASEINSENSITIVE:
-			NFSM_BUILD(tl, u_int32_t *, NFSX_UNSIGNED);
-			*tl = newnfs_false;
+			NFSM_BUILD(tl, uint32_t *, NFSX_UNSIGNED);
+			if (has_caseinsensitive)
+				*tl = newnfs_true;
+			else
+				*tl = newnfs_false;
 			retnum += NFSX_UNSIGNED;
 			break;
 		case NFSATTRBIT_CASEPRESERVING:
@@ -3249,6 +3496,29 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 			}
 			retnum += NFSX_UNSIGNED;
 			break;
+		case NFSATTRBIT_CLONEBLKSIZE:
+			NFSM_BUILD(tl, uint32_t *, NFSX_UNSIGNED);
+			*tl = txdr_unsigned(clone_blksize);
+			retnum += NFSX_UNSIGNED;
+			break;
+		case NFSATTRBIT_ACLTRUEFORM:
+			NFSM_BUILD(tl, uint32_t *, NFSX_UNSIGNED);
+			*tl = txdr_unsigned(nfs_trueform(vp));
+			retnum += NFSX_UNSIGNED;
+			break;
+		case NFSATTRBIT_ACLTRUEFORMSCOPE:
+			NFSM_BUILD(tl, uint32_t *, NFSX_UNSIGNED);
+			*tl = txdr_unsigned(NFSV4_ACL_SCOPE_FILE_SYSTEM);
+			retnum += NFSX_UNSIGNED;
+			break;
+		case NFSATTRBIT_POSIXACCESSACL:
+			retnum += nfsrv_buildposixacl(nd, paclp,
+			    ACL_TYPE_ACCESS);
+			break;
+		case NFSATTRBIT_POSIXDEFAULTACL:
+			retnum += nfsrv_buildposixacl(nd, daclp,
+			    ACL_TYPE_DEFAULT);
+			break;
 		default:
 			printf("EEK! Bad V4 attribute bitpos=%d\n", bitpos);
 		}
@@ -3256,6 +3526,10 @@ nfsv4_fillattr(struct nfsrv_descript *nd, struct mount *mp, vnode_t vp,
 	}
 	if (naclp != NULL)
 		acl_free(naclp);
+	if (npaclp != NULL)
+		acl_free(npaclp);
+	if (ndaclp != NULL)
+		acl_free(ndaclp);
 	free(fs, M_STATFS);
 	*retnump = txdr_unsigned(retnum);
 	return (retnum + prefixnum);
@@ -4132,10 +4406,15 @@ nfssvc_idname(struct nfsd_idargs *nidp)
 	    nidp->nid_namelen);
 	if (error == 0 && nidp->nid_ngroup > 0 &&
 	    (nidp->nid_flag & NFSID_ADDUID) != 0) {
-		grps = malloc(sizeof(gid_t) * nidp->nid_ngroup, M_TEMP,
-		    M_WAITOK);
-		error = copyin(nidp->nid_grps, grps,
-		    sizeof(gid_t) * nidp->nid_ngroup);
+		grps = NULL;
+		if (nidp->nid_ngroup > NGROUPS_MAX)
+			error = EINVAL;
+		if (error == 0) {
+			grps = malloc(sizeof(gid_t) * nidp->nid_ngroup, M_TEMP,
+			    M_WAITOK);
+			error = copyin(nidp->nid_grps, grps,
+			    sizeof(gid_t) * nidp->nid_ngroup);
+		}
 		if (error == 0) {
 			/*
 			 * Create a credential just like svc_getcred(),
@@ -4988,9 +5267,9 @@ nfsv4_seqsess_cacherep(uint32_t slotid, struct nfsslot *slots, int repstat,
 /*
  * Generate the xdr for an NFSv4.1 Sequence Operation.
  */
-void
+static void
 nfsv4_setsequence(struct nfsmount *nmp, struct nfsrv_descript *nd,
-    struct nfsclsession *sep, int dont_replycache, struct ucred *cred)
+    struct nfsclsession *sep, bool dont_replycache, struct ucred *cred)
 {
 	uint32_t *tl, slotseq = 0;
 	int error, maxslot, slotpos;
@@ -5021,7 +5300,7 @@ nfsv4_setsequence(struct nfsmount *nmp, struct nfsrv_descript *nd,
 		*tl++ = txdr_unsigned(slotseq);
 		*tl++ = txdr_unsigned(slotpos);
 		*tl++ = txdr_unsigned(maxslot);
-		if (dont_replycache == 0)
+		if (!dont_replycache)
 			*tl = newnfs_true;
 		else
 			*tl = newnfs_false;
@@ -5267,6 +5546,23 @@ nfsrpc_destroysession(struct nfsmount *nmp, struct nfsclsession *tsep,
 	error = nd->nd_repstat;
 	m_freem(nd->nd_mrep);
 	return (error);
+}
+
+/*
+ * Determine the true form (the type of ACL stored on the file) for the
+ * vnode argument.
+ */
+static uint32_t
+nfs_trueform(struct vnode *vp)
+{
+	uint32_t trueform;
+
+	trueform = NFSV4_ACL_MODEL_NONE;
+	if ((vp->v_mount->mnt_flag & MNT_NFS4ACLS) != 0)
+		trueform = NFSV4_ACL_MODEL_NFS4;
+	else if ((vp->v_mount->mnt_flag & MNT_ACLS) != 0)
+		trueform = NFSV4_ACL_MODEL_POSIX_DRAFT;
+	return (trueform);
 }
 
 /*

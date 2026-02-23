@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2021-2022 The FreeBSD Foundation
+ * Copyright (c) 2021-2026 The FreeBSD Foundation
  *
  * This software was developed by Björn Zeeb under sponsorship from
  * the FreeBSD Foundation.
@@ -42,7 +42,7 @@
     if (linuxkpi_debug_80211 & D80211_TRACE_MO)				\
 	printf("LKPI_80211_TRACE_MO %s:%d: %d %d %lu: " fmt "\n",	\
 	    __func__, __LINE__, curcpu, curthread->td_tid,		\
-	    jiffies, __VA_ARGS__)
+	    jiffies, ##__VA_ARGS__)
 #else
 #define	LKPI_80211_TRACE_MO(...)	do { } while(0)
 #endif
@@ -52,6 +52,8 @@ lkpi_80211_mo_start(struct ieee80211_hw *hw)
 {
 	struct lkpi_hw *lhw;
 	int error;
+
+	lockdep_assert_wiphy(hw->wiphy);
 
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->start == NULL) {
@@ -100,7 +102,8 @@ lkpi_80211_mo_get_antenna(struct ieee80211_hw *hw, u32 *txs, u32 *rxs)
 	}
 
 	LKPI_80211_TRACE_MO("hw %p", hw);
-	error = lhw->ops->get_antenna(hw, txs, rxs);
+	LKPI_80211_TRACE_MO("TODO link/radio_idx");
+	error = lhw->ops->get_antenna(hw, 0, txs, rxs);
 
 out:
 	return (error);
@@ -119,7 +122,8 @@ lkpi_80211_mo_set_frag_threshold(struct ieee80211_hw *hw, uint32_t frag_th)
 	}
 
 	LKPI_80211_TRACE_MO("hw %p frag_th %u", hw, frag_th);
-	error = lhw->ops->set_frag_threshold(hw, frag_th);
+	LKPI_80211_TRACE_MO("TODO link/radio_idx");
+	error = lhw->ops->set_frag_threshold(hw, 0, frag_th);
 
 out:
 	return (error);
@@ -138,7 +142,8 @@ lkpi_80211_mo_set_rts_threshold(struct ieee80211_hw *hw, uint32_t rts_th)
 	}
 
 	LKPI_80211_TRACE_MO("hw %p rts_th %u", hw, rts_th);
-	error = lhw->ops->set_rts_threshold(hw, rts_th);
+	LKPI_80211_TRACE_MO("TODO link/radio_idx");
+	error = lhw->ops->set_rts_threshold(hw, 0, rts_th);
 
 out:
 	return (error);
@@ -305,9 +310,6 @@ lkpi_80211_mo_configure_filter(struct ieee80211_hw *hw, unsigned int changed_fla
 	if (lhw->ops->configure_filter == NULL)
 		return;
 
-	if (mc_ptr == 0)
-		return;
-
 	LKPI_80211_TRACE_MO("hw %p changed_flags %#x total_flags %p mc_ptr %ju", hw, changed_flags, total_flags, (uintmax_t)mc_ptr);
 	lhw->ops->configure_filter(hw, changed_flags, total_flags, mc_ptr);
 }
@@ -434,7 +436,8 @@ lkpi_80211_mo_config(struct ieee80211_hw *hw, uint32_t changed)
 	}
 
 	LKPI_80211_TRACE_MO("hw %p changed %u", hw, changed);
-	error = lhw->ops->config(hw, changed);
+	LKPI_80211_TRACE_MO("TODO link/radio_idx");
+	error = lhw->ops->config(hw, 0, changed);
 
 out:
 	return (error);
@@ -641,11 +644,17 @@ lkpi_80211_mo_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *txctrl,
 }
 
 void
-lkpi_80211_mo_wake_tx_queue(struct ieee80211_hw *hw, struct ieee80211_txq *txq)
+lkpi_80211_mo_wake_tx_queue(struct ieee80211_hw *hw, struct ieee80211_txq *txq,
+    bool schedule)
 {
 	struct lkpi_hw *lhw;
 
 	lhw = HW_TO_LHW(hw);
+
+	/* Do the schedule before the check for wake_tx_queue supported! */
+	if (schedule)
+		ieee80211_schedule_txq(hw, txq);
+
 	if (lhw->ops->wake_tx_queue == NULL)
 		return;
 

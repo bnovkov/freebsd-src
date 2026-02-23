@@ -4,6 +4,10 @@
  * Copyright (c) 2005-2009 Ariff Abdullah <ariff@FreeBSD.org>
  * Copyright (c) 1999 Cameron Grant <cg@FreeBSD.org>
  * All rights reserved.
+ * Copyright (c) 2025 The FreeBSD Foundation
+ *
+ * Portions of this software were developed by Christos Margiolis
+ * <christos@FreeBSD.org> under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,31 +31,37 @@
  * SUCH DAMAGE.
  */
 
+enum feeder_type {
+	FEEDER_ROOT,
+	FEEDER_FORMAT,
+	FEEDER_MIXER,
+	FEEDER_RATE,
+	FEEDER_EQ,
+	FEEDER_VOLUME,
+	FEEDER_MATRIX,
+	FEEDER_LAST,
+};
+
 struct pcm_feederdesc {
-	u_int32_t type;
 	u_int32_t in, out;
-	u_int32_t flags;
-	int idx;
 };
 
 struct feeder_class {
 	KOBJ_CLASS_FIELDS;
-	struct pcm_feederdesc *desc;
-	void *data;
+	enum feeder_type type;
+	SLIST_ENTRY(feeder_class) link;
 };
 
 struct pcm_feeder {
     	KOBJ_FIELDS;
-	int align;
-	struct pcm_feederdesc *desc, desc_static;
+	struct pcm_feederdesc desc;
 	void *data;
 	struct feeder_class *class;
 	struct pcm_feeder *source, *parent;
-
 };
 
 void feeder_register(void *p);
-struct feeder_class *feeder_getclass(struct pcm_feederdesc *desc);
+struct feeder_class *feeder_getclass(u_int32_t type);
 
 u_int32_t snd_fmtscore(u_int32_t fmt);
 u_int32_t snd_fmtbestbit(u_int32_t fmt, u_int32_t *fmts);
@@ -62,30 +72,17 @@ int feeder_add(struct pcm_channel *c, struct feeder_class *fc,
     struct pcm_feederdesc *desc);
 void feeder_remove(struct pcm_channel *c);
 struct pcm_feeder *feeder_find(struct pcm_channel *c, u_int32_t type);
-void feeder_printchain(struct pcm_feeder *head);
 int feeder_chain(struct pcm_channel *);
 
-#define FEEDER_DECLARE(feeder, pdata)					\
+#define FEEDER_DECLARE(feeder, ctype)					\
 static struct feeder_class feeder ## _class = {				\
 	.name =		#feeder,					\
 	.methods =	feeder ## _methods,				\
 	.size =		sizeof(struct pcm_feeder),			\
-	.desc =		feeder ## _desc,				\
-	.data =		pdata,						\
+	.type =		ctype,						\
 };									\
 SYSINIT(feeder, SI_SUB_DRIVERS, SI_ORDER_ANY, feeder_register,		\
     &feeder ## _class)
-
-enum {
-	FEEDER_ROOT,
-	FEEDER_FORMAT,
-	FEEDER_MIXER,
-	FEEDER_RATE,
-	FEEDER_EQ,
-	FEEDER_VOLUME,
-	FEEDER_MATRIX,
-	FEEDER_LAST,
-};
 
 /* feeder_format */
 enum {

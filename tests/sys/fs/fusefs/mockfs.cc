@@ -241,6 +241,12 @@ void MockFS::debug_request(const mockfs_buf_in &in, ssize_t buflen)
 		case FUSE_INTERRUPT:
 			printf(" unique=%" PRIu64, in.body.interrupt.unique);
 			break;
+		case FUSE_IOCTL:
+			printf(" flags=%#x cmd=%#x in_size=%" PRIu32
+				" out_size=%" PRIu32,
+				in.body.ioctl.flags, in.body.ioctl.cmd,
+				in.body.ioctl.in_size, in.body.ioctl.out_size);
+			break;
 		case FUSE_LINK:
 			printf(" oldnodeid=%" PRIu64, in.body.link.oldnodeid);
 			break;
@@ -420,7 +426,8 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 	bool push_symlinks_in, bool ro, enum poll_method pm, uint32_t flags,
 	uint32_t kernel_minor_version, uint32_t max_write, bool async,
 	bool noclusterr, unsigned time_gran, bool nointr, bool noatime,
-	const char *fsname, const char *subtype, bool no_auto_init)
+	const char *fsname, const char *subtype, bool no_auto_init,
+	bool auto_unmount)
 	: m_daemon_id(NULL),
 	  m_kernel_minor_version(kernel_minor_version),
 	  m_kq(pm == KQ ? kqueue() : -1),
@@ -433,7 +440,8 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 	  m_child_pid(-1),
 	  m_maxwrite(MIN(max_write, max_max_write)),
 	  m_nready(-1),
-	  m_quit(false)
+	  m_quit(false),
+	  m_expect_unmount(false)
 {
 	struct sigaction sa;
 	struct iovec *iov = NULL;
@@ -472,7 +480,7 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 	sprintf(fdstr, "%d", m_fuse_fd);
 	build_iovec(&iov, &iovlen, "fd", fdstr, -1);
 	if (m_maxread > 0) {
-		char val[10];
+		char val[12];
 
 		snprintf(val, sizeof(val), "%d", m_maxread);
 		build_iovec(&iov, &iovlen, "max_read=", &val, -1);
@@ -510,6 +518,10 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 			__DECONST(void*, &trueval), sizeof(bool));
 	} else {
 		build_iovec(&iov, &iovlen, "intr",
+			__DECONST(void*, &trueval), sizeof(bool));
+	}
+	if (auto_unmount) {
+		build_iovec(&iov, &iovlen, "auto_unmount",
 			__DECONST(void*, &trueval), sizeof(bool));
 	}
 	if (*fsname) {
@@ -677,6 +689,12 @@ void MockFS::audit_request(const mockfs_buf_in &in, ssize_t buflen) {
 		EXPECT_EQ(inlen, fih + sizeof(in.body.init));
 		EXPECT_EQ((size_t)buflen, inlen);
 		break;
+	case FUSE_IOCTL:
+		EXPECT_GE(inlen, fih + sizeof(in.body.ioctl));
+		EXPECT_EQ(inlen,
+			fih + sizeof(in.body.ioctl) + in.body.ioctl.in_size);
+		EXPECT_EQ((size_t)buflen, inlen);
+		break;
 	case FUSE_OPENDIR:
 		EXPECT_EQ(inlen, fih + sizeof(in.body.opendir));
 		EXPECT_EQ((size_t)buflen, inlen);
@@ -732,7 +750,6 @@ void MockFS::audit_request(const mockfs_buf_in &in, ssize_t buflen) {
 		break;
 	case FUSE_NOTIFY_REPLY:
 	case FUSE_BATCH_FORGET:
-	case FUSE_IOCTL:
 	case FUSE_POLL:
 	case FUSE_READDIRPLUS:
 		FAIL() << "Unsupported opcode?";
@@ -773,6 +790,11 @@ void MockFS::init(uint32_t flags) {
 	}
 
 	write(m_fuse_fd, out.get(), out->header.len);
+}
+
+int MockFS::dup_dev_fuse()
+{
+	return (dup(m_fuse_fd));
 }
 
 void MockFS::kill_daemon() {
@@ -827,10 +849,12 @@ void MockFS::loop() {
 	}
 }
 
-int MockFS::notify_inval_entry(ino_t parent, const char *name, size_t namelen)
+int MockFS::notify_inval_entry(ino_t parent, const char *name, size_t namelen,
+		int expected_errno)
 {
 	std::unique_ptr<mockfs_buf_out> out(new mockfs_buf_out);
 
+	out->expected_errno = expected_errno;
 	out->header.unique = 0;	/* 0 means asynchronous notification */
 	out->header.error = FUSE_NOTIFY_INVAL_ENTRY;
 	out->body.inval_entry.parent = parent;
@@ -977,7 +1001,11 @@ void MockFS::read_request(mockfs_buf_in &in, ssize_t &res) {
 	}
 	res = read(m_fuse_fd, &in, sizeof(in));
 
-	if (res < 0 && !m_quit) {
+	if (res < 0 && errno == ENODEV && m_expect_unmount) {
+		/* The kernel unmounted us, as expected. */
+		m_quit = true;
+	}
+	if (res < 0 && errno != EBADF && !m_quit) {
 		m_quit = true;
 		FAIL() << "read: " << strerror(errno);
 	}

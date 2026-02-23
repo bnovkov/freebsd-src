@@ -159,7 +159,6 @@ struct if_data {
 #define	IFF_STATICARP	0x80000		/* (n) static ARP */
 #define	IFF_STICKYARP	0x100000	/* (n) sticky ARP */
 #define	IFF_DYING	0x200000	/* (n) interface is winding down */
-#define	IFF_RENAMING	0x400000	/* (n) interface is being renamed */
 #define	IFF_PALLMULTI	0x800000	/* (n) user-requested allmulti mode */
 #define	IFF_NETLINK_1	0x1000000	/* (n) used by netlink */
 
@@ -253,8 +252,8 @@ struct if_data {
 #define	IFCAP_B_VXLAN_HWCSUM	29 /* can do IFCAN_HWCSUM on VXLANs */
 #define	IFCAP_B_VXLAN_HWTSO	30 /* can do IFCAP_TSO on VXLANs */
 #define	IFCAP_B_TXTLS_RTLMT	31 /* can do TLS with rate limiting */
-#define	IFCAP_B_RXTLS4		32 /* can to TLS receive for TCP */
-#define	IFCAP_B_RXTLS6		33 /* can to TLS receive for TCP6 */
+#define	IFCAP_B_RXTLS4		32 /* can do TLS receive for TCP */
+#define	IFCAP_B_RXTLS6		33 /* can do TLS receive for TCP6 */
 #define	IFCAP_B_IPSEC_OFFLOAD	34 /* inline IPSEC offload */
 #define	__IFCAP_B_SIZE		35
 

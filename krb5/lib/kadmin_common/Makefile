@@ -1,5 +1,5 @@
 #
-# SPDX-License-Idendifier: BSD-2-Clause
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2025 FreeBSD Foundation
 #
@@ -27,6 +27,7 @@ CFLAGS+=-I${KRB5_DIR}/lib/krad \
 	-I${KRB5_SRCTOP}/include \
 	-I${KRB5_DIR}/util \
 	-I${KRB5_OBJTOP}/util \
+	-I${KRB5_OBJTOP}/util/profile \
 	-I${.OBJDIR}
 
 CLEANFILES=	kadmin_ct.c ktutil_ct.c

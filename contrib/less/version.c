@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1984-2025  Mark Nudelman
+ * Copyright (C) 1984-2026  Mark Nudelman
  *
  * You may distribute under the terms of either the GNU General Public
  * License or the Less License, as specified in the README file.
@@ -1049,6 +1049,35 @@ v677  4/27/25   Fix & filtering bug.
 v678  5/1/25    Don't change stty tab setting.
 v679  5/28/25   Fix lesskey parsing bug when env var is prefix of another;
                 fix unexpected exit when using -K.
+v680  6/25/25   Fix hang if a search using ^S modifier matches empty string.
+v681  8/2/25    Fix bug using -g with -J; fix bug when pasting input 
+                with --incsearch; improve performance with long lines;
+                fix performance with & filtering; change search position when
+                using --incsearch; treat some composing chars as binary.
+v682  8/24/25   Add --cmd; fix lesskey bug using #stop; fix lesskey bug
+                using "invalid"; fix some emoji bugs.
+v683  9/4/25    Fix bug if cmd char received during file read.
+v684  9/18/25   Allow mixing of options and filenames on command line;
+                add LESS_TERMCAP_SUSPEND & LESS_TERMCAP_RESUME.
+v685  10/4/25   Make --incsearch return to same column as well as same line;
+                fix some problems reported by valgrind.
+v686  10/30/25  Map keypad keys; make HOME/END scroll horizontally; 
+                retain saved marks even if --save-marks is not specified;
+                fix repaint bug with --form-feed; fix bugs passing negative
+                values to cmd line options.
+v687  11/17/25  Disallow opening OSC8 link via mouse in secure mode;
+                add --autosave; make SIGHUP act like SIGTERM; add ESC-f.
+v688  11/28/25  Add LESSNOCONFIG; defer "ti" until first char received;
+                don't auto-bold line numbers.
+v689  12/27/25  Add prompt seqs %C, %W, %Q, ?Q; don't allow any command to
+                interrupt waiting for data; fix screen resize on Windows;
+                add --without-termlib.
+v690  12/31/25  Cleanup.
+v691  1/10/26   Fix mingw build.
+v692  1/29/26   Fix memory leak in setupterm; clear termio ICRNL|INLCR;
+                fix bug with negative value in -z; fix bug with empty 
+                terminfo caps; make lesstest ignore nl_langinfo;
+				revert HOME/END to g/G; add keys & cmds to lesskey parser.
 */
 
-char version[] = "679";
+char version[] = "692";

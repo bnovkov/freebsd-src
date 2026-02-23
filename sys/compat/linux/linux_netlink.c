@@ -249,9 +249,9 @@ nlmsg_translate_ifname_nla(struct nlattr *nla, struct nl_writer *nw)
 {
 	char ifname[LINUX_IFNAMSIZ];
 
-	if (ifname_bsd_to_linux_name((char *)(nla + 1), ifname,
-	    sizeof(ifname)) <= 0)
+	if (nw->ifp == NULL)
 		return (false);
+	(void)ifname_bsd_to_linux_ifp(nw->ifp, ifname, sizeof(ifname));
 	return (nlattr_add_string(nw, IFLA_IFNAME, ifname));
 }
 
@@ -340,7 +340,6 @@ rtnl_if_flags_to_linux(unsigned int if_flags)
 		case IFF_STATICARP:
 		case IFF_STICKYARP:
 		case IFF_DYING:
-		case IFF_RENAMING:
 			/* No Linux analogue */
 			break;
 		case IFF_MULTICAST:
@@ -563,23 +562,17 @@ nlmsg_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp, struct nl_writer *nw)
 	}
 }
 
-static bool
-nlmsgs_to_linux(struct nl_writer *nw, struct nlpcb *nlp)
+static struct nl_buf *
+nlmsgs_to_linux(struct nl_buf *orig, struct nlpcb *nlp, const struct ifnet *ifp)
 {
-	struct nl_buf *nb, *orig;
-	u_int offset, msglen, orig_messages;
+	struct nl_writer nw;
+	u_int offset, msglen;
 
-	RT_LOG(LOG_DEBUG3, "%p: in %u bytes %u messages", __func__,
-	    nw->buf->datalen, nw->num_messages);
+	if (__predict_false(!nl_writer_unicast(&nw,
+	    orig->datalen + SCRATCH_BUFFER_SIZE, nlp, false)))
+		return (NULL);
 
-	orig = nw->buf;
-	nb = nl_buf_alloc(orig->datalen + SCRATCH_BUFFER_SIZE, M_NOWAIT);
-	if (__predict_false(nb == NULL))
-		return (false);
-	nw->buf = nb;
-	orig_messages = nw->num_messages;
-	nw->num_messages = 0;
-
+	nw.ifp = ifp;
 	/* Assume correct headers. Buffer IS mutable */
 	for (offset = 0;
 	    offset + sizeof(struct nlmsghdr) <= orig->datalen;
@@ -587,22 +580,18 @@ nlmsgs_to_linux(struct nl_writer *nw, struct nlpcb *nlp)
 		struct nlmsghdr *hdr = (struct nlmsghdr *)&orig->data[offset];
 
 		msglen = NLMSG_ALIGN(hdr->nlmsg_len);
-		if (!nlmsg_to_linux(hdr, nlp, nw)) {
+		if (!nlmsg_to_linux(hdr, nlp, &nw)) {
 			RT_LOG(LOG_DEBUG, "failed to process msg type %d",
 			    hdr->nlmsg_type);
-			nl_buf_free(nb);
-			nw->buf = orig;
-			nw->num_messages = orig_messages;
-			return (false);
+			nl_buf_free(nw.buf);
+			return (NULL);
 		}
 	}
 
-	MPASS(nw->num_messages == orig_messages);
-	MPASS(nw->buf == nb);
-	nl_buf_free(orig);
-	RT_LOG(LOG_DEBUG3, "%p: out %u bytes", __func__, offset);
+	RT_LOG(LOG_DEBUG3, "%p: in %u bytes %u messages", __func__,
+	    nw.buf->datalen, nw.num_messages);
 
-	return (true);
+	return (nw.buf);
 }
 
 static struct linux_netlink_provider linux_netlink_v1 = {

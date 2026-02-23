@@ -358,11 +358,11 @@ extern const struct in6_addr in6addr_linklocal_allv2routers;
 
 #define IFA6_IS_DEPRECATED(a) \
 	((a)->ia6_lifetime.ia6t_pltime != ND6_INFINITE_LIFETIME && \
-	 (u_int32_t)((time_uptime - (a)->ia6_updatetime)) > \
+	 (u_int32_t)((time_uptime - (a)->ia6_updatetime)) >= \
 	 (a)->ia6_lifetime.ia6t_pltime)
 #define IFA6_IS_INVALID(a) \
 	((a)->ia6_lifetime.ia6t_vltime != ND6_INFINITE_LIFETIME && \
-	 (u_int32_t)((time_uptime - (a)->ia6_updatetime)) > \
+	 (u_int32_t)((time_uptime - (a)->ia6_updatetime)) >= \
 	 (a)->ia6_lifetime.ia6t_vltime)
 #endif /* _KERNEL */
 
@@ -609,6 +609,8 @@ struct ip6_mtuinfo {
 /*	IPV6CTL_RTMINEXPIRE	26	deprecated */
 /*	IPV6CTL_RTMAXCACHE	27	deprecated */
 
+#define IPV6CTL_STABLEADDR_NETIFSRC	30	/* semantically opaque addresses (RFC7217) hash algo netif parameter src */
+#define IPV6CTL_STABLEADDR_MAXRETRIES	31	/* semantically opaque addresses (RFC7217) max DAD retries */
 #define IPV6CTL_USETEMPADDR	32	/* use temporary addresses (RFC3041) */
 #define IPV6CTL_TEMPPLTIME	33	/* preferred lifetime for tmpaddrs */
 #define IPV6CTL_TEMPVLTIME	34	/* valid lifetime for tmpaddrs */
@@ -617,6 +619,7 @@ struct ip6_mtuinfo {
 #define IPV6CTL_PREFER_TEMPADDR	37	/* prefer temporary addr as src */
 #define IPV6CTL_ADDRCTLPOLICY	38	/* get/set address selection policy */
 #define IPV6CTL_USE_DEFAULTZONE	39	/* use default scope zone */
+#define IPV6CTL_USESTABLEADDR	40	/* use semantically opaque addresses (RFC7217) */
 
 #define IPV6CTL_MAXFRAGS	41	/* max fragments */
 #if 0
@@ -667,6 +670,8 @@ int	in6_cksum_partial(struct mbuf *, uint8_t, uint32_t, uint32_t, uint32_t);
 int	in6_cksum_partial_l2(struct mbuf *m, uint8_t nxt, uint32_t off_l3,
 	    uint32_t off_l4, uint32_t len, uint32_t cov);
 int	in6_cksum_pseudo(struct ip6_hdr *, uint32_t, uint8_t, uint16_t);
+
+time_t	in6_expire_time(uint32_t);
 
 int	in6_localaddr(struct in6_addr *);
 int	in6_localip(struct in6_addr *);

@@ -25,7 +25,6 @@ LDIRS=	BSD_daemon \
 	perfmon \
 	ppi \
 	ppp \
-	printing \
 	ses \
 	scsi_target \
 	sound \
@@ -250,6 +249,8 @@ SE_PPP= \
 	ppp.secret.span-isp \
 	ppp.secret.span-isp.working
 
+.if ${MK_LPR} != "no"
+LDIRS+=		printing
 SE_DIRS+=	printing
 SE_PRINTINGPACKAGE=lp
 SE_PRINTING= \
@@ -269,6 +270,7 @@ SE_PRINTING= \
 	psif \
 	pstf \
 	pstfX
+.endif
 
 SE_DIRS+=	ses
 SE_SES= \
@@ -319,13 +321,13 @@ SE_SCSI_TARGET= \
 
 SE_DIRS+=	sound
 SE_SOUND= \
-	  sndstat_nv.c \
-	  midi.c
-
-SE_DIRS+=	sound/oss
-SE_SOUND_OSS= \
-	README \
-	audio.c
+	kqueue.c \
+	midi.c \
+	oss.h \
+	poll.c \
+	select.c \
+	simple.c \
+	sndstat_nv.c
 
 SE_DIRS+=	sunrpc
 SE_SUNRPC=	Makefile

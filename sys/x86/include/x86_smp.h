@@ -35,7 +35,6 @@ extern char *bootSTK;
 extern void *bootstacks[];
 extern unsigned int bootMP_size;
 extern volatile int aps_ready;
-extern struct mtx ap_boot_mtx;
 extern int cpu_logical;
 extern int cpu_cores;
 extern volatile uint32_t smp_tlb_generation;
@@ -77,6 +76,7 @@ extern u_long *ipi_rendezvous_counts[MAXCPU];
 inthand_t
 	IDTVEC(ipi_intr_bitmap_handler), /* Bitmap based IPIs */ 
 	IDTVEC(ipi_swi),	/* Runs delayed SWI */
+	IDTVEC(cpuoff),		/* CPU goes offline until hard reset */
 	IDTVEC(cpustop),	/* CPU stops & waits to be restarted */
 	IDTVEC(cpususpend),	/* CPU suspends & waits to be resumed */
 	IDTVEC(rendezvous);	/* handle CPU rendezvous */
@@ -93,6 +93,7 @@ void	assign_cpu_ids(void);
 void	cpu_add(u_int apic_id, char boot_cpu);
 void	cpustop_handler(void);
 void	cpususpend_handler(void);
+void	cpuoff_handler(void);
 void	init_secondary_tail(void);
 void	init_secondary(void);
 void	ipi_startup(int apic_id, int vector);

@@ -55,6 +55,21 @@ static const struct file_operations __name ## _fops = {			\
 	.release	= single_release,				\
 }
 
+#define	DEFINE_SHOW_STORE_ATTRIBUTE(__name)				\
+static int __name ## _open(struct inode *inode, struct linux_file *file)	\
+{									\
+	return single_open(file, __name ## _show, inode->i_private);	\
+}									\
+									\
+static const struct file_operations __name ## _fops = {			\
+	.owner		= THIS_MODULE,					\
+	.open		= __name ## _open,				\
+	.read		= seq_read,					\
+	.write		= __name ## _write,				\
+	.llseek		= seq_lseek,					\
+	.release	= single_release,				\
+}
+
 struct seq_file {
 	struct sbuf *buf;
 	size_t size;
@@ -100,7 +115,7 @@ seq_hex_dump(struct seq_file *m, const char *prefix_str, int prefix_type,
     int rowsize, int groupsize, const void *buf, size_t len, bool ascii)
 {
 	lkpi_hex_dump(__lkpi_hexdump_sbuf_printf, m->buf, NULL, prefix_str, prefix_type,
-	    rowsize, groupsize, buf, len, ascii);
+	    rowsize, groupsize, buf, len, ascii, true);
 }
 
 #define	file			linux_file

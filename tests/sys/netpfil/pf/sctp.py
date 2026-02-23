@@ -271,6 +271,9 @@ class TestSCTP(VnetTestTemplate):
             "pass inet proto sctp to 192.0.2.0/24",
             "pass on lo"])
 
+        # Give the server some time to come up
+        time.sleep(3)
+
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("192.0.2.3", 1234)
         client.send(b"hello", 0)
@@ -308,6 +311,9 @@ class TestSCTP(VnetTestTemplate):
             "block proto sctp",
             "pass on lo",
             "pass inet proto sctp from 192.0.2.0/24"])
+
+        # Give the server some time to come up
+        time.sleep(3)
 
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("192.0.2.3", 1234, "192.0.2.1")
@@ -379,6 +385,9 @@ class TestSCTP(VnetTestTemplate):
             "pass on lo",
             "pass inet proto sctp to 192.0.2.0/24"])
 
+        # Give the server some time to come up
+        time.sleep(3)
+
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("192.0.2.3", 1234)
         client.send(b"hello", 0)
@@ -410,6 +419,9 @@ class TestSCTP(VnetTestTemplate):
             "pass on lo",
             "pass inet proto sctp to 192.0.2.0/24"])
 
+        # Give the server some time to come up
+        time.sleep(3)
+
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("192.0.2.3", 1234)
         client.send(b"hello", 0)
@@ -440,6 +452,9 @@ class TestSCTP(VnetTestTemplate):
             "pass on lo",
             "pass inet proto sctp to 192.0.2.0/24"])
 
+        # Give the server some time to come up
+        time.sleep(3)
+
         # Set up a connection, which will try to create states for all addresses
         # we have assigned
         client = SCTPClient("192.0.2.3", 1234)
@@ -463,6 +478,9 @@ class TestSCTP(VnetTestTemplate):
             "block proto sctp",
             "pass inet proto sctp to 192.0.2.3",
             "pass on lo"])
+
+        # Give the server some time to come up
+        time.sleep(3)
 
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("192.0.2.3", 1234)
@@ -502,6 +520,9 @@ class TestSCTP(VnetTestTemplate):
             "pass inet proto sctp to 192.0.2.3 keep state (allow-related)",
             "pass on lo"])
 
+        # Give the server some time to come up
+        time.sleep(3)
+
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("192.0.2.3", 1234)
         client.send(b"hello", 0)
@@ -530,6 +551,73 @@ class TestSCTP(VnetTestTemplate):
         assert re.search(r"epair.*sctp 192.0.2.1:.*192.0.2.3:1234", states)
         assert re.search(r"epair.*sctp 192.0.2.1:.*192.0.2.2:1234", states)
 
+class TestSCTP_SRV(VnetTestTemplate):
+    REQUIRED_MODULES = ["sctp", "pf"]
+    TOPOLOGY = {
+        "vnet1": {"ifaces": ["if1"]},
+        "vnet2": {"ifaces": ["if1"]},
+        "if1": {"prefixes4": [("192.0.2.1/24", "192.0.2.2/24")]},
+    }
+
+    def vnet2_handler(self, vnet):
+        ToolsHelper.print_output("/sbin/pfctl -e")
+        ToolsHelper.pf_rules([
+            "set state-policy if-bound",
+            "pass inet proto sctp",
+            "pass on lo"])
+
+        # Start an SCTP server process, pipe the ppid + data back to the other vnet?
+        srv = SCTPServer(socket.AF_INET, port=1234)
+        while True:
+            srv.accept(vnet)
+
+    @pytest.mark.require_user("root")
+    @pytest.mark.require_progs(["scapy"])
+    def test_initiate_tag_check(self):
+        # Ensure we don't send ABORTs in response to the other end's INIT_ACK
+        # That'd interfere with our test.
+        ToolsHelper.print_output("/sbin/sysctl net.inet.sctp.blackhole=2")
+
+        import scapy.all as sp
+
+        packet = sp.IP(src="192.0.2.1", dst="192.0.2.2") \
+            / sp.SCTP(sport=1234, dport=1234) \
+            / sp.SCTPChunkInit(init_tag=1, n_in_streams=1, n_out_streams=1, a_rwnd=1500)
+        packet.show()
+
+        r = sp.sr1(packet, timeout=3)
+        assert r
+        r.show()
+        assert r.getlayer(sp.SCTP)
+        assert r.getlayer(sp.SCTPChunkInitAck)
+        assert r.getlayer(sp.SCTP).tag == 1
+
+        # Send another INIT with the same initiate tag, expect another init ack
+        packet = sp.IP(src="192.0.2.1", dst="192.0.2.2") \
+            / sp.SCTP(sport=1234, dport=1234) \
+            / sp.SCTPChunkInit(init_tag=1, n_in_streams=1, n_out_streams=1, a_rwnd=1500)
+        packet.show()
+
+        r = sp.sr1(packet, timeout=3)
+        assert r
+        r.show()
+        assert r.getlayer(sp.SCTP)
+        assert r.getlayer(sp.SCTPChunkInitAck)
+        assert r.getlayer(sp.SCTP).tag == 1
+
+        # Send an INIT with a different initiate tag, expect another init ack
+        packet = sp.IP(src="192.0.2.1", dst="192.0.2.2") \
+            / sp.SCTP(sport=1234, dport=1234) \
+            / sp.SCTPChunkInit(init_tag=42, n_in_streams=1, n_out_streams=1, a_rwnd=1500)
+        packet.show()
+
+        r = sp.sr1(packet, timeout=3)
+        assert r
+        r.show()
+        assert r.getlayer(sp.SCTP)
+        assert r.getlayer(sp.SCTPChunkInitAck)
+        assert r.getlayer(sp.SCTP).tag == 42
+
 class TestSCTPv6(VnetTestTemplate):
     REQUIRED_MODULES = ["sctp", "pf"]
     TOPOLOGY = {
@@ -557,6 +645,9 @@ class TestSCTPv6(VnetTestTemplate):
             "block proto sctp",
             "pass on lo",
             "pass inet6 proto sctp to 2001:db8::0/64"])
+
+        # Give the server some time to come up
+        time.sleep(3)
 
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("2001:db8::3", 1234)
@@ -595,6 +686,9 @@ class TestSCTPv6(VnetTestTemplate):
             "block proto sctp",
             "pass on lo",
             "pass inet6 proto sctp from 2001:db8::/64"])
+
+        # Give the server some time to come up
+        time.sleep(3)
 
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("2001:db8::3", 1234, "2001:db8::1")
@@ -665,6 +759,9 @@ class TestSCTPv6(VnetTestTemplate):
             "pass on lo",
             "pass inet6 proto sctp to 2001:db8::0/64"])
 
+        # Give the server some time to come up
+        time.sleep(3)
+
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("2001:db8::3", 1234)
         client.send(b"hello", 0)
@@ -695,6 +792,9 @@ class TestSCTPv6(VnetTestTemplate):
             "block proto sctp",
             "pass on lo",
             "pass inet6 proto sctp to 2001:db8::0/64"])
+
+        # Give the server some time to come up
+        time.sleep(3)
 
         # Sanity check, we can communicate with the primary address.
         client = SCTPClient("2001:db8::3", 1234)

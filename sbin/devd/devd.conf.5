@@ -246,7 +246,7 @@ The time this event was processed, in seconds since 1970 dot fraction.
 Device name of parent bus.
 .It Li cdev
 Device node path if one is created by the
-.Xr devfs 5
+.Xr devfs 4
 filesystem.
 .It Li class
 Device class.
@@ -400,11 +400,11 @@ String containing the temperature of the core that has become too hot.
 .It Li DEVFS
 .It Li DEVFS Ta Li CDEV Ta Li CREATE Ta
 The
-.Xr devfs 5
+.Xr devfs 4
 node is created.
 .It Li DEVFS Ta Li CDEV Ta Li DESTROY Ta
 The
-.Xr devfs 5
+.Xr devfs 4
 node is destroyed.
 .El
 .Pp
@@ -652,6 +652,22 @@ and
 for details.
 .El
 .Pp
+.Bl -column "System" "Subsystem" "1234567" -compact
+.Sy "System" Ta Sy "Subsystem" Ta Sy "Type" Ta Sy "Description"
+.It Li SND Ta Ta Ta
+Events related to the
+.Xr sound 4
+driver.
+.It Li SND Ta Li CONN Ta Li IN Ta
+Connected input device specified in
+.Pa cdev
+variable.
+.It Li SND Ta Li CONN Ta Li OUT Ta
+Connected output device specified in
+.Pa cdev
+variable.
+.El
+.Pp
 .\"
 .\" End of tables
 .\"
@@ -897,7 +913,7 @@ has many additional examples.
 .Sh SEE ALSO
 .Xr cam 4 ,
 .Xr coretemp 4 ,
-.Xr devfs 5 ,
+.Xr devfs 4 ,
 .Xr re_format 7 ,
 .Xr devd 8
 .Sh BUGS

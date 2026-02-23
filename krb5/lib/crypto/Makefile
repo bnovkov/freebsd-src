@@ -1,5 +1,5 @@
 #
-# SPDX-License-Idendifier: BSD-2-Clause
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2025 FreeBSD Foundation
 #
@@ -41,6 +41,7 @@ CFLAGS+=-I${.CURDIR:H:H}/include \
 	-I${KRB5_DIR}/lib/crypto/builtin/md5 \
 	-I${KRB5_DIR}/lib/crypto/builtin/sha1 \
 	-I${KRB5_DIR}/lib/crypto/builtin/sha2 \
-	-I${SRCTOP}/crypto/openssl/include
+	-I${SRCTOP}/crypto/openssl/include \
+	-I${KRB5_OBJTOP}/util/profile
 
 .include <bsd.lib.mk>

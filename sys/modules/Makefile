@@ -45,6 +45,7 @@ SUBDIR=	\
 	${_armv8_rng} \
 	${_asmc} \
 	ata \
+	${_aq} \
 	ath \
 	ath_dfs \
 	ath_hal \
@@ -136,7 +137,6 @@ SUBDIR=	\
 	gpio \
 	${_gve} \
 	hid \
-	hifn \
 	${_hpt27xx} \
 	${_hptiop} \
 	${_hptmv} \
@@ -174,6 +174,7 @@ SUBDIR=	\
 	iflib \
 	${_igc} \
 	imgact_binmisc \
+	${_imx} \
 	${_intelspi} \
 	${_io} \
 	${_ioat} \
@@ -347,7 +348,9 @@ SUBDIR=	\
 	rc4 \
 	${_rdma} \
 	${_rdrand_rng} \
+	${_rdseed_rng} \
 	re \
+	rge \
 	rl \
 	${_rockchip} \
 	rtsx \
@@ -397,6 +400,7 @@ SUBDIR=	\
 	sysvipc \
 	tarfs \
 	tcp \
+	${_thunderbolt} \
 	${_ti} \
 	tmpfs \
 	${_toecore} \
@@ -548,6 +552,17 @@ SUBDIR+=	linux64
 SUBDIR+=	linux_common
 .endif
 
+# LinuxKPI based wireless drivers.
+.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
+    ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "riscv"
+_iwlwifi=	iwlwifi
+_rtw88=		rtw88
+# rtw89 currently cannot be compiled without ACPI (seems also broken in Linux).
+.if ${KERN_OPTS:MDEV_ACPI}
+_rtw89=		rtw89
+.endif
+.endif
+
 .if ${MACHINE_CPUARCH} != "arm"
 .if ${MK_OFED} != "no" || defined(ALL_MODULES)
 _ibcore=	ibcore
@@ -576,11 +591,10 @@ _mlx5ib=	mlx5ib
 
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
     ${MACHINE_CPUARCH} == "i386"
+_acpi=		acpi
 _ena=		ena
 _gve=		gve
-_iwlwifi=	iwlwifi
-_rtw88=		rtw88
-_rtw89=		rtw89
+_igc=		igc
 _vmware=	vmware
 .endif
 
@@ -646,8 +660,7 @@ _rtwnfw=	rtwnfw
 .endif
 
 .if ${MK_SOURCELESS_UCODE} != "no" && ${MACHINE_CPUARCH} != "arm" && \
-	${MACHINE_ARCH} != "powerpc" && ${MACHINE_ARCH} != "powerpcspe" && \
-	${MACHINE_CPUARCH} != "riscv"
+	${MACHINE_ARCH} != "powerpc" && ${MACHINE_CPUARCH} != "riscv"
 _cxgbe=		cxgbe
 .endif
 
@@ -662,7 +675,7 @@ _genet=		genet
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64" || \
-	${MACHINE_ARCH:Mpowerpc64*}
+	${MACHINE_ARCH:Mpowerpc64*} != ""
 _ice=		ice
 .if ${MK_SOURCELESS_UCODE} != "no"
 _ice_ddp=	ice_ddp
@@ -672,6 +685,7 @@ _ice_ddp=	ice_ddp
 _irdma=		irdma
 .endif
 .endif
+_ixl=		ixl
 .endif
 
 .if ${MACHINE_CPUARCH} == "aarch64"
@@ -684,12 +698,14 @@ _coresight=	coresight
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "arm" || \
 	${MACHINE_CPUARCH} == "riscv"
 .if !empty(OPT_FDT)
+_allwinner=	allwinner
 _if_cgem=	if_cgem
+_sdhci_fdt=	sdhci_fdt
 .endif
 .endif
 
 # These rely on 64bit atomics
-.if ${MACHINE_ARCH} != "powerpc" && ${MACHINE_ARCH} != "powerpcspe"
+.if ${MACHINE_ARCH} != "powerpc"
 _mps=		mps
 _mpr=		mpr
 .endif
@@ -717,7 +733,6 @@ _hyperv=  hyperv
 _vf_i2c=	vf_i2c
 
 .if !empty(OPT_FDT)
-_allwinner=	allwinner
 _dwwdt=		dwwdt
 _enetc=		enetc
 _felix=		felix
@@ -725,15 +740,12 @@ _rockchip=	rockchip
 .endif
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "arm" || \
-    ${MACHINE_CPUARCH} == "riscv"
-.if !empty(OPT_FDT)
-_sdhci_fdt=	sdhci_fdt
-.endif
-_neta=		neta
+.if ${MACHINE_CPUARCH} == "arm"
+_imx=		imx
 .endif
 
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
+_aq=		aq
 _agp=		agp
 .if ${MACHINE_CPUARCH} == "i386" || !empty(COMPAT_FREEBSD32_ENABLED)
 _aout=		aout
@@ -752,7 +764,6 @@ _et=		et
 _ftgpio=	ftgpio
 _ftwd=		ftwd
 _exca=		exca
-_igc=		igc
 _io=		io
 _itwd=		itwd
 _ix=		ix
@@ -778,7 +789,6 @@ _wdatwd=	wdatwd
 
 _aac=		aac
 _aacraid=	aacraid
-_acpi=		acpi
 .if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
 _aesni=		aesni
 .endif
@@ -788,7 +798,6 @@ _amdsbwd=	amdsbwd
 _amdsmn=	amdsmn
 _amdtemp=	amdtemp
 _arcmsr=	arcmsr
-_asmc=		asmc
 .if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
 _blake2=	blake2
 .endif
@@ -825,8 +834,8 @@ _nfe=		nfe
 _nvram=		nvram
 .if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
 _padlock=	padlock
-_padlock_rng=	padlock_rng
 _rdrand_rng=	rdrand_rng
+_rdseed_rng=	rdseed_rng
 .endif
 _pchtherm = pchtherm
 _s3=		s3
@@ -847,6 +856,7 @@ _x86bios=	x86bios
 
 .if ${MACHINE_CPUARCH} == "amd64"
 _amdgpio=	amdgpio
+_asmc=		asmc
 _ccp=		ccp
 _enic=		enic
 _iavf=		iavf
@@ -897,6 +907,9 @@ _glxsb=		glxsb
 _pcfclock=	pcfclock
 _pst=		pst
 _sbni=		sbni
+.if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
+_padlock_rng=	padlock_rng
+.endif
 .endif
 
 .if ${MACHINE_ARCH} == "armv7"
@@ -917,18 +930,21 @@ _ffec=		ffec
 .endif
 
 .if ${MACHINE_ARCH:Mpowerpc64*} != ""
-_ixl=		ixl
 _nvram=		opal_nvram
 .endif
 
-.if ${MACHINE_CPUARCH} == "powerpc" && ${MACHINE_ARCH} != "powerpcspe"
-# Don't build powermac_nvram for powerpcspe, it's never supported.
+.if ${MACHINE_CPUARCH} == "powerpc"
 _nvram+=	powermac_nvram
 .endif
 
 .if ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "aarch64"
 _bcm283x_clkman=  bcm283x_clkman
-_bcm283x_pwm=  bcm283x_pwm
+_bcm283x_pwm=	bcm283x_pwm
+_neta=		neta
+.endif
+
+.if ${MACHINE_CPUARCH} == "amd64"
+_thunderbolt=	thunderbolt
 .endif
 
 .if !(${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} < 110000)
@@ -955,7 +971,7 @@ SUBDIR:= ${SUBDIR:N${reject}}
 afterinstall: .PHONY
 	${KLDXREF_CMD} ${DESTDIR}${KMODDIR}
 .if defined(NO_ROOT) && defined(METALOG)
-	echo ".${DISTBASE}${KMODDIR}/linker.hints type=file mode=0644 uname=root gname=wheel" | \
+	echo ".${DISTBASE}${KMODDIR}/linker.hints type=file uname=root gname=wheel mode=0644" | \
 	    cat -l >> ${METALOG}
 .endif
 .endif

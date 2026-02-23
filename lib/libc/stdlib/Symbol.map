@@ -131,6 +131,13 @@ FBSD_1.8 {
 	getenv_r;
 };
 
+FBSD_1.9 {
+	memalignment;
+	recallocarray;
+	strtonumx;
+	tdestroy;
+};
+
 FBSDprivate_1.0 {
 	__system;
 	_system;

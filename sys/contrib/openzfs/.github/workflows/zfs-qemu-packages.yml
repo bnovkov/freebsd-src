@@ -32,6 +32,11 @@ on:
         options:
         - "Build RPMs"
         - "Test repo"
+      patch_level:
+        type: string
+        required: false
+        default: ""
+        description: "(optional) patch level number"
       repo_url:
         type: string
         required: false
@@ -47,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ['almalinux8', 'almalinux9', 'almalinux10', 'fedora41', 'fedora42']
+        os: ['almalinux8', 'almalinux9', 'almalinux10', 'fedora41', 'fedora42', 'fedora43']
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
@@ -55,20 +60,16 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha }}
 
     - name: Setup QEMU
-      timeout-minutes: 10
       run: .github/workflows/scripts/qemu-1-setup.sh
 
     - name: Start build machine
-      timeout-minutes: 10
       run: .github/workflows/scripts/qemu-2-start.sh ${{ matrix.os }}
 
     - name: Install dependencies
-      timeout-minutes: 20
       run: |
         .github/workflows/scripts/qemu-3-deps.sh ${{ matrix.os }}
 
     - name: Build modules or Test repo
-      timeout-minutes: 30
       run: |
         set -e
         if [ "${{ github.event.inputs.test_type }}" == "Test repo" ] ; then
@@ -78,12 +79,17 @@ jobs:
                 mkdir -p /tmp/repo
                 ssh zfs@vm0 '$HOME/zfs/.github/workflows/scripts/qemu-test-repo-vm.sh' ${{ github.event.inputs.repo_url }}
         else
-                .github/workflows/scripts/qemu-4-build.sh --repo --release --dkms --tarball ${{ matrix.os }}
+                EXTRA=""
+                if [ -n "${{ github.event.inputs.patch_level }}" ] ; then
+                        EXTRA="--patch-level ${{ github.event.inputs.patch_level }}"
+                fi
+
+                .github/workflows/scripts/qemu-4-build.sh $EXTRA \
+                        --repo --release --dkms --tarball ${{ matrix.os }}
         fi
 
     - name: Prepare artifacts
       if: always()
-      timeout-minutes: 10
       run: |
         rsync -a zfs@vm0:/tmp/repo /tmp || true
         .github/workflows/scripts/replace-dupes-with-symlinks.sh /tmp/repo

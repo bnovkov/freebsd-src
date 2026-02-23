@@ -230,7 +230,7 @@ struct vm_page {
 		} uma;
 	} plinks;
 	vm_object_t object;		/* which object am I in (O) */
-	vm_pindex_t pindex;		/* offset into object (O,P) */
+	vm_pindex_t pindex;		/* offset into object (O) */
 	vm_paddr_t phys_addr;		/* physical address of page (C) */
 	struct md_page md;		/* machine dependent stuff */
 	u_int ref_count;		/* page references (A) */
@@ -238,7 +238,7 @@ struct vm_page {
 	union vm_page_astate a;		/* state accessed atomically (A) */
 	uint8_t order;			/* index of the buddy queue (F) */
 	uint8_t pool;			/* vm_phys freepool index (F) */
-	uint8_t flags;			/* page PG_* flags (P) */
+	uint8_t flags;			/* page PG_* flags */
 	uint8_t oflags;			/* page VPO_* flags (O) */
 	int8_t psind;			/* pagesizes[] index (O) */
 	int8_t segind;			/* vm_phys segment index (C) */
@@ -487,6 +487,7 @@ vm_page_t PHYS_TO_VM_PAGE(vm_paddr_t pa);
 #define VM_ALLOC_INTERRUPT	1
 #define VM_ALLOC_SYSTEM		2
 #define	VM_ALLOC_CLASS_MASK	3
+#define	VM_ALLOC_AVAIL0		0x0004
 #define	VM_ALLOC_WAITOK		0x0008	/* (gnp) Sleep and retry */
 #define	VM_ALLOC_WAITFAIL	0x0010	/* (acgnp) Sleep and return error */
 #define	VM_ALLOC_WIRED		0x0020	/* (acgnp) Allocate a wired page */

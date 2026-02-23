@@ -140,6 +140,10 @@ cpu_mp_start(void)
 	setidt(IPI_STOP, pti ? IDTVEC(cpustop_pti) : IDTVEC(cpustop),
 	    SDT_SYSIGT, SEL_KPL, 0);
 
+	/* Install an inter-CPU IPI for CPU offline */
+	setidt(IPI_OFF, pti ? IDTVEC(cpuoff_pti) : IDTVEC(cpuoff),
+	    SDT_SYSIGT, SEL_KPL, 0);
+
 	/* Install an inter-CPU IPI for CPU suspend/resume */
 	setidt(IPI_SUSPEND, pti ? IDTVEC(cpususpend_pti) : IDTVEC(cpususpend),
 	    SDT_SYSIGT, SEL_KPL, 0);
@@ -176,6 +180,15 @@ cpu_mp_start(void)
 #endif
 }
 
+void
+cpu_mp_stop(void)
+{
+	cpuset_t other_cpus = all_cpus;
+
+	CPU_CLR(PCPU_GET(cpuid), &other_cpus);
+	offline_cpus(other_cpus);
+}
+
 /*
  * AP CPU's call this to initialize themselves.
  */
@@ -204,8 +217,8 @@ init_secondary(void)
 	pc->pc_curthread = 0;
 	pc->pc_tssp = &pc->pc_common_tss;
 	pc->pc_rsp0 = 0;
-	pc->pc_pti_rsp0 = (((vm_offset_t)&pc->pc_pti_stack +
-	    PC_PTI_STACK_SZ * sizeof(uint64_t)) & ~0xful);
+	pc->pc_pti_rsp0 = STACKALIGN(((vm_offset_t)&pc->pc_pti_stack +
+	    PC_PTI_STACK_SZ * sizeof(uint64_t)));
 	gdt = pc->pc_gdt;
 	pc->pc_tss = (struct system_segment_descriptor *)&gdt[GPROC0_SEL];
 	pc->pc_fs32p = &gdt[GUFS32_SEL];
@@ -331,7 +344,6 @@ start_all_aps(void)
 	u_char mpbiosreason;
 
 	amd64_mp_alloc_pcpu();
-	mtx_init(&ap_boot_mtx, "ap boot", NULL, MTX_SPIN);
 
 	MPASS(bootMP_size <= PAGE_SIZE);
 	m_boottramp = vm_page_alloc_noobj_contig(0, 1, 0,

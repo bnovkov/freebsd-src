@@ -78,14 +78,6 @@ SYSCTL_BOOL(_kern_racct, OID_AUTO, enable, CTLFLAG_RDTUN, &racct_enable,
 SYSCTL_UINT(_kern_racct, OID_AUTO, pcpu_threshold, CTLFLAG_RW, &pcpu_threshold,
     0, "Processes with higher %cpu usage than this value can be throttled.");
 
-/*
- * How many seconds it takes to use the scheduler %cpu calculations.  When a
- * process starts, we compute its %cpu usage by dividing its runtime by the
- * process wall clock time.  After RACCT_PCPU_SECS pass, we use the value
- * provided by the scheduler.
- */
-#define RACCT_PCPU_SECS		3
-
 struct mtx racct_lock;
 MTX_SYSINIT(racct_lock, &racct_lock, "racct lock", MTX_DEF);
 
@@ -96,6 +88,13 @@ static void racct_sub_cred_locked(struct ucred *cred, int resource,
 		uint64_t amount);
 static void racct_add_cred_locked(struct ucred *cred, int resource,
 		uint64_t amount);
+static int racct_set_locked(struct proc *p, int resource, uint64_t amount,
+                int force);
+static void racct_updatepcpu_locked(struct proc *p);
+static void racct_updatepcpu_racct_locked(struct racct *racct);
+static void racct_updatepcpu_containers(void);
+static void racct_settime_locked(struct proc *p, bool exit);
+static void racct_zeropcpu_locked(struct proc *p);
 
 SDT_PROVIDER_DEFINE(racct);
 SDT_PROBE_DEFINE3(racct, , rusage, add,
@@ -182,193 +181,6 @@ int racct_types[] = {
 		RACCT_DECAYING };
 
 static const fixpt_t RACCT_DECAY_FACTOR = 0.3 * FSCALE;
-
-#ifdef SCHED_4BSD
-/*
- * Contains intermediate values for %cpu calculations to avoid using floating
- * point in the kernel.
- * ccpu_exp[k] = FSCALE * (ccpu/FSCALE)^k = FSCALE * exp(-k/20)
- * It is needed only for the 4BSD scheduler, because in ULE, the ccpu equals to
- * zero so the calculations are more straightforward.
- */
-fixpt_t ccpu_exp[] = {
-	[0] = FSCALE * 1,
-	[1] = FSCALE * 0.95122942450071400909,
-	[2] = FSCALE * 0.90483741803595957316,
-	[3] = FSCALE * 0.86070797642505780722,
-	[4] = FSCALE * 0.81873075307798185866,
-	[5] = FSCALE * 0.77880078307140486824,
-	[6] = FSCALE * 0.74081822068171786606,
-	[7] = FSCALE * 0.70468808971871343435,
-	[8] = FSCALE * 0.67032004603563930074,
-	[9] = FSCALE * 0.63762815162177329314,
-	[10] = FSCALE * 0.60653065971263342360,
-	[11] = FSCALE * 0.57694981038048669531,
-	[12] = FSCALE * 0.54881163609402643262,
-	[13] = FSCALE * 0.52204577676101604789,
-	[14] = FSCALE * 0.49658530379140951470,
-	[15] = FSCALE * 0.47236655274101470713,
-	[16] = FSCALE * 0.44932896411722159143,
-	[17] = FSCALE * 0.42741493194872666992,
-	[18] = FSCALE * 0.40656965974059911188,
-	[19] = FSCALE * 0.38674102345450120691,
-	[20] = FSCALE * 0.36787944117144232159,
-	[21] = FSCALE * 0.34993774911115535467,
-	[22] = FSCALE * 0.33287108369807955328,
-	[23] = FSCALE * 0.31663676937905321821,
-	[24] = FSCALE * 0.30119421191220209664,
-	[25] = FSCALE * 0.28650479686019010032,
-	[26] = FSCALE * 0.27253179303401260312,
-	[27] = FSCALE * 0.25924026064589150757,
-	[28] = FSCALE * 0.24659696394160647693,
-	[29] = FSCALE * 0.23457028809379765313,
-	[30] = FSCALE * 0.22313016014842982893,
-	[31] = FSCALE * 0.21224797382674305771,
-	[32] = FSCALE * 0.20189651799465540848,
-	[33] = FSCALE * 0.19204990862075411423,
-	[34] = FSCALE * 0.18268352405273465022,
-	[35] = FSCALE * 0.17377394345044512668,
-	[36] = FSCALE * 0.16529888822158653829,
-	[37] = FSCALE * 0.15723716631362761621,
-	[38] = FSCALE * 0.14956861922263505264,
-	[39] = FSCALE * 0.14227407158651357185,
-	[40] = FSCALE * 0.13533528323661269189,
-	[41] = FSCALE * 0.12873490358780421886,
-	[42] = FSCALE * 0.12245642825298191021,
-	[43] = FSCALE * 0.11648415777349695786,
-	[44] = FSCALE * 0.11080315836233388333,
-	[45] = FSCALE * 0.10539922456186433678,
-	[46] = FSCALE * 0.10025884372280373372,
-	[47] = FSCALE * 0.09536916221554961888,
-	[48] = FSCALE * 0.09071795328941250337,
-	[49] = FSCALE * 0.08629358649937051097,
-	[50] = FSCALE * 0.08208499862389879516,
-	[51] = FSCALE * 0.07808166600115315231,
-	[52] = FSCALE * 0.07427357821433388042,
-	[53] = FSCALE * 0.07065121306042958674,
-	[54] = FSCALE * 0.06720551273974976512,
-	[55] = FSCALE * 0.06392786120670757270,
-	[56] = FSCALE * 0.06081006262521796499,
-	[57] = FSCALE * 0.05784432087483846296,
-	[58] = FSCALE * 0.05502322005640722902,
-	[59] = FSCALE * 0.05233970594843239308,
-	[60] = FSCALE * 0.04978706836786394297,
-	[61] = FSCALE * 0.04735892439114092119,
-	[62] = FSCALE * 0.04504920239355780606,
-	[63] = FSCALE * 0.04285212686704017991,
-	[64] = FSCALE * 0.04076220397836621516,
-	[65] = FSCALE * 0.03877420783172200988,
-	[66] = FSCALE * 0.03688316740124000544,
-	[67] = FSCALE * 0.03508435410084502588,
-	[68] = FSCALE * 0.03337326996032607948,
-	[69] = FSCALE * 0.03174563637806794323,
-	[70] = FSCALE * 0.03019738342231850073,
-	[71] = FSCALE * 0.02872463965423942912,
-	[72] = FSCALE * 0.02732372244729256080,
-	[73] = FSCALE * 0.02599112877875534358,
-	[74] = FSCALE * 0.02472352647033939120,
-	[75] = FSCALE * 0.02351774585600910823,
-	[76] = FSCALE * 0.02237077185616559577,
-	[77] = FSCALE * 0.02127973643837716938,
-	[78] = FSCALE * 0.02024191144580438847,
-	[79] = FSCALE * 0.01925470177538692429,
-	[80] = FSCALE * 0.01831563888873418029,
-	[81] = FSCALE * 0.01742237463949351138,
-	[82] = FSCALE * 0.01657267540176124754,
-	[83] = FSCALE * 0.01576441648485449082,
-	[84] = FSCALE * 0.01499557682047770621,
-	[85] = FSCALE * 0.01426423390899925527,
-	[86] = FSCALE * 0.01356855901220093175,
-	[87] = FSCALE * 0.01290681258047986886,
-	[88] = FSCALE * 0.01227733990306844117,
-	[89] = FSCALE * 0.01167856697039544521,
-	[90] = FSCALE * 0.01110899653824230649,
-	[91] = FSCALE * 0.01056720438385265337,
-	[92] = FSCALE * 0.01005183574463358164,
-	[93] = FSCALE * 0.00956160193054350793,
-	[94] = FSCALE * 0.00909527710169581709,
-	[95] = FSCALE * 0.00865169520312063417,
-	[96] = FSCALE * 0.00822974704902002884,
-	[97] = FSCALE * 0.00782837754922577143,
-	[98] = FSCALE * 0.00744658307092434051,
-	[99] = FSCALE * 0.00708340892905212004,
-	[100] = FSCALE * 0.00673794699908546709,
-	[101] = FSCALE * 0.00640933344625638184,
-	[102] = FSCALE * 0.00609674656551563610,
-	[103] = FSCALE * 0.00579940472684214321,
-	[104] = FSCALE * 0.00551656442076077241,
-	[105] = FSCALE * 0.00524751839918138427,
-	[106] = FSCALE * 0.00499159390691021621,
-	[107] = FSCALE * 0.00474815099941147558,
-	[108] = FSCALE * 0.00451658094261266798,
-	[109] = FSCALE * 0.00429630469075234057,
-	[110] = FSCALE * 0.00408677143846406699,
-};
-#endif
-
-#define	CCPU_EXP_MAX	110
-
-/*
- * This function is analogical to the getpcpu() function in the ps(1) command.
- * They should both calculate in the same way so that the racct %cpu
- * calculations are consistent with the values shown by the ps(1) tool.
- * The calculations are more complex in the 4BSD scheduler because of the value
- * of the ccpu variable.  In ULE it is defined to be zero which saves us some
- * work.
- */
-static uint64_t
-racct_getpcpu(struct proc *p, u_int pcpu)
-{
-	u_int swtime;
-#ifdef SCHED_4BSD
-	fixpt_t pctcpu, pctcpu_next;
-#endif
-	fixpt_t p_pctcpu;
-	struct thread *td;
-
-	ASSERT_RACCT_ENABLED();
-	KASSERT((p->p_flag & P_IDLEPROC) == 0,
-	    ("racct_getpcpu: idle process %p", p));
-
-	swtime = (ticks - p->p_swtick) / hz;
-
-	/*
-	 * For short-lived processes, the sched_pctcpu() returns small
-	 * values even for cpu intensive processes.  Therefore we use
-	 * our own estimate in this case.
-	 */
-	if (swtime < RACCT_PCPU_SECS)
-		return (pcpu);
-
-	p_pctcpu = 0;
-	FOREACH_THREAD_IN_PROC(p, td) {
-		thread_lock(td);
-#ifdef SCHED_4BSD
-		pctcpu = sched_pctcpu(td);
-		/* Count also the yet unfinished second. */
-		pctcpu_next = (pctcpu * ccpu_exp[1]) >> FSHIFT;
-		pctcpu_next += sched_pctcpu_delta(td);
-		p_pctcpu += max(pctcpu, pctcpu_next);
-#else
-		/*
-		 * In ULE the %cpu statistics are updated on every
-		 * sched_pctcpu() call.  So special calculations to
-		 * account for the latest (unfinished) second are
-		 * not needed.
-		 */
-		p_pctcpu += sched_pctcpu(td);
-#endif
-		thread_unlock(td);
-	}
-
-#ifdef SCHED_4BSD
-	if (swtime <= CCPU_EXP_MAX)
-		return ((100 * (uint64_t)p_pctcpu * 1000000) /
-		    (FSCALE - ccpu_exp[swtime]));
-#endif
-
-	return ((100 * (uint64_t)p_pctcpu * 1000000) / FSCALE);
-}
 
 static void
 racct_add_racct(struct racct *dest, const struct racct *src)
@@ -499,19 +311,6 @@ racct_adjust_resource(struct racct *racct, int resource,
 		    ("%s: resource %d usage < 0", __func__, resource));
 		racct->r_resources[resource] = 0;
 	}
-
-	/*
-	 * There are some cases where the racct %cpu resource would grow
-	 * beyond 100% per core.  For example in racct_proc_exit() we add
-	 * the process %cpu usage to the ucred racct containers.  If too
-	 * many processes terminated in a short time span, the ucred %cpu
-	 * resource could grow too much.  Also, the 4BSD scheduler sometimes
-	 * returns for a thread more than 100% cpu usage. So we set a sane
-	 * boundary here to 100% * the maximum number of CPUs.
-	 */
-	if ((resource == RACCT_PCTCPU) &&
-	    (racct->r_resources[RACCT_PCTCPU] > 100 * 1000000 * (int64_t)MAXCPU))
-		racct->r_resources[RACCT_PCTCPU] = 100 * 1000000 * (int64_t)MAXCPU;
 }
 
 static int
@@ -635,10 +434,44 @@ racct_add_buf(struct proc *p, const struct buf *bp, int is_write)
 	RACCT_UNLOCK();
 }
 
+static void
+racct_settime_locked(struct proc *p, bool exit)
+{
+	struct thread *td;
+	struct timeval wallclock;
+	uint64_t runtime;
+
+	ASSERT_RACCT_ENABLED();
+	RACCT_LOCK_ASSERT();
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if (exit) {
+		/*
+		 * proc_reap() has already calculated rux
+		 * and added crux to rux.
+		 */
+		runtime = cputick2usec(p->p_rux.rux_runtime -
+		    p->p_crux.rux_runtime);
+	} else {
+		PROC_STATLOCK(p);
+		FOREACH_THREAD_IN_PROC(p, td)
+			ruxagg(p, td);
+		PROC_STATUNLOCK(p);
+		runtime = cputick2usec(p->p_rux.rux_runtime);
+	}
+	microuptime(&wallclock);
+	timevalsub(&wallclock, &p->p_stats->p_start);
+
+	racct_set_locked(p, RACCT_CPU, runtime, 0);
+	racct_set_locked(p, RACCT_WALLCLOCK,
+	    (uint64_t)wallclock.tv_sec * 1000000 +
+	    wallclock.tv_usec, 0);
+}
+
 static int
 racct_set_locked(struct proc *p, int resource, uint64_t amount, int force)
 {
-	int64_t old_amount, decayed_amount, diff_proc, diff_cred;
+	int64_t old_amount, diff_proc, diff_cred;
 #ifdef RCTL
 	int error;
 #endif
@@ -655,17 +488,7 @@ racct_set_locked(struct proc *p, int resource, uint64_t amount, int force)
 	 * The diffs may be negative.
 	 */
 	diff_proc = amount - old_amount;
-	if (resource == RACCT_PCTCPU) {
-		/*
-		 * Resources in per-credential racct containers may decay.
-		 * If this is the case, we need to calculate the difference
-		 * between the new amount and the proportional value of the
-		 * old amount that has decayed in the ucred racct containers.
-		 */
-		decayed_amount = old_amount * RACCT_DECAY_FACTOR / FSCALE;
-		diff_cred = amount - decayed_amount;
-	} else
-		diff_cred = diff_proc;
+	diff_cred = diff_proc;
 #ifdef notyet
 	KASSERT(diff_proc >= 0 || RACCT_CAN_DROP(resource),
 	    ("%s: usage of non-droppable resource %d dropping", __func__,
@@ -908,8 +731,6 @@ racct_proc_fork(struct proc *parent, struct proc *child)
 		goto out;
 #endif
 
-	/* Init process cpu time. */
-	child->p_prev_runtime = 0;
 	child->p_throttled = 0;
 
 	/*
@@ -964,37 +785,16 @@ racct_proc_fork_done(struct proc *child)
 void
 racct_proc_exit(struct proc *p)
 {
-	struct timeval wallclock;
-	uint64_t pct_estimate, pct, runtime;
 	int i;
 
 	if (!racct_enable)
 		return;
 
 	PROC_LOCK(p);
-	/*
-	 * We don't need to calculate rux, proc_reap() has already done this.
-	 */
-	runtime = cputick2usec(p->p_rux.rux_runtime);
-#ifdef notyet
-	KASSERT(runtime >= p->p_prev_runtime, ("runtime < p_prev_runtime"));
-#else
-	if (runtime < p->p_prev_runtime)
-		runtime = p->p_prev_runtime;
-#endif
-	microuptime(&wallclock);
-	timevalsub(&wallclock, &p->p_stats->p_start);
-	if (wallclock.tv_sec > 0 || wallclock.tv_usec > 0) {
-		pct_estimate = (1000000 * runtime * 100) /
-		    ((uint64_t)wallclock.tv_sec * 1000000 +
-		    wallclock.tv_usec);
-	} else
-		pct_estimate = 0;
-	pct = racct_getpcpu(p, pct_estimate);
-
 	RACCT_LOCK();
-	racct_set_locked(p, RACCT_CPU, runtime, 0);
-	racct_add_cred_locked(p->p_ucred, RACCT_PCTCPU, pct);
+
+	racct_settime_locked(p, true);
+	racct_zeropcpu_locked(p);
 
 	KASSERT(p->p_racct->r_resources[RACCT_RSS] == 0,
 	    ("process reaped with %ju allocated for RSS\n",
@@ -1016,8 +816,10 @@ racct_proc_exit(struct proc *p)
 }
 
 /*
- * Called after credentials change, to move resource utilisation
- * between raccts.
+ * Called to signal credentials change, to move resource utilisation
+ * between raccts.  Must be called with the proc lock held, in the same span as
+ * the credentials change itself (i.e., without the proc lock being unlocked
+ * between the two), but the order does not matter.
  */
 void
 racct_proc_ucred_changed(struct proc *p, struct ucred *oldcred,
@@ -1068,6 +870,10 @@ racct_move(struct racct *dest, struct racct *src)
 	RACCT_LOCK();
 	racct_add_racct(dest, src);
 	racct_sub_racct(src, src);
+	dest->r_runtime = src->r_runtime;
+	dest->r_time = src->r_time;
+	src->r_runtime = 0;
+	timevalsub(&src->r_time, &src->r_time);
 	RACCT_UNLOCK();
 }
 
@@ -1170,8 +976,6 @@ racct_proc_wakeup(struct proc *p)
 static void
 racct_decay_callback(struct racct *racct, void *dummy1, void *dummy2)
 {
-	int64_t r_old, r_new;
-
 	ASSERT_RACCT_ENABLED();
 	RACCT_LOCK_ASSERT();
 
@@ -1181,15 +985,6 @@ racct_decay_callback(struct racct *racct, void *dummy1, void *dummy2)
 	rctl_throttle_decay(racct, RACCT_READIOPS);
 	rctl_throttle_decay(racct, RACCT_WRITEIOPS);
 #endif
-
-	r_old = racct->r_resources[RACCT_PCTCPU];
-
-	/* If there is nothing to decay, just exit. */
-	if (r_old <= 0)
-		return;
-
-	r_new = r_old * RACCT_DECAY_FACTOR / FSCALE;
-	racct->r_resources[RACCT_PCTCPU] = r_new;
 }
 
 static void
@@ -1221,12 +1016,106 @@ racct_decay(void)
 }
 
 static void
+racct_updatepcpu_racct_locked(struct racct *racct)
+{
+	struct timeval diff;
+	uint64_t elapsed;
+	uint64_t runtime;
+	uint64_t newpcpu;
+	uint64_t oldpcpu;
+
+	ASSERT_RACCT_ENABLED();
+	RACCT_LOCK_ASSERT();
+
+	/* Difference between now and previously-recorded time. */
+	microuptime(&diff);
+	timevalsub(&diff, &racct->r_time);
+	elapsed = (uint64_t)diff.tv_sec * 1000000 + diff.tv_usec;
+
+	/* Difference between current and previously-recorded runtime. */
+	runtime = racct->r_resources[RACCT_CPU] - racct->r_runtime;
+
+	newpcpu = runtime * 100 * 1000000 / elapsed;
+	oldpcpu = racct->r_resources[RACCT_PCTCPU];
+	/*
+	 * This calculation is equivalent to
+	 *    (1 - 0.3) * newpcpu + 0.3 * oldpcpu
+	 * where RACCT_DECAY_FACTOR = 0.3 * FSCALE.
+	 */
+	racct->r_resources[RACCT_PCTCPU] = ((FSCALE - RACCT_DECAY_FACTOR) *
+	    newpcpu + RACCT_DECAY_FACTOR * oldpcpu) / FSCALE;
+	if (racct->r_resources[RACCT_PCTCPU] >
+	    100 * 1000000 * (uint64_t)mp_ncpus)
+		racct->r_resources[RACCT_PCTCPU] = 100 * 1000000 *
+		    (uint64_t)mp_ncpus;
+
+	/* Record current times. */
+	racct->r_runtime = racct->r_resources[RACCT_CPU];
+	timevaladd(&racct->r_time, &diff);
+}
+
+static void
+racct_zeropcpu_locked(struct proc *p)
+{
+	ASSERT_RACCT_ENABLED();
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	p->p_racct->r_resources[RACCT_PCTCPU] = 0;
+}
+
+static void
+racct_updatepcpu_locked(struct proc *p)
+{
+	ASSERT_RACCT_ENABLED();
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	racct_updatepcpu_racct_locked(p->p_racct);
+}
+
+static void
+racct_updatepcpu_pre(void)
+{
+
+	RACCT_LOCK();
+}
+
+static void
+racct_updatepcpu_post(void)
+{
+
+	RACCT_UNLOCK();
+}
+
+static void
+racct_updatepcpu_racct_callback(struct racct *racct, void *dummy1, void *dummy2)
+{
+	racct_updatepcpu_racct_locked(racct);
+}
+
+static void
+racct_updatepcpu_containers(void)
+{
+	ASSERT_RACCT_ENABLED();
+
+	ui_racct_foreach(racct_updatepcpu_racct_callback, racct_updatepcpu_pre,
+	    racct_updatepcpu_post, NULL, NULL);
+	loginclass_racct_foreach(racct_updatepcpu_racct_callback, racct_updatepcpu_pre,
+	    racct_updatepcpu_post, NULL, NULL);
+	prison_racct_foreach(racct_updatepcpu_racct_callback, racct_updatepcpu_pre,
+	    racct_updatepcpu_post, NULL, NULL);
+}
+
+static bool
+racct_proc_to_skip(const struct proc *p)
+{
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	return (p->p_state != PRS_NORMAL || (p->p_flag & P_IDLEPROC) != 0);
+}
+
+static void
 racctd(void)
 {
-	struct thread *td;
 	struct proc *p;
-	struct timeval wallclock;
-	uint64_t pct, pct_estimate, runtime;
 
 	ASSERT_RACCT_ENABLED();
 
@@ -1237,36 +1126,11 @@ racctd(void)
 
 		FOREACH_PROC_IN_SYSTEM(p) {
 			PROC_LOCK(p);
-			if (p->p_state != PRS_NORMAL ||
-			    (p->p_flag & P_IDLEPROC) != 0) {
-				if (p->p_state == PRS_ZOMBIE)
-					racct_set(p, RACCT_PCTCPU, 0);
+			if (racct_proc_to_skip(p)) {
 				PROC_UNLOCK(p);
 				continue;
 			}
 
-			microuptime(&wallclock);
-			timevalsub(&wallclock, &p->p_stats->p_start);
-			PROC_STATLOCK(p);
-			FOREACH_THREAD_IN_PROC(p, td)
-				ruxagg(p, td);
-			runtime = cputick2usec(p->p_rux.rux_runtime);
-			PROC_STATUNLOCK(p);
-#ifdef notyet
-			KASSERT(runtime >= p->p_prev_runtime,
-			    ("runtime < p_prev_runtime"));
-#else
-			if (runtime < p->p_prev_runtime)
-				runtime = p->p_prev_runtime;
-#endif
-			p->p_prev_runtime = runtime;
-			if (wallclock.tv_sec > 0 || wallclock.tv_usec > 0) {
-				pct_estimate = (1000000 * runtime * 100) /
-				    ((uint64_t)wallclock.tv_sec * 1000000 +
-				    wallclock.tv_usec);
-			} else
-				pct_estimate = 0;
-			pct = racct_getpcpu(p, pct_estimate);
 			RACCT_LOCK();
 #ifdef RCTL
 			rctl_throttle_decay(p->p_racct, RACCT_READBPS);
@@ -1274,11 +1138,8 @@ racctd(void)
 			rctl_throttle_decay(p->p_racct, RACCT_READIOPS);
 			rctl_throttle_decay(p->p_racct, RACCT_WRITEIOPS);
 #endif
-			racct_set_locked(p, RACCT_PCTCPU, pct, 1);
-			racct_set_locked(p, RACCT_CPU, runtime, 0);
-			racct_set_locked(p, RACCT_WALLCLOCK,
-			    (uint64_t)wallclock.tv_sec * 1000000 +
-			    wallclock.tv_usec, 0);
+			racct_settime_locked(p, false);
+			racct_updatepcpu_locked(p);
 			RACCT_UNLOCK();
 			PROC_UNLOCK(p);
 		}
@@ -1291,7 +1152,7 @@ racctd(void)
 		 */
 		FOREACH_PROC_IN_SYSTEM(p) {
 			PROC_LOCK(p);
-			if (p->p_state != PRS_NORMAL) {
+			if (racct_proc_to_skip(p)) {
 				PROC_UNLOCK(p);
 				continue;
 			}
@@ -1306,6 +1167,8 @@ racctd(void)
 			PROC_UNLOCK(p);
 		}
 		sx_sunlock(&allproc_lock);
+
+		racct_updatepcpu_containers();
 		pause("-", hz);
 	}
 }
@@ -1317,7 +1180,7 @@ static struct kproc_desc racctd_kp = {
 };
 
 static void
-racctd_init(void)
+racctd_init(void *dummy __unused)
 {
 	if (!racct_enable)
 		return;
@@ -1327,7 +1190,7 @@ racctd_init(void)
 SYSINIT(racctd, SI_SUB_RACCTD, SI_ORDER_FIRST, racctd_init, NULL);
 
 static void
-racct_init(void)
+racct_init(void *dummy __unused)
 {
 	if (!racct_enable)
 		return;

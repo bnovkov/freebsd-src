@@ -759,7 +759,6 @@ shm_dotruncate_locked(struct shmfd *shmfd, off_t length, void *rl_cookie)
 
 		/* Free the swap accounted for shm */
 		swap_release_by_cred(delta, object->cred);
-		object->charge -= delta;
 	} else {
 		if ((shmfd->shm_seals & F_SEAL_GROW) != 0)
 			return (EPERM);
@@ -768,7 +767,6 @@ shm_dotruncate_locked(struct shmfd *shmfd, off_t length, void *rl_cookie)
 		delta = IDX_TO_OFF(nobjsize - object->size);
 		if (!swap_reserve_by_cred(delta, object->cred))
 			return (ENOMEM);
-		object->charge += delta;
 	}
 	shmfd->shm_size = length;
 	mtx_lock(&shm_timestamp_lock);
@@ -1160,7 +1158,8 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 	if ((flags & O_ACCMODE) != O_RDONLY && (flags & O_ACCMODE) != O_RDWR)
 		return (EINVAL);
 
-	if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC | O_CLOEXEC)) != 0)
+	if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC | O_CLOEXEC |
+	    O_CLOFORK)) != 0)
 		return (EINVAL);
 
 	largepage = (shmflags & SHM_LARGEPAGE) != 0;

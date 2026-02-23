@@ -200,14 +200,25 @@ devfs_foreach_cdevpriv(struct cdev *dev, int (*cb)(void *data, void *arg),
 void
 devfs_destroy_cdevpriv(struct cdev_privdata *p)
 {
+	struct file *fp;
+	struct cdev_priv *cdp;
 
 	mtx_assert(&cdevpriv_mtx, MA_OWNED);
-	KASSERT(p->cdpd_fp->f_cdevpriv == p,
-	    ("devfs_destoy_cdevpriv %p != %p", p->cdpd_fp->f_cdevpriv, p));
-	p->cdpd_fp->f_cdevpriv = NULL;
+	fp = p->cdpd_fp;
+	KASSERT(fp->f_cdevpriv == p,
+	    ("devfs_destoy_cdevpriv %p != %p", fp->f_cdevpriv, p));
+	cdp = cdev2priv((struct cdev *)fp->f_data);
+	cdp->cdp_fdpriv_dtrc++;
+	fp->f_cdevpriv = NULL;
 	LIST_REMOVE(p, cdpd_list);
 	mtx_unlock(&cdevpriv_mtx);
 	(p->cdpd_dtr)(p->cdpd_data);
+	mtx_lock(&cdevpriv_mtx);
+	MPASS(cdp->cdp_fdpriv_dtrc >= 1);
+	cdp->cdp_fdpriv_dtrc--;
+	if (cdp->cdp_fdpriv_dtrc == 0)
+		wakeup(&cdp->cdp_fdpriv_dtrc);
+	mtx_unlock(&cdevpriv_mtx);
 	free(p, M_CDEVPDATA);
 }
 
@@ -355,6 +366,9 @@ devfs_populate_vp(struct vnode *vp)
 	int locked;
 
 	ASSERT_VOP_LOCKED(vp, "devfs_populate_vp");
+
+	if (VN_IS_DOOMED(vp))
+		return (ENOENT);
 
 	dmp = VFSTODEVFS(vp->v_mount);
 	if (!devfs_populate_needed(dmp)) {
@@ -1061,7 +1075,7 @@ devfs_lookupx(struct vop_lookup_args *ap, int *dm_unlock)
 	mp = dvp->v_mount;
 	dmp = VFSTODEVFS(mp);
 	dd = dvp->v_data;
-	*vpp = NULLVP;
+	*vpp = NULL;
 
 	if ((flags & ISLASTCN) && nameiop == RENAME)
 		return (EOPNOTSUPP);
@@ -1080,7 +1094,7 @@ devfs_lookupx(struct vop_lookup_args *ap, int *dm_unlock)
 		if ((flags & ISLASTCN) && nameiop != LOOKUP)
 			return (EINVAL);
 		*vpp = dvp;
-		VREF(dvp);
+		vref(dvp);
 		return (0);
 	}
 
@@ -1117,8 +1131,25 @@ devfs_lookupx(struct vop_lookup_args *ap, int *dm_unlock)
 		cdev = NULL;
 		DEVFS_DMP_HOLD(dmp);
 		sx_xunlock(&dmp->dm_lock);
+		dvplocked = VOP_ISLOCKED(dvp);
+
+		/*
+		 * Invoke the dev_clone handler.  Unlock dvp around it
+		 * to simplify the cloner operations.
+		 *
+		 * If dvp is reclaimed while we unlocked it, we return
+		 * with ENOENT by some of the paths below.  If cloner
+		 * returned cdev, then devfs_populate_vp() notes the
+		 * reclamation.  Otherwise, note that either our devfs
+		 * mount is being unmounted, then DEVFS_DMP_DROP()
+		 * returns true, and we return ENOENT this way.  Or,
+		 * because de == NULL, the check for it after the loop
+		 * returns ENOENT.
+		 */
+		VOP_UNLOCK(dvp);
 		EVENTHANDLER_INVOKE(dev_clone,
 		    td->td_ucred, pname, strlen(pname), &cdev);
+		vn_lock(dvp, dvplocked | LK_RETRY);
 
 		if (cdev == NULL)
 			sx_xlock(&dmp->dm_lock);
@@ -1170,7 +1201,7 @@ devfs_lookupx(struct vop_lookup_args *ap, int *dm_unlock)
 		if (error)
 			return (error);
 		if (*vpp == dvp) {
-			VREF(dvp);
+			vref(dvp);
 			*vpp = dvp;
 			return (0);
 		}

@@ -6,6 +6,27 @@
 
 set -eu
 
+# We've been seeing this script take over 15min to run.  This may or
+# may not be normal.  Just to get a little more insight, print out
+# a message to stdout with the top running process, and do this every
+# 30 seconds.  We can delete this watchdog later once we get a better
+# handle on what the timeout value should be.
+(while [ 1 ] ; do sleep 30 && echo "[watchdog: $(ps -eo cmd --sort=-pcpu  | head -n 2 | tail -n 1)}')]"; done) &
+
+# The default 'azure.archive.ubuntu.com' mirrors can be really slow.
+# Prioritize the official Ubuntu mirrors.
+#
+# The normal apt-mirrors.txt will look like:
+#
+# http://azure.archive.ubuntu.com/ubuntu/       priority:1
+# https://archive.ubuntu.com/ubuntu/    priority:2
+# https://security.ubuntu.com/ubuntu/   priority:3
+#
+# Just delete the 'azure.archive.ubuntu.com' line.
+sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt
+echo "Using mirrors:"
+cat /etc/apt/apt-mirrors.txt
+
 # install needed packages
 export DEBIAN_FRONTEND="noninteractive"
 sudo apt-get -y update
@@ -65,3 +86,6 @@ sudo zpool create -f -o ashift=12 zpool $SSD1 $SSD2 -O relatime=off \
 for i in /sys/block/s*/queue/scheduler; do
   echo "none" | sudo tee $i
 done
+
+# Kill off our watchdog
+kill $(jobs -p)

@@ -167,7 +167,7 @@ static	ieee80211_send_action_func ht_send_action_ba_delba;
 static	ieee80211_send_action_func ht_send_action_ht_txchwidth;
 
 static void
-ieee80211_ht_init(void)
+ieee80211_ht_init(void *dummy __unused)
 {
 	/*
 	 * Setup HT parameters that depends on the clock frequency.
@@ -1130,7 +1130,8 @@ again:
 		 */
 		if (rap->rxa_qframes != 0) {
 			/* XXX honor batimeout? */
-			if (ticks - rap->rxa_age > ieee80211_ampdu_age) {
+			if (ieee80211_time_after(ticks - rap->rxa_age,
+			    ieee80211_ampdu_age)) {
 				/*
 				 * Too long since we received the first
 				 * frame; flush the reorder buffer.
@@ -1392,7 +1393,8 @@ ieee80211_ht_node_age(struct ieee80211_node *ni)
 		 * See above for more details on what's happening here.
 		 */
 		/* XXX honor batimeout? */
-		if (ticks - rap->rxa_age > ieee80211_ampdu_age) {
+		if (ieee80211_time_after(ticks - rap->rxa_age,
+		    ieee80211_ampdu_age)) {
 			/*
 			 * Too long since we received the first
 			 * frame; flush the reorder buffer.
@@ -1476,7 +1478,7 @@ ieee80211_ht_wds_init(struct ieee80211_node *ni)
 		ni->ni_htcap |= IEEE80211_HTCAP_SHORTGI20;
 	if (IEEE80211_IS_CHAN_HT40(ni->ni_chan)) {
 		ni->ni_htcap |= IEEE80211_HTCAP_CHWIDTH40;
-		ni->ni_chw = IEEE80211_STA_RX_BW_40;
+		ni->ni_chw = NET80211_STA_RX_BW_40;
 		if (IEEE80211_IS_CHAN_HT40U(ni->ni_chan))
 			ni->ni_ht2ndchan = IEEE80211_HTINFO_2NDCHAN_ABOVE;
 		else if (IEEE80211_IS_CHAN_HT40D(ni->ni_chan))
@@ -1484,7 +1486,7 @@ ieee80211_ht_wds_init(struct ieee80211_node *ni)
 		if (vap->iv_flags_ht & IEEE80211_FHT_SHORTGI40)
 			ni->ni_htcap |= IEEE80211_HTCAP_SHORTGI40;
 	} else {
-		ni->ni_chw = IEEE80211_STA_RX_BW_20;
+		ni->ni_chw = NET80211_STA_RX_BW_20;
 		ni->ni_ht2ndchan = IEEE80211_HTINFO_2NDCHAN_NONE;
 	}
 	ni->ni_htctlchan = ni->ni_chan->ic_ieee;
@@ -1580,7 +1582,7 @@ ieee80211_ht_node_join(struct ieee80211_node *ni)
 
 	if (ni->ni_flags & IEEE80211_NODE_HT) {
 		vap->iv_ht_sta_assoc++;
-		if (ni->ni_chw == IEEE80211_STA_RX_BW_40)
+		if (ni->ni_chw == NET80211_STA_RX_BW_40)
 			vap->iv_ht40_sta_assoc++;
 	}
 	htinfo_update(vap);
@@ -1598,7 +1600,7 @@ ieee80211_ht_node_leave(struct ieee80211_node *ni)
 
 	if (ni->ni_flags & IEEE80211_NODE_HT) {
 		vap->iv_ht_sta_assoc--;
-		if (ni->ni_chw == IEEE80211_STA_RX_BW_40)
+		if (ni->ni_chw == NET80211_STA_RX_BW_40)
 			vap->iv_ht40_sta_assoc--;
 	}
 	htinfo_update(vap);
@@ -1827,7 +1829,7 @@ htinfo_update_chw(struct ieee80211_node *ni, int htflags, int vhtflags)
 done:
 	/* update node's (11n) tx channel width */
 	ni->ni_chw = IEEE80211_IS_CHAN_HT40(ni->ni_chan) ?
-	    IEEE80211_STA_RX_BW_40 : IEEE80211_STA_RX_BW_20;
+	    NET80211_STA_RX_BW_40 : NET80211_STA_RX_BW_20;
 	return (ret);
 }
 
@@ -1933,7 +1935,7 @@ ieee80211_vht_get_vhtflags(struct ieee80211_node *ni, uint32_t htflags)
 {
 #define	_RETURN_CHAN_BITS(_cb)						\
 do {									\
-	IEEE80211_NOTE(ni->ni_vap, IEEE80211_MSG_11N, ni,		\
+	if (0) IEEE80211_NOTE(ni->ni_vap, IEEE80211_MSG_11N, ni,	\
 	    "%s:%d: selected %b", __func__, __LINE__,			\
 	    (_cb), IEEE80211_CHAN_BITS);				\
 	return (_cb);							\
@@ -2689,11 +2691,11 @@ ht_recv_action_ht_txchwidth(struct ieee80211_node *ni,
 	 * here.
 	 */
 	chw = (frm[2] == IEEE80211_A_HT_TXCHWIDTH_2040) ?
-	    IEEE80211_STA_RX_BW_40 : IEEE80211_STA_RX_BW_20;
+	    NET80211_STA_RX_BW_40 : NET80211_STA_RX_BW_20;
 
 	IEEE80211_NOTE(ni->ni_vap, IEEE80211_MSG_ACTION | IEEE80211_MSG_11N, ni,
 	    "%s: HT txchwidth, width %d%s (%s)", __func__,
-	    chw, ni->ni_chw != chw ? "*" : "", ieee80211_ni_chw_to_str(chw));
+	    chw, ni->ni_chw != chw ? "*" : "", net80211_ni_chw_to_str(chw));
 	if (chw != ni->ni_chw) {
 		/* XXX does this need to change the ht40 station count? */
 		ni->ni_chw = chw;
@@ -2766,10 +2768,15 @@ ieee80211_ampdu_enable(struct ieee80211_node *ni,
 	return 1;
 }
 
-/*
- * Request A-MPDU tx aggregation.  Setup local state and
- * issue an ADDBA request.  BA use will only happen after
+/**
+ * @brief Request A-MPDU tx aggregation.
+ *
+ * Setup local state and issue an ADDBA request.  BA use will only happen after
  * the other end replies with ADDBA response.
+ *
+ * @param ni ieee80211_node update
+ * @param tap tx_ampdu state
+ * @returns 1 on success and 0 on error
  */
 int
 ieee80211_ampdu_request(struct ieee80211_node *ni,
@@ -2777,7 +2784,7 @@ ieee80211_ampdu_request(struct ieee80211_node *ni,
 {
 	struct ieee80211com *ic = ni->ni_ic;
 	uint16_t args[5];
-	int tid, dialogtoken;
+	int tid, dialogtoken, error;
 	static int tokens = 0;	/* XXX */
 
 	/* XXX locking */
@@ -2819,7 +2826,7 @@ ieee80211_ampdu_request(struct ieee80211_node *ni,
 		/* defer next try so we don't slam the driver with requests */
 		tap->txa_attempts = ieee80211_addba_maxtries;
 		/* NB: check in case driver wants to override */
-		if (tap->txa_nextrequest <= ticks)
+		if (ieee80211_time_before_eq(tap->txa_nextrequest, ticks))
 			tap->txa_nextrequest = ticks + ieee80211_addba_backoff;
 		return 0;
 	}
@@ -2828,8 +2835,11 @@ ieee80211_ampdu_request(struct ieee80211_node *ni,
 	args[4] = _IEEE80211_SHIFTMASK(tap->txa_start, IEEE80211_BASEQ_START)
 		| _IEEE80211_SHIFTMASK(0, IEEE80211_BASEQ_FRAG)
 		;
-	return ic->ic_send_action(ni, IEEE80211_ACTION_CAT_BA,
+
+	error = ic->ic_send_action(ni, IEEE80211_ACTION_CAT_BA,
 		IEEE80211_ACTION_BA_ADDBA_REQUEST, args);
+	/* Silly return of 1 for success here. */
+	return (error == 0);
 }
 
 /*
@@ -3832,5 +3842,5 @@ ieee80211_ht_check_tx_ht40(const struct ieee80211_node *ni)
 
 	return (IEEE80211_IS_CHAN_HT40(bss_chan) &&
 	    IEEE80211_IS_CHAN_HT40(ni->ni_chan) &&
-	    (ni->ni_chw == IEEE80211_STA_RX_BW_40));
+	    (ni->ni_chw == NET80211_STA_RX_BW_40));
 }

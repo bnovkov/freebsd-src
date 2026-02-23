@@ -85,6 +85,10 @@ INCS+=		stdlib.h
 SRCS+=		reallocarray.c
 .endif
 
+.if !exists(${HOST_INCLUDE_ROOT}/stdckdint.h)
+INCS+=		stdckdint.h
+.endif
+
 .if exists(${HOST_INCLUDE_ROOT}/sys/stat.h)
 _WITH_UTIMENS!= grep -c utimensat ${HOST_INCLUDE_ROOT}/sys/stat.h || true
 .else
@@ -94,6 +98,9 @@ _WITH_UTIMENS= 0
 SYSINCS+=	stat.h
 SRCS+=		futimens.c utimensat.c
 .endif
+
+# Define ptraddr_t for bootstrapping
+INCS+=		stddef.h
 
 _WITH_EXPLICIT_BZERO!= cat ${HOST_INCLUDE_ROOT}/strings.h ${HOST_INCLUDE_ROOT}/string.h | grep -c explicit_bzero || true
 .if ${_WITH_EXPLICIT_BZERO} == 0
@@ -347,6 +354,13 @@ MSDOSFSINCS+=	${SRCTOP}/sys/fs/msdosfs/fat.h
 MSDOSFSINCS+=	${SRCTOP}/sys/fs/msdosfs/msdosfsmount.h
 DISKINCS+=	${SRCTOP}/sys/sys/disk/bsd.h
 
+.if ${.MAKE.OS} == "FreeBSD"
+# Needed to build most of the things below, which include sys/cdefs.h either
+# directly or transitively
+SYSINCS+=	${SRCTOP}/sys/sys/_visible.h
+SYSINCS+=	${SRCTOP}/sys/sys/cdefs.h
+.endif
+
 # Needed to build config (since it uses libnv)
 SYSINCS+=	${SRCTOP}/sys/sys/_nv.h
 SYSINCS+=	${SRCTOP}/sys/sys/nv.h ${SRCTOP}/sys/sys/cnv.h \
@@ -410,7 +424,7 @@ _LINK_HOST_TOOL=	ln -sfn
 # When building on FreeBSD we always copy the host tools instead of linking
 # into WORLDTMP to avoid issues with incompatible libraries (see r364030).
 # Note: we could create links if we don't intend to update the current machine.
-_COPY_HOST_TOOL=	cp -pf
+_COPY_HOST_TOOL=	install -p
 .else
 # However, this is not necessary on Linux/macOS. Additionally, copying the host
 # tools to another directory with cp -p results in freezes on macOS Big Sur for
@@ -495,7 +509,9 @@ INSTALLDIR_LIST= \
 	bin \
 	lib/geom \
 	usr/include/casper \
+	usr/include/openssl \
 	usr/include/private/ucl \
+	usr/include/private/yaml \
 	usr/include/private/zstd \
 	usr/lib \
 	usr/libdata/pkgconfig \

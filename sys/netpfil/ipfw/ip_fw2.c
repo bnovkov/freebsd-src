@@ -67,6 +67,7 @@
 #include <net/route/nhop.h>
 #include <net/pfil.h>
 #include <net/vnet.h>
+#include <net/if_gif.h>
 #include <net/if_pfsync.h>
 
 #include <netpfil/pf/pf_mtag.h>
@@ -1757,6 +1758,12 @@ do {								\
 				PULLUP_TO(hlen, ulp, struct ip);
 				break;
 
+			case IPPROTO_ETHERIP:	/* RFC 3378 */
+				PULLUP_LEN(hlen, ulp,
+				    sizeof(struct etherip_header) +
+				    sizeof(struct ether_header));
+				break;
+
 			case IPPROTO_PFSYNC:
 				PULLUP_TO(hlen, ulp, struct pfsync_header);
 				break;
@@ -2113,8 +2120,8 @@ do {								\
 							pkey = &args->f_id.dst_ip6;
 						else
 							pkey = &args->f_id.src_ip6;
-					} else /* only for L3 */
-						break;
+					}
+					break;
 				case LOOKUP_DSCP:
 					if (is_ipv4)
 						key = ip->ip_tos >> 2;
@@ -3571,11 +3578,9 @@ sysctl_ipfw_tables_sets(SYSCTL_HANDLER_ARGS)
 /*
  * Stuff that must be initialised only on boot or module load
  */
-static int
-ipfw_init(void)
+static void
+ipfw_init(void *dummy __unused)
 {
-	int error = 0;
-
 	/*
  	 * Only print out this stuff the first time around,
 	 * when called from the sysinit code.
@@ -3620,14 +3625,13 @@ ipfw_init(void)
 	ipfw_init_sopt_handler();
 	ipfw_init_obj_rewriter();
 	ipfw_iface_init();
-	return (error);
 }
 
 /*
  * Called for the removal of the last instance only on module unload.
  */
 static void
-ipfw_destroy(void)
+ipfw_destroy(void *dummy __unused)
 {
 
 	ipfw_iface_destroy();
@@ -3663,6 +3667,7 @@ vnet_ipfw_init(const void *unused)
 #ifdef IPFIREWALL_NAT
 	LIST_INIT(&chain->nat);
 #endif
+	RB_INIT(&chain->taps);
 
 	/* Init shared services hash table */
 	ipfw_init_srv(chain);
@@ -3688,7 +3693,7 @@ vnet_ipfw_init(const void *unused)
 	rule->cmd[0].len = 1;
 	rule->cmd[0].opcode = default_to_accept ? O_ACCEPT : O_DENY;
 	chain->default_rule = rule;
-	ipfw_add_protected_rule(chain, rule, 0);
+	ipfw_add_protected_rule(chain, rule);
 
 	ipfw_eaction_init(chain, first);
 	ipfw_init_skipto_cache(chain);
@@ -3727,29 +3732,26 @@ vnet_ipfw_uninit(const void *unused)
 
 	V_ipfw_vnet_ready = 0; /* tell new callers to go away */
 	/*
-	 * disconnect from ipv4, ipv6, layer2 and sockopt.
-	 * Then grab, release and grab again the WLOCK so we make
-	 * sure the update is propagated and nobody will be in.
+	 * Disconnect from ipv4, ipv6, layer2 and sockopt.  pfil(9) hook
+	 * removal is synchronized by the net epoch, but our destructors
+	 * free the memory immediately, thus we need for the epoch sections
+	 * to complete.
 	 */
 	ipfw_detach_hooks();
 	V_ip_fw_ctl_ptr = NULL;
+	NET_EPOCH_WAIT();
 
 	last = IS_DEFAULT_VNET(curvnet) ? 1 : 0;
 
 	IPFW_UH_WLOCK(chain);
-	IPFW_UH_WUNLOCK(chain);
 
 	ipfw_dyn_uninit(0);	/* run the callout_drain */
 
-	IPFW_UH_WLOCK(chain);
-
 	reap = NULL;
-	IPFW_WLOCK(chain);
 	for (i = 0; i < chain->n_rules; i++)
 		ipfw_reap_add(chain, &reap, chain->map[i]);
 	free(chain->map, M_IPFW);
 	ipfw_destroy_skipto_cache(chain);
-	IPFW_WUNLOCK(chain);
 	IPFW_UH_WUNLOCK(chain);
 	ipfw_destroy_tables(chain, last);
 	ipfw_eaction_uninit(chain, last);

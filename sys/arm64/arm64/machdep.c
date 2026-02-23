@@ -80,6 +80,7 @@
 #include <machine/cpu_feat.h>
 #include <machine/debug_monitor.h>
 #include <machine/hypervisor.h>
+#include <machine/ifunc.h>
 #include <machine/kdb.h>
 #include <machine/machdep.h>
 #include <machine/metadata.h>
@@ -154,13 +155,6 @@ uintptr_t socdev_va __read_mostly;
 vm_paddr_t efi_systbl_phys;
 static struct efi_map_header *efihdr;
 
-/* pagezero_* implementations are provided in support.S */
-void pagezero_simple(void *);
-void pagezero_cache(void *);
-
-/* pagezero_simple is default pagezero */
-void (*pagezero)(void *p) = pagezero_simple;
-
 int (*apei_nmi)(void);
 
 #if defined(PERTHREAD_SSP_WARNING)
@@ -173,16 +167,19 @@ SYSINIT(ssp_warn, SI_SUB_COPYRIGHT, SI_ORDER_ANY, print_ssp_warning, NULL);
 SYSINIT(ssp_warn2, SI_SUB_LAST, SI_ORDER_ANY, print_ssp_warning, NULL);
 #endif
 
-static bool
+static cpu_feat_en
 pan_check(const struct cpu_feat *feat __unused, u_int midr __unused)
 {
 	uint64_t id_aa64mfr1;
 
-	id_aa64mfr1 = READ_SPECIALREG(id_aa64mmfr1_el1);
-	return (ID_AA64MMFR1_PAN_VAL(id_aa64mfr1) != ID_AA64MMFR1_PAN_NONE);
+	get_kernel_reg(ID_AA64MMFR1_EL1, &id_aa64mfr1);
+	if (ID_AA64MMFR1_PAN_VAL(id_aa64mfr1) == ID_AA64MMFR1_PAN_NONE)
+		return (FEAT_ALWAYS_DISABLE);
+
+	return (FEAT_DEFAULT_ENABLE);
 }
 
-static void
+static bool
 pan_enable(const struct cpu_feat *feat __unused,
     cpu_feat_errata errata_status __unused, u_int *errata_list __unused,
     u_int errata_count __unused)
@@ -200,15 +197,54 @@ pan_enable(const struct cpu_feat *feat __unused,
 	    ".arch_extension pan	\n"
 	    "msr pan, #1		\n"
 	    ".arch_extension nopan	\n");
+
+	return (true);
 }
 
-static struct cpu_feat feat_pan = {
-	.feat_name		= "FEAT_PAN",
-	.feat_check		= pan_check,
-	.feat_enable		= pan_enable,
-	.feat_flags		= CPU_FEAT_EARLY_BOOT | CPU_FEAT_PER_CPU,
-};
-DATA_SET(cpu_feat_set, feat_pan);
+static void
+pan_disabled(const struct cpu_feat *feat __unused)
+{
+	if (PCPU_GET(cpuid) == 0)
+		update_special_reg(ID_AA64MMFR1_EL1, ID_AA64MMFR1_PAN_MASK, 0);
+}
+
+CPU_FEAT(feat_pan, "Privileged access never",
+    pan_check, NULL, pan_enable, pan_disabled,
+    CPU_FEAT_AFTER_DEV | CPU_FEAT_PER_CPU);
+
+static cpu_feat_en
+mops_check(const struct cpu_feat *feat __unused, u_int midr __unused)
+{
+	uint64_t id_aa64isar2;
+
+	get_kernel_reg(ID_AA64ISAR2_EL1, &id_aa64isar2);
+	if (ID_AA64ISAR2_MOPS_VAL(id_aa64isar2) == ID_AA64ISAR2_MOPS_NONE)
+		return (FEAT_ALWAYS_DISABLE);
+
+	return (FEAT_DEFAULT_ENABLE);
+}
+
+static bool
+mops_enable(const struct cpu_feat *feat __unused,
+    cpu_feat_errata errata_status __unused, u_int *errata_list __unused,
+    u_int errata_count __unused)
+{
+	WRITE_SPECIALREG(sctlr_el1, READ_SPECIALREG(sctlr_el1) | SCTLR_MSCEn);
+	isb();
+
+	return (true);
+}
+
+static void
+mops_disabled(const struct cpu_feat *feat __unused)
+{
+	WRITE_SPECIALREG(sctlr_el1, READ_SPECIALREG(sctlr_el1) & ~SCTLR_MSCEn);
+	isb();
+}
+
+CPU_FEAT(feat_mops, "MOPS",
+    mops_check, NULL, mops_enable, mops_disabled,
+    CPU_FEAT_AFTER_DEV | CPU_FEAT_PER_CPU);
 
 bool
 has_hyp(void)
@@ -677,9 +713,6 @@ cache_setup(void)
 		/* Same as with above calculations */
 		dczva_line_shift = DCZID_BS_SIZE(dczid_el0);
 		dczva_line_size = sizeof(int) << dczva_line_shift;
-
-		/* Change pagezero function */
-		pagezero = pagezero_cache;
 	}
 }
 
@@ -765,6 +798,9 @@ initarm(struct arm64_bootparams *abp)
 
 	update_special_regs(0);
 
+	sched_instance_select();
+	link_elf_ireloc();
+
 	/* Set the pcpu data, this is needed by pmap_bootstrap */
 	pcpup = &pcpu0;
 	pcpu_init(pcpup, 0, sizeof(struct pcpu));
@@ -781,7 +817,6 @@ initarm(struct arm64_bootparams *abp)
 	PCPU_SET(curthread, &thread0);
 	PCPU_SET(midr, get_midr());
 
-	link_elf_ireloc();
 #ifdef FDT
 	try_load_dtb();
 #endif
@@ -857,7 +892,7 @@ initarm(struct arm64_bootparams *abp)
 
 	cninit();
 	set_ttbr0(abp->kern_ttbr0);
-	cpu_tlb_flushID();
+	pmap_s1_invalidate_all_kernel();
 
 	if (!valid)
 		panic("Invalid bus configuration: %s",
@@ -1033,3 +1068,35 @@ DB_SHOW_COMMAND(vtop, db_show_vtop)
 		db_printf("show vtop <virt_addr>\n");
 }
 #endif
+
+#undef memset
+#undef memmove
+#undef memcpy
+
+void	*memset_std(void *buf, int c, size_t len);
+void	*memset_mops(void *buf, int c, size_t len);
+void    *memmove_std(void * _Nonnull dst, const void * _Nonnull src,
+	    size_t len);
+void    *memmove_mops(void * _Nonnull dst, const void * _Nonnull src,
+	    size_t len);
+void    *memcpy_std(void * _Nonnull dst, const void * _Nonnull src,
+	    size_t len);
+void    *memcpy_mops(void * _Nonnull dst, const void * _Nonnull src,
+	    size_t len);
+
+DEFINE_IFUNC(, void *, memset, (void *, int, size_t))
+{
+	return ((elf_hwcap2 & HWCAP2_MOPS) != 0 ? memset_mops : memset_std);
+}
+
+DEFINE_IFUNC(, void *, memmove, (void * _Nonnull, const void * _Nonnull,
+    size_t))
+{
+	return ((elf_hwcap2 & HWCAP2_MOPS) != 0 ? memmove_mops : memmove_std);
+}
+
+DEFINE_IFUNC(, void *, memcpy, (void * _Nonnull, const void * _Nonnull,
+    size_t))
+{
+	return ((elf_hwcap2 & HWCAP2_MOPS) != 0 ? memcpy_mops : memcpy_std);
+}

@@ -56,9 +56,7 @@
 #include "local.h"
 #include "xlocale_private.h"
 
-#ifndef NO_FLOATING_POINT
 #include <locale.h>
-#endif
 
 #define	BUF		513	/* Maximum length of numeric string. */
 
@@ -89,9 +87,7 @@
 #define	CT_FLOAT	4	/* %[efgEFG] conversion */
 
 static const u_char *__sccl(char *, const u_char *);
-#ifndef NO_FLOATING_POINT
 static int parsefloat(FILE *, char *, char *, locale_t);
-#endif
 
 __weak_reference(__vfscanf, vfscanf);
 
@@ -318,10 +314,9 @@ parseint_fsm(int c, enum parseint_state *state, int *base)
 	case '0':
 		if (*state == begin || *state == havesign) {
 			*state = havezero;
-		} else {
-			*state = any;
+			return 1;
 		}
-		return 1;
+		/* FALL THROUGH */
 	case '1':
 	case '2':
 	case '3':
@@ -649,12 +644,10 @@ literal:
 			base = 16;
 			break;
 
-#ifndef NO_FLOATING_POINT
 		case 'A': case 'E': case 'F': case 'G':
 		case 'a': case 'e': case 'f': case 'g':
 			c = CT_FLOAT;
 			break;
-#endif
 
 		case 'S':
 			flags |= LONG;
@@ -836,7 +829,6 @@ literal:
 			}
 			break;
 
-#ifndef NO_FLOATING_POINT
 		case CT_FLOAT:
 			/* scan a floating point number as if by strtod */
 			if (width == 0 || width > sizeof(buf) - 1)
@@ -859,7 +851,6 @@ literal:
 				}
 			}
 			break;
-#endif /* !NO_FLOATING_POINT */
 		}
 		if (!(flags & SUPPRESS))
 			nassigned++;
@@ -985,7 +976,6 @@ doswitch:
 	/* NOTREACHED */
 }
 
-#ifndef NO_FLOATING_POINT
 static int
 parsefloat(FILE *fp, char *buf, char *end, locale_t locale)
 {
@@ -1154,4 +1144,3 @@ parsedone:
 	*++commit = '\0';
 	return (commit - buf);
 }
-#endif

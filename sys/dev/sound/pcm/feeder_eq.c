@@ -275,16 +275,16 @@ feed_eq_init(struct pcm_feeder *f)
 {
 	struct feed_eq_info *info;
 
-	if (f->desc->in != f->desc->out)
+	if (f->desc.in != f->desc.out)
 		return (EINVAL);
 
 	info = malloc(sizeof(*info), M_DEVBUF, M_NOWAIT | M_ZERO);
 	if (info == NULL)
 		return (ENOMEM);
 
-	info->fmt = AFMT_ENCODING(f->desc->in);
-	info->channels = AFMT_CHANNEL(f->desc->in);
-	info->align = info->channels * AFMT_BPS(f->desc->in);
+	info->fmt = AFMT_ENCODING(f->desc.in);
+	info->channels = AFMT_CHANNEL(f->desc.in);
+	info->align = info->channels * AFMT_BPS(f->desc.in);
 
 	info->rate = FEEDEQ_RATE_MIN;
 	info->treble.gain = FEEDEQ_L2GAIN(50);
@@ -309,7 +309,7 @@ feed_eq_set(struct pcm_feeder *f, int what, int value)
 		if (value < SND_CHN_MIN || value > SND_CHN_MAX)
 			return (EINVAL);
 		info->channels = (uint32_t)value;
-		info->align = info->channels * AFMT_BPS(f->desc->in);
+		info->align = info->channels * AFMT_BPS(f->desc.in);
 		feed_eq_reset(info);
 		break;
 	case FEEDEQ_RATE:
@@ -319,7 +319,6 @@ feed_eq_set(struct pcm_feeder *f, int what, int value)
 		if (info->state == FEEDEQ_UNKNOWN)
 			info->state = FEEDEQ_ENABLE;
 		return (feed_eq_setup(info));
-		break;
 	case FEEDEQ_TREBLE:
 	case FEEDEQ_BASS:
 		if (value < 0 || value > 100)
@@ -343,7 +342,6 @@ feed_eq_set(struct pcm_feeder *f, int what, int value)
 		break;
 	default:
 		return (EINVAL);
-		break;
 	}
 
 	return (0);
@@ -355,8 +353,7 @@ feed_eq_free(struct pcm_feeder *f)
 	struct feed_eq_info *info;
 
 	info = f->data;
-	if (info != NULL)
-		free(info, M_DEVBUF);
+	free(info, M_DEVBUF);
 
 	f->data = NULL;
 
@@ -419,11 +416,6 @@ feed_eq_feed(struct pcm_feeder *f, struct pcm_channel *c, uint8_t *b,
 	return (dst - b);
 }
 
-static struct pcm_feederdesc feeder_eq_desc[] = {
-	{ FEEDER_EQ, 0, 0, 0, 0 },
-	{ 0, 0, 0, 0, 0 }
-};
-
 static kobj_method_t feeder_eq_methods[] = {
 	KOBJMETHOD(feeder_init,		feed_eq_init),
 	KOBJMETHOD(feeder_free,		feed_eq_free),
@@ -432,7 +424,7 @@ static kobj_method_t feeder_eq_methods[] = {
 	KOBJMETHOD_END
 };
 
-FEEDER_DECLARE(feeder_eq, NULL);
+FEEDER_DECLARE(feeder_eq, FEEDER_EQ);
 
 static int32_t
 feed_eq_scan_preamp_arg(const char *s)

@@ -10,6 +10,7 @@ COMMON_H = \
 	cityhash.h \
 	zfeature_common.h \
 	zfs_comutil.h \
+	zfs_crrd.h \
 	zfs_deleg.h \
 	zfs_fletcher.h \
 	zfs_namecheck.h \
@@ -69,7 +70,6 @@ COMMON_H = \
 	sys/metaslab_impl.h \
 	sys/mmp.h \
 	sys/mntent.h \
-	sys/mod.h \
 	sys/multilist.h \
 	sys/nvpair.h \
 	sys/nvpair_impl.h \
@@ -184,15 +184,12 @@ KERNEL_H = \
 
 USER_H = \
 	libnvpair.h \
-	libuutil.h \
-	libuutil_common.h \
-	libuutil_impl.h \
 	libzdb.h \
 	libzfs.h \
 	libzfs_core.h \
 	libzfsbootenv.h \
-	libzutil.h \
-	thread_pool.h
+	libzpool.h \
+	libzutil.h
 
 
 if CONFIG_USER

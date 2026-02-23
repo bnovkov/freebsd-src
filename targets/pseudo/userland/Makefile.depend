@@ -128,7 +128,6 @@ DIRDEPS+= \
 	sbin/sysctl \
 	sbin/tunefs \
 	sbin/umount \
-	usr.bin/alias \
 	usr.bin/apply \
 	usr.bin/ar \
 	usr.bin/asa \
@@ -804,6 +803,12 @@ DIRDEPS.powerpc= \
 DIRDEPS+= \
 	usr.sbin/blacklistctl \
 	usr.sbin/blacklistd
+.endif
+
+.if ${MK_BLOCKLIST_SUPPORT} != "no"
+DIRDEPS+= \
+	usr.sbin/blocklistctl \
+	usr.sbin/blocklistd
 .endif
 
 .if ${MK_CXGBETOOL} != "no"

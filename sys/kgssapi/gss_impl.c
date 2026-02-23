@@ -88,6 +88,7 @@ kgss_load(void)
 	return (0);
 }
 
+#if 0
 static void
 kgss_unload(void)
 {
@@ -96,6 +97,7 @@ kgss_unload(void)
 	clnt_destroy(KGSS_VNET(kgss_gssd_handle));
 	KGSS_CURVNET_RESTORE();
 }
+#endif
 
 int
 kgss_oid_equal(const gss_OID oid1, const gss_OID oid2)
@@ -192,12 +194,18 @@ kgss_delete_context(gss_ctx_id_t ctx, gss_buffer_t output_token)
 }
 
 OM_uint32
-kgss_transfer_context(gss_ctx_id_t ctx)
+kgss_transfer_context(gss_ctx_id_t ctx, void *lctx)
 {
 	struct export_sec_context_res res;
 	struct export_sec_context_args args;
 	enum clnt_stat stat;
 	OM_uint32 maj_stat;
+
+	if (lctx != NULL) {
+		maj_stat = KGSS_IMPORT(ctx, MIT_V1, lctx);
+		ctx->handle = 0;
+		return (maj_stat);
+	}
 
 	KGSS_CURVNET_SET_QUIET(KGSS_TD_TO_VNET(curthread));
 	if (!KGSS_VNET(kgss_gssd_handle)) {
@@ -291,8 +299,10 @@ kgssapi_modevent(module_t mod, int type, void *data)
 		error = kgss_load();
 		break;
 	case MOD_UNLOAD:
+#if 0
 		kgss_unload();
 		mtx_destroy(&kgss_gssd_lock);
+#endif
 		/*
 		 * Unloading of the kgssapi module is not currently supported.
 		 * If somebody wants this, we would need to keep track of

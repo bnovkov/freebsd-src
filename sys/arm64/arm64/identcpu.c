@@ -232,6 +232,10 @@ static const struct cpu_parts cpu_parts_arm[] = {
 	{ CPU_PART_CORTEX_X2, "Cortex-X2" },
 	{ CPU_PART_CORTEX_X3, "Cortex-X3" },
 	{ CPU_PART_CORTEX_X4, "Cortex-X4" },
+	{ CPU_PART_C1_NANO, "C1-Nano" },
+	{ CPU_PART_C1_PRO, "C1-Pro" },
+	{ CPU_PART_C1_PREMIUM, "C1-Premium" },
+	{ CPU_PART_C1_ULTRA, "C1-Ultra" },
 	{ CPU_PART_NEOVERSE_E1, "Neoverse-E1" },
 	{ CPU_PART_NEOVERSE_N1, "Neoverse-N1" },
 	{ CPU_PART_NEOVERSE_N2, "Neoverse-N2" },
@@ -1090,6 +1094,11 @@ static const struct mrs_field_value id_aa64isar2_mops[] = {
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64isar2_mops_caps[] = {
+	MRS_HWCAP(2, HWCAP2_MOPS, ID_AA64ISAR2_MOPS_IMPL),
+	MRS_HWCAP_END
+};
+
 static const struct mrs_field_value id_aa64isar2_apa3[] = {
 	MRS_FIELD_VALUE(ID_AA64ISAR2_APA3_NONE, ""),
 	MRS_FIELD_VALUE(ID_AA64ISAR2_APA3_PAC, "APA3 PAC"),
@@ -1145,7 +1154,8 @@ static const struct mrs_field id_aa64isar2_fields[] = {
 	MRS_FIELD(ID_AA64ISAR2, PAC_frac, false, MRS_LOWER, 0,
 	    id_aa64isar2_pac_frac),
 	MRS_FIELD(ID_AA64ISAR2, BC, false, MRS_LOWER, 0, id_aa64isar2_bc),
-	MRS_FIELD(ID_AA64ISAR2, MOPS, false, MRS_LOWER, 0, id_aa64isar2_mops),
+	MRS_FIELD_HWCAP(ID_AA64ISAR2, MOPS, false, MRS_LOWER, MRS_USERSPACE,
+	    id_aa64isar2_mops, id_aa64isar2_mops_caps),
 	MRS_FIELD_HWCAP(ID_AA64ISAR2, APA3, false, MRS_LOWER, MRS_USERSPACE,
 	    id_aa64isar2_apa3, id_aa64isar2_apa3_caps),
 	MRS_FIELD_HWCAP(ID_AA64ISAR2, GPA3, false, MRS_LOWER, MRS_USERSPACE,
@@ -2272,37 +2282,25 @@ static const struct mrs_user_reg user_regs[] = {
 static bool
 user_ctr_has_neoverse_n1_1542419(uint32_t midr, uint64_t ctr)
 {
-	/* Skip non-Neoverse-N1 */
-	if (!CPU_MATCH(CPU_IMPL_MASK | CPU_PART_MASK, CPU_IMPL_ARM,
-	    CPU_PART_NEOVERSE_N1, 0, 0))
-		return (false);
-
-	switch (CPU_VAR(midr)) {
-	default:
-		break;
-	case 4:
-		/* Fixed in r4p1 */
-		if (CPU_REV(midr) > 0)
-			break;
-		/* FALLTHROUGH */
-	case 3:
-		/* If DIC is enabled (coherent icache) then we are affected */
-		return (CTR_DIC_VAL(ctr) != 0);
-	}
-
-	return (false);
+	/*
+	 * Neoverse-N1 erratum 1542419
+	 * Present in r3p0 - r4p0
+	 * Fixed in r4p1
+	 */
+	return (midr_check_var_part_range(midr, CPU_IMPL_ARM,
+	    CPU_PART_NEOVERSE_N1, 3, 0, 4, 0) && CTR_DIC_VAL(ctr) != 0);
 }
 
-static bool
-user_ctr_check(const struct cpu_feat *feat __unused, u_int midr __unused)
+static cpu_feat_en
+user_ctr_check(const struct cpu_feat *feat __unused, u_int midr)
 {
 	if (emulate_ctr)
-		return (true);
+		return (FEAT_DEFAULT_ENABLE);
 
 	if (user_ctr_has_neoverse_n1_1542419(midr, READ_SPECIALREG(ctr_el0)))
-		return (true);
+		return (FEAT_DEFAULT_ENABLE);
 
-	return (false);
+	return (FEAT_ALWAYS_DISABLE);
 }
 
 static bool
@@ -2320,7 +2318,7 @@ user_ctr_has_errata(const struct cpu_feat *feat __unused, u_int midr,
 	return (false);
 }
 
-static void
+static bool
 user_ctr_enable(const struct cpu_feat *feat __unused,
     cpu_feat_errata errata_status, u_int *errata_list, u_int errata_count)
 {
@@ -2356,16 +2354,13 @@ user_ctr_enable(const struct cpu_feat *feat __unused,
 	WRITE_SPECIALREG(sctlr_el1,
 	    READ_SPECIALREG(sctlr_el1) & ~SCTLR_UCT);
 	isb();
+
+	return (true);
 }
 
-static struct cpu_feat user_ctr = {
-	.feat_name		= "Trap CTR_EL0",
-	.feat_check		= user_ctr_check,
-	.feat_has_errata	= user_ctr_has_errata,
-	.feat_enable		= user_ctr_enable,
-	.feat_flags		= CPU_FEAT_AFTER_DEV | CPU_FEAT_PER_CPU,
-};
-DATA_SET(cpu_feat_set, user_ctr);
+CPU_FEAT(trap_ctr, "Trap CTR_EL0",
+    user_ctr_check, user_ctr_has_errata, user_ctr_enable, NULL,
+    CPU_FEAT_AFTER_DEV | CPU_FEAT_PER_CPU);
 
 static bool
 user_ctr_handler(uint64_t esr, struct trapframe *frame)
@@ -2519,7 +2514,7 @@ mrs_field_cmp(uint64_t a, uint64_t b, u_int shift, int width, bool sign)
 	return (a - b);
 }
 
-bool
+void
 get_kernel_reg_iss(u_int iss, uint64_t *val)
 {
 	int i;
@@ -2527,18 +2522,18 @@ get_kernel_reg_iss(u_int iss, uint64_t *val)
 	for (i = 0; i < nitems(user_regs); i++) {
 		if (user_regs[i].iss == iss) {
 			*val = CPU_DESC_FIELD(kern_cpu_desc, i);
-			return (true);
+			return;
 		}
 	}
 
-	return (false);
+	panic("%s: Invalid register %x", __func__, iss);
 }
 
 /*
  * Fetch the specified register's value, ensuring that individual field values
  * do not exceed those in the mask.
  */
-bool
+void
 get_kernel_reg_iss_masked(u_int iss, uint64_t *valp, uint64_t mask)
 {
 	const struct mrs_field *fields;
@@ -2554,11 +2549,11 @@ get_kernel_reg_iss_masked(u_int iss, uint64_t *valp, uint64_t mask)
 				    fields[j].shift, fields[j].sign);
 			}
 			*valp = mask;
-			return (true);
+			return;
 		}
 	}
 
-	return (false);
+	panic("%s: Invalid register %x", __func__, iss);
 }
 
 bool
@@ -2680,14 +2675,15 @@ update_special_regs(u_int cpu)
 
 	if (cpu == 0) {
 		/* Create a user visible cpu description with safe values */
-		memset(&user_cpu_desc, 0, sizeof(user_cpu_desc));
+		memset_early(&user_cpu_desc, 0, sizeof(user_cpu_desc));
 		/* Safe values for these registers */
 		user_cpu_desc.id_aa64pfr0 = ID_AA64PFR0_AdvSIMD_NONE |
 		    ID_AA64PFR0_FP_NONE | ID_AA64PFR0_EL1_64 |
 		    ID_AA64PFR0_EL0_64;
 		user_cpu_desc.id_aa64dfr0 = ID_AA64DFR0_DebugVer_8;
 		/* Create the Linux user visible cpu description */
-		memcpy(&l_user_cpu_desc, &user_cpu_desc, sizeof(user_cpu_desc));
+		memcpy_early(&l_user_cpu_desc, &user_cpu_desc,
+		    sizeof(user_cpu_desc));
 	}
 
 	desc = get_cpu_desc(cpu);
@@ -2831,6 +2827,26 @@ identify_cpu_sysinit(void *dummy __unused)
 		prev_desc = desc;
 	}
 
+	if (dic && idc) {
+		arm64_icache_sync_range = &arm64_dic_idc_icache_sync_range;
+		if (bootverbose)
+			printf("Enabling DIC & IDC ICache sync\n");
+	} else if (idc) {
+		arm64_icache_sync_range = &arm64_idc_aliasing_icache_sync_range;
+		if (bootverbose)
+			printf("Enabling IDC ICache sync\n");
+	}
+}
+/*
+ * This needs to run early to ensure the kernel ID registers have been
+ * updated for all CPUs before they are used by ifunc resolvers, etc.
+ */
+SYSINIT(identify_cpu, SI_SUB_CPU, SI_ORDER_MIDDLE,
+    identify_cpu_sysinit, NULL);
+
+static void
+identify_hwcaps_sysinit(void *dummy __unused)
+{
 #ifdef INVARIANTS
 	/* Check we dont update the special registers after this point */
 	hwcaps_set = true;
@@ -2853,16 +2869,6 @@ identify_cpu_sysinit(void *dummy __unused)
 	elf32_hwcap |= parse_cpu_features_hwcap32();
 #endif
 
-	if (dic && idc) {
-		arm64_icache_sync_range = &arm64_dic_idc_icache_sync_range;
-		if (bootverbose)
-			printf("Enabling DIC & IDC ICache sync\n");
-	} else if (idc) {
-		arm64_icache_sync_range = &arm64_idc_aliasing_icache_sync_range;
-		if (bootverbose)
-			printf("Enabling IDC ICache sync\n");
-	}
-
 	if ((elf_hwcap & HWCAP_ATOMICS) != 0) {
 		lse_supported = true;
 		if (bootverbose)
@@ -2877,11 +2883,14 @@ identify_cpu_sysinit(void *dummy __unused)
 	install_sys_handler(user_idreg_handler);
 }
 /*
- * This needs to be after the APs have stareted as they may have errata that
+ * This needs to be after the APs have started as they may have errata that
  * means we need to mask out ID registers & that could affect hwcaps, etc.
+ *
+ * The errata handling runs at SI_SUB_CONFIGURE, SI_ORDER_MIDDLE + 1, so this
+ * needs to be later than that.
  */
-SYSINIT(identify_cpu, SI_SUB_CONFIGURE, SI_ORDER_ANY, identify_cpu_sysinit,
-    NULL);
+SYSINIT(identify_hwcaps, SI_SUB_CONFIGURE, SI_ORDER_MIDDLE + 2,
+    identify_hwcaps_sysinit, NULL);
 
 static void
 cpu_features_sysinit(void *dummy __unused)

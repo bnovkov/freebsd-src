@@ -66,6 +66,9 @@ SRCS+=	clzsi2.c ctzsi2.c
 SRCS+=	divmoddi4.c  divmodsi4.c  divdi3.c  divsi3.c  moddi3.c  modsi3.c
 SRCS+=	udivmoddi4.c udivmodsi4.c udivdi3.c udivsi3.c umoddi3.c umodsi3.c
 SRCS+=	ashldi3.c ashrdi3.c lshrdi3.c
+.if ${MACHINE_CPUARCH} == "riscv"
+SRCS+=	bswapdi2.c bswapsi2.c clzdi2.c ctzdi2.c
+.endif
 
 .if ${MACHINE_CPUARCH:Namd64:Ni386} == ""
 .PATH: ${SASRC}/x86
@@ -189,9 +192,9 @@ SRCS+=	g_eli_hmac.c pkcs5v2.c
 .PATH: ${SYSDIR}/crypto/sha2
 SRCS+=		sha256c.c sha512c.c
 
-# md5 from the kernel
-.PATH: ${SYSDIR}/kern
+.PATH: ${SYSDIR}/crypto
 SRCS+=		md5c.c
+CFLAGS.md5c.c+= -DSTANDALONE_SMALL
 
 .if ${DO32:U0} == 0
 MAN=libsa.3

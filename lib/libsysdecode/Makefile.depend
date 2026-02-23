@@ -3,7 +3,6 @@
 DIRDEPS = \
 	cddl/lib/libdtrace \
 	cddl/lib/libnvpair \
-	cddl/lib/libtpool \
 	cddl/lib/libzfs \
 	cddl/lib/libzfs_core \
 	cddl/lib/libzfsbootenv \
@@ -38,7 +37,7 @@ DIRDEPS = \
 	lib/libarchive \
 	lib/libbe \
 	lib/libbegemot \
-	lib/libblacklist \
+	lib/libblocklist \
 	lib/libblocksruntime \
 	lib/libbluetooth \
 	lib/libbsddialog \

@@ -371,8 +371,6 @@ nfsrv_atroot(struct vnode *vp, uint64_t *retp)
 
 /*
  * Set the credentials to refer to root.
- * If only the various BSDen could agree on whether cr_gid is a separate
- * field or cr_groups[0]...
  */
 void
 newnfs_setroot(struct ucred *cred)
@@ -817,6 +815,26 @@ nfs_supportsnfsv4acls(struct vnode *vp)
 	if (nfsrv_useacl == 0)
 		return (0);
 	error = VOP_PATHCONF(vp, _PC_ACL_NFS4, &retval);
+	if (error == 0 && retval != 0)
+		return (1);
+	return (0);
+}
+
+/*
+ * Determine if the file system supports POSIX draft ACLs.
+ * Return 1 if it does, 0 otherwise.
+ */
+int
+nfs_supportsposixacls(struct vnode *vp)
+{
+	int error;
+	long retval;
+
+	ASSERT_VOP_LOCKED(vp, "nfs supports posixacls");
+
+	if (nfsrv_useacl == 0)
+		return (0);
+	error = VOP_PATHCONF(vp, _PC_ACL_EXTENDED, &retval);
 	if (error == 0 && retval != 0)
 		return (1);
 	return (0);

@@ -503,6 +503,7 @@ enum {
 	TDA_SIGSUSPEND,
 	TDA_MOD3,		/* .. and after */
 	TDA_MOD4,
+	TDA_SCHED_PRIV,
 	TDA_MAX,
 };
 #define	TDAI(tda)		(1U << (tda))
@@ -741,7 +742,7 @@ struct proc {
 					       reaper which spawned
 					       our subtree. */
 	uint64_t	p_elf_flags;	/* (x) ELF flags */
-	void		*p_elf_brandinfo; /* (x) Elf_Brandinfo, NULL for
+	const void	*p_elf_brandinfo; /* (x) Elf_Brandinfo, NULL for
 						 non ELF binaries. */
 	sbintime_t	p_umtx_min_timeout;
 /* End area that is copied on creation. */
@@ -763,7 +764,6 @@ struct proc {
 	LIST_HEAD(, mqueue_notifier)	p_mqnotifier; /* (c) mqueue notifiers.*/
 	struct kdtrace_proc	*p_dtrace; /* (*) DTrace-specific data. */
 	struct cv	p_pwait;	/* (*) wait cv for exit/exec. */
-	uint64_t	p_prev_runtime;	/* (c) Resource usage accounting. */
 	struct racct	*p_racct;	/* (b) Resource accounting. */
 	int		p_throttled;	/* (c) Flag for racct pcpu throttling */
 	/*
@@ -1082,7 +1082,7 @@ extern int allproc_gen;
 extern struct sx proctree_lock;
 extern struct mtx ppeers_lock;
 extern struct mtx procid_lock;
-extern struct proc proc0;		/* Process slot for swapper. */
+extern struct proc proc0;		/* Initial kernel process. */
 extern struct thread0_storage thread0_st;	/* Primary thread in proc0. */
 #define	thread0 (thread0_st.t0st_thread)
 extern struct vmspace vmspace0;		/* VM space for proc0. */
@@ -1174,7 +1174,6 @@ void	kern_proc_vmmap_resident(struct vm_map *map, struct vm_map_entry *entry,
 void	kern_yield(int);
 void	killjobc(void);
 int	leavepgrp(struct proc *p);
-int	maybe_preempt(struct thread *td);
 void	maybe_yield(void);
 void	mi_switch(int flags);
 int	p_candebug(struct thread *td, struct proc *p);
@@ -1325,6 +1324,18 @@ td_get_sched(struct thread *td)
 {
 
 	return ((struct td_sched *)&td[1]);
+}
+
+static __inline void
+ruxreset(struct rusage_ext *rux)
+{
+	rux->rux_runtime = 0;
+	rux->rux_uticks = 0;
+	rux->rux_sticks = 0;
+	rux->rux_iticks = 0;
+	rux->rux_uu = 0;
+	rux->rux_su = 0;
+	rux->rux_tu = 0;
 }
 
 #define	PROC_ID_PID	0

@@ -1544,6 +1544,7 @@ init386(int first)
 
 	/* Initialize preload_kmdp */
 	preload_initkmdp(!metadata_missing);
+	sched_instance_select();
 	link_elf_ireloc();
 
 	vm86_initialize();
@@ -1605,7 +1606,7 @@ init386(int first)
 }
 
 static void
-machdep_init_trampoline(void)
+machdep_init_trampoline(void *dummy __unused)
 {
 	struct region_descriptor r_gdt, r_idt;
 	struct i386tss *tss;

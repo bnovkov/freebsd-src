@@ -249,9 +249,8 @@ audio_soc_chan_free(kobj_t obj, void *data)
 
 	ausoc_chan = (struct audio_soc_channel *)data;
 
-	buffer = sndbuf_getbuf(ausoc_chan->buf);
-	if (buffer)
-		free(buffer, M_DEVBUF);
+	buffer = ausoc_chan->buf->buf;
+	free(buffer, M_DEVBUF);
 
 	return (0);
 }
@@ -508,8 +507,7 @@ audio_soc_detach(device_t dev)
 	struct audio_soc_aux_node *aux;
 
 	sc = device_get_softc(dev);
-	if (sc->name)
-		free(sc->name, M_DEVBUF);
+	free(sc->name, M_DEVBUF);
 
 	while ((aux = SLIST_FIRST(&sc->aux_devs)) != NULL) {
 		SLIST_REMOVE_HEAD(&sc->aux_devs, link);

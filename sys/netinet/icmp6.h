@@ -713,15 +713,11 @@ void	icmp6_redirect_input(struct mbuf *, int);
 void	icmp6_redirect_output(struct mbuf *, struct nhop_object *);
 int	icmp6_ratelimit(const struct in6_addr *, const int, const int);
 
-struct	ip6ctlparam;
-void	icmp6_mtudisc_update(struct ip6ctlparam *, int);
-
 /* XXX: is this the right place for these macros? */
 #define icmp6_ifstat_inc(ifp, tag) \
 do {								\
 	if (ifp)						\
-		counter_u64_add(((struct in6_ifextra *)		\
-		    ((ifp)->if_afdata[AF_INET6]))->icmp6_ifstat[\
+		counter_u64_add((ifp)->if_inet6->icmp6_ifstat[	\
 		    offsetof(struct icmp6_ifstat, tag) / sizeof(uint64_t)], 1);\
 } while (/*CONSTCOND*/ 0)
 

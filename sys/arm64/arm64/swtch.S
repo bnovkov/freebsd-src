@@ -31,12 +31,13 @@
 
 #include "assym.inc"
 #include "opt_kstack_pages.h"
-#include "opt_sched.h"
 
 #include <sys/elf_common.h>
 
 #include <machine/asm.h>
 #include <machine/armreg.h>
+#include <machine/proc.h>
+
 .macro clear_step_flag pcbflags, tmp
 	tbz	\pcbflags, #PCB_SINGLE_STEP_SHIFT, 999f
 	mrs	\tmp, mdscr_el1
@@ -195,7 +196,7 @@ ENTRY(cpu_switch)
 	 * Release the old thread.
 	 */
 	stlr	x2, [x0, #TD_LOCK]
-#if defined(SCHED_ULE) && defined(SMP)
+#if defined(SMP)
 	/* Spin if TD_LOCK points to a blocked_lock */
 	ldr	x2, =_C_LABEL(blocked_lock)
 1:
@@ -239,6 +240,16 @@ ENTRY(fork_trampoline)
 	msr	daifset, #(DAIF_D | DAIF_INTR)
 
 	ldr	x0, [x18, #PC_CURTHREAD]
+
+	/* Set the per-process tcr_el1 fields */
+	ldr	x10, [x0, #TD_PROC]
+	ldr	x10, [x10, #P_MD_TCR]
+	mrs	x11, tcr_el1
+	and	x11, x11, #(~MD_TCR_FIELDS)
+	orr	x11, x11, x10
+	msr	tcr_el1, x11
+	/* No isb as the eret below is the context-synchronising event */
+
 	bl	ptrauth_enter_el0
 
 	/* Restore sp, lr, elr, and spsr */

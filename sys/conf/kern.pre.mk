@@ -8,7 +8,11 @@
 # the rest of /usr/src, but they still always process SRCCONF even though
 # the normal mechanisms to prevent that (compiling out of tree) won't
 # work. To ensure they do work, we have to duplicate thee few lines here.
+.if exists(${SRCTOP}/src.conf)
+SRCCONF?=	${SRCTOP}/src.conf
+.else
 SRCCONF?=	/etc/src.conf
+.endif
 .if (exists(${SRCCONF}) || ${SRCCONF} != "/etc/src.conf") && !target(_srcconf_included_)
 .include "${SRCCONF}"
 _srcconf_included_:
@@ -115,11 +119,9 @@ CFLAGS+=	${CONF_CFLAGS}
 LDFLAGS+=	--build-id=sha1
 .endif
 
-.if (${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
-    ${MACHINE_CPUARCH} == "i386" || ${MACHINE} == "powerpc") && \
-    defined(LINKER_FEATURES) && ${LINKER_FEATURES:Mifunc} == "" && \
+.if defined(LINKER_FEATURES) && ${LINKER_FEATURES:Mifunc} == "" && \
     !make(install)
-.error amd64/arm64/i386/ppc* kernel requires linker ifunc support
+.error kernel requires linker ifunc support
 .endif
 .if ${MACHINE_CPUARCH} == "amd64"
 LDFLAGS+=	-z max-page-size=2097152
@@ -214,11 +216,12 @@ ZFS_CFLAGS+=	-I$S/contrib/openzfs/module/icp/include \
 
 .if ${MACHINE_ARCH} == "amd64"
 ZFS_CFLAGS+= -D__x86_64 -DHAVE_SSE2 -DHAVE_SSSE3 -DHAVE_SSE4_1 -DHAVE_SSE4_2 \
-	-DHAVE_AVX -DHAVE_AVX2 -DHAVE_AVX512F -DHAVE_AVX512VL -DHAVE_AVX512BW
+	-DHAVE_AVX -DHAVE_AVX2 -DHAVE_AVX512F -DHAVE_AVX512VL -DHAVE_AVX512BW \
+	-DHAVE_VAES -DHAVE_VPCLMULQDQ
 .endif
 
 .if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "powerpc" || \
-	${MACHINE_ARCH} == "powerpcspe" || ${MACHINE_ARCH} == "arm"
+	${MACHINE_ARCH} == "arm"
 ZFS_CFLAGS+= -DBITS_PER_LONG=32
 .else
 ZFS_CFLAGS+= -DBITS_PER_LONG=64

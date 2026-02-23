@@ -65,8 +65,8 @@
 #include <sys/dktp/fdisk.h>
 #include <sys/vdev_impl.h>
 #include <sys/fs/zfs.h>
+#include <sys/taskq.h>
 
-#include <thread_pool.h>
 #include <libzutil.h>
 #include <libnvpair.h>
 
@@ -917,7 +917,7 @@ error:
 static uint64_t
 label_offset(uint64_t size, int l)
 {
-	ASSERT(P2PHASE_TYPED(size, sizeof (vdev_label_t), uint64_t) == 0);
+	ASSERT0(P2PHASE_TYPED(size, sizeof (vdev_label_t), uint64_t));
 	return (l * sizeof (vdev_label_t) + (l < VDEV_LABELS / 2 ?
 	    0 : size - VDEV_LABELS * sizeof (vdev_label_t)));
 }
@@ -1457,7 +1457,7 @@ zpool_find_import_impl(libpc_handle_t *hdl, importargs_t *iarg,
 	name_entry_t *ne, *nenext;
 	rdsk_node_t *slice;
 	void *cookie;
-	tpool_t *t;
+	taskq_t *tq;
 
 	verify(iarg->poolname == NULL || iarg->guid == 0);
 
@@ -1480,13 +1480,14 @@ zpool_find_import_impl(libpc_handle_t *hdl, importargs_t *iarg,
 		threads = MIN(threads, am / VDEV_LABELS);
 #endif
 #endif
-	t = tpool_create(1, threads, 0, NULL);
+	tq = taskq_create("zpool_find_import", threads, minclsyspri, 1, INT_MAX,
+	    TASKQ_DYNAMIC);
 	for (slice = avl_first(cache); slice;
 	    (slice = avl_walk(cache, slice, AVL_AFTER)))
-		(void) tpool_dispatch(t, zpool_open_func, slice);
+		(void) taskq_dispatch(tq, zpool_open_func, slice, TQ_SLEEP);
 
-	tpool_wait(t);
-	tpool_destroy(t);
+	taskq_wait(tq);
+	taskq_destroy(tq);
 
 	/*
 	 * Process the cache, filtering out any entries which are not
@@ -1769,7 +1770,7 @@ zpool_find_import_cached(libpc_handle_t *hdl, importargs_t *iarg)
 			fnvlist_add_nvlist(pools, nvpair_name(pair),
 			    fnvpair_value_nvlist(pair));
 
-			VERIFY3P(nvlist_next_nvpair(nv, pair), ==, NULL);
+			VERIFY0P(nvlist_next_nvpair(nv, pair));
 
 			iarg->guid = saved_guid;
 			iarg->poolname = saved_poolname;
@@ -1903,30 +1904,43 @@ zpool_find_config(libpc_handle_t *hdl, const char *target, nvlist_t **configp,
 		*sepp = '\0';
 
 	pools = zpool_search_import(hdl, args);
-
-	if (pools != NULL) {
-		nvpair_t *elem = NULL;
-		while ((elem = nvlist_next_nvpair(pools, elem)) != NULL) {
-			VERIFY0(nvpair_value_nvlist(elem, &config));
-			if (pool_match(config, targetdup)) {
-				count++;
-				if (match != NULL) {
-					/* multiple matches found */
-					continue;
-				} else {
-					match = fnvlist_dup(config);
-				}
-			}
-		}
-		fnvlist_free(pools);
+	if (pools == NULL) {
+		zutil_error_aux(hdl, dgettext(TEXT_DOMAIN, "no pools found"));
+		(void) zutil_error_fmt(hdl, LPC_UNKNOWN, dgettext(TEXT_DOMAIN,
+		    "failed to find config for pool '%s'"), targetdup);
+		free(targetdup);
+		return (ENOENT);
 	}
 
+	nvpair_t *elem = NULL;
+	while ((elem = nvlist_next_nvpair(pools, elem)) != NULL) {
+		VERIFY0(nvpair_value_nvlist(elem, &config));
+		if (pool_match(config, targetdup)) {
+			count++;
+			if (match != NULL) {
+				/* multiple matches found */
+				continue;
+			} else {
+				match = fnvlist_dup(config);
+			}
+		}
+	}
+	fnvlist_free(pools);
+
 	if (count == 0) {
+		zutil_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "no matching pools"));
+		(void) zutil_error_fmt(hdl, LPC_UNKNOWN, dgettext(TEXT_DOMAIN,
+		    "failed to find config for pool '%s'"), targetdup);
 		free(targetdup);
 		return (ENOENT);
 	}
 
 	if (count > 1) {
+		zutil_error_aux(hdl, dgettext(TEXT_DOMAIN,
+		    "more than one matching pool"));
+		(void) zutil_error_fmt(hdl, LPC_UNKNOWN, dgettext(TEXT_DOMAIN,
+		    "failed to find config for pool '%s'"), targetdup);
 		free(targetdup);
 		fnvlist_free(match);
 		return (EINVAL);

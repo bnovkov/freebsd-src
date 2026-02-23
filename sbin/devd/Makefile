@@ -51,6 +51,13 @@ NVMEDIR=		${DEVDDIR}
 NVME+=			nvmf.conf
 NVMEPACKAGE=		nvme-tools
 
+.if ${MK_SOUND} != "no"
+CONFGROUPS+=		SND
+SNDDIR=			${DEVDDIR}
+SND=			snd.conf
+SNDPACKAGE=		sound
+.endif
+
 .if ${MK_USB} != "no"
 DEVD+=	uath.conf ulpt.conf
 .endif

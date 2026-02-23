@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1984-2025  Mark Nudelman
+ * Copyright (C) 1984-2026  Mark Nudelman
  *
  * You may distribute under the terms of either the GNU General Public
  * License or the Less License, as specified in the README file.
@@ -17,7 +17,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#if defined(MINGW) || defined(_MSC_VER)
+#if defined(__MINGW32__) || defined(_MSC_VER)
 #include <locale.h>
 #include <shellapi.h>
 #endif
@@ -40,6 +40,7 @@ public constant char *progname;
 public lbool    quitting = FALSE;
 public int      dohelp;
 public char *   init_header = NULL;
+public char *   no_config = NULL;
 static int      secure_allow_features;
 
 #if LOGFILE
@@ -75,10 +76,11 @@ extern int      quit_if_one_screen;
 extern int      no_init;
 extern int      errmsgs;
 extern int      redraw_on_quit;
-extern int      term_init_done;
+extern int      term_addrs;
 extern lbool    first_time;
+extern lbool    term_init_ever;
 
-#if MSDOS_COMPILER==WIN32C && (defined(MINGW) || defined(_MSC_VER))
+#if MSDOS_COMPILER==WIN32C && (defined(__MINGW32__) || defined(_MSC_VER))
 /* malloc'ed 0-terminated utf8 of 0-terminated wide ws, or null on errors */
 static char *utf8_from_wide(constant wchar_t *ws)
 {
@@ -205,6 +207,12 @@ static int security_feature(constant char *name, size_t len)
 		return security_feature_error("invalid", len, name);
 	return features[match].sf_value;
 }
+
+static lbool set_security_feature(constant char *word, size_t wlen, void *arg)
+{
+	secure_allow_features |= security_feature(word, wlen);
+	return TRUE;
+}
 #endif /* !SECURE */
 
 /*
@@ -224,19 +232,7 @@ static void init_secure(void)
 
 	str = lgetenv("LESSSECURE_ALLOW");
 	if (!isnullenv(str))
-	{
-		for (;;)
-		{
-			constant char *estr;
-			while (*str == ' ' || *str == ',') ++str; /* skip leading spaces/commas */
-			if (*str == '\0') break;
-			estr = strchr(str, ',');
-			if (estr == NULL) estr = str + strlen(str);
-			while (estr > str && estr[-1] == ' ') --estr; /* trim trailing spaces */
-			secure_allow_features |= security_feature(str, ptr_diff(estr, str));
-			str = estr;
-		}
-	}
+		parse_csl(set_security_feature, str, NULL);
 #endif
 }
 
@@ -247,8 +243,17 @@ int main(int argc, constant char *argv[])
 {
 	IFILE ifile;
 	constant char *s;
+	int i;
+	struct xbuffer xfiles;
+	constant int *files;
+	size_t num_files;
+	size_t f;
+	lbool end_opts = FALSE;
+	lbool posixly_correct;
 
-#if MSDOS_COMPILER==WIN32C && (defined(MINGW) || defined(_MSC_VER))
+	no_config = getenv("LESSNOCONFIG");
+
+#if MSDOS_COMPILER==WIN32C && (defined(__MINGW32__) || defined(_MSC_VER))
 	if (GetACP() != CP_UTF8)  /* not using a UTF-8 manifest */
 		try_utf8_locale(&argc, &argv);
 #endif
@@ -318,13 +323,20 @@ int main(int argc, constant char *argv[])
 
 #define isoptstring(s)  less_is_more ? (((s)[0] == '-') && (s)[1] != '\0') : \
 			(((s)[0] == '-' || (s)[0] == '+') && (s)[1] != '\0')
-	while (argc > 0 && (isoptstring(*argv) || isoptpending()))
+	xbuf_init(&xfiles);
+	posixly_correct = (lgetenv("POSIXLY_CORRECT") != NULL);
+	for (i = 0;  i < argc;  i++)
 	{
-		s = *argv++;
-		argc--;
-		if (strcmp(s, "--") == 0)
-			break;
-		scan_option(s, FALSE);
+		if (strcmp(argv[i], "--") == 0)
+			end_opts = TRUE;
+		else if (!end_opts && (isoptstring(argv[i]) || isoptpending()))
+			scan_option(argv[i], FALSE);
+		else
+		{
+			if (posixly_correct)
+				end_opts = TRUE;
+			xbuf_add_data(&xfiles, &i, sizeof(i));
+		}
 	}
 #undef isoptstring
 
@@ -364,7 +376,9 @@ int main(int argc, constant char *argv[])
 	ifile = NULL_IFILE;
 	if (dohelp)
 		ifile = get_ifile(FAKE_HELPFILE, ifile);
-	while (argc-- > 0)
+	files = (constant int *) xfiles.data;
+	num_files = xfiles.end / sizeof(int);
+	for (f = 0;  f < num_files;  f++)
 	{
 #if (MSDOS_COMPILER && MSDOS_COMPILER != DJGPPC)
 		/*
@@ -378,7 +392,7 @@ int main(int argc, constant char *argv[])
 		char *gfilename;
 		char *qfilename;
 		
-		gfilename = lglob(*argv++);
+		gfilename = lglob(argv[files[f]]);
 		init_textlist(&tlist, gfilename);
 		filename = NULL;
 		while ((filename = forw_textlist(&tlist, filename)) != NULL)
@@ -390,10 +404,12 @@ int main(int argc, constant char *argv[])
 		}
 		free(gfilename);
 #else
-		(void) get_ifile(*argv++, ifile);
+		(void) get_ifile(argv[files[f]], ifile);
 		ifile = prev_ifile(NULL_IFILE);
 #endif
 	}
+	xbuf_deinit(&xfiles);
+
 	/*
 	 * Set up terminal, etc.
 	 */
@@ -403,7 +419,7 @@ int main(int argc, constant char *argv[])
 		 * Output is not a tty.
 		 * Just copy the input file(s) to output.
 		 */
-		set_output(1); /* write to stdout */
+		set_output(1, TRUE); /* write to stdout */
 		SET_BINARY(1);
 		if (edit_first() == 0)
 		{
@@ -459,7 +475,7 @@ int main(int argc, constant char *argv[])
 		/*
 		 * See if file fits on one screen to decide whether 
 		 * to send terminal init. But don't need this 
-		 * if -X (no_init) overrides this (see init()).
+		 * if -X (no_init) overrides this (see term_init()).
 		 */
 		if (quit_if_one_screen)
 		{
@@ -487,8 +503,10 @@ int main(int argc, constant char *argv[])
 		get_return();
 		putchr('\n');
 	}
-	set_output(1);
-	init();
+	set_output(1, FALSE);
+#if MSDOS_COMPILER
+	term_init();
+#endif
 	commands();
 	quit(QUIT_OK);
 	/*NOTREACHED*/
@@ -600,9 +618,9 @@ public void quit(int status)
 	check_altpipe_error();
 	if (interactive())
 		clear_bot();
-	deinit();
+	term_deinit();
 	flush();
-	if (redraw_on_quit && term_init_done)
+	if (redraw_on_quit && term_addrs)
 	{
 		/*
 		 * The last file text displayed might have been on an 

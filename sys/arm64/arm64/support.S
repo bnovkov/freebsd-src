@@ -39,8 +39,15 @@
 #include "assym.inc"
 
 .macro check_user_access user_arg, limit, bad_addr_func
+	/*
+	 * TBI is enabled from 15.0. Clear the top byte of the userspace
+	 * address before checking whether it's within the given limit.
+	 * The later load/store instructions will fault if TBI is disabled
+	 * for the current process.
+	 */
+	and	x6, x\user_arg, #(~TBI_ADDR_MASK)
 	ldr	x7, =(\limit)
-	cmp	x\user_arg, x7
+	cmp	x6, x7
 	b.cs	\bad_addr_func
 .endm
 
@@ -389,5 +396,17 @@ ENTRY(pagezero_cache)
 	ret
 
 END(pagezero_cache)
+
+/*
+ * pagezero, MOPS implementation
+ */
+ENTRY(pagezero_mops)
+	mov	x1, #PAGE_SIZE
+	.inst   0x19df0420      /* setp    [x0]!, x1!, xzr  */
+	.inst   0x19df4420      /* setm    [x0]!, x1!, xzr  */
+	.inst   0x19df8420      /* sete    [x0]!, x1!, xzr  */
+	ret
+
+END(pagezero_mops)
 
 GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)

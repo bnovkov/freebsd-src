@@ -462,7 +462,6 @@ struct rack_control {
 	uint64_t rc_gp_output_ts; /* chg*/
 	uint64_t rc_gp_cumack_ts; /* chg*/
 	struct timeval act_rcv_time;
-	struct timeval rc_last_time_decay;	/* SAD time decay happened here */
 	uint64_t gp_bw;
 	uint64_t init_rate;
 #ifdef NETFLIX_SHARED_CWND
@@ -540,6 +539,7 @@ struct rack_control {
 	uint32_t last_rcv_tstmp_for_rtt;
 	uint32_t last_time_of_arm_rcv;
 	uint32_t rto_ssthresh;
+	uint32_t recovery_rxt_cnt;
 	uint32_t rc_saved_beta;
 	uint32_t rc_saved_beta_ecn;	/*
 					 * For newreno cc: rc_saved_beta and

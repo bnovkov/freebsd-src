@@ -46,7 +46,7 @@ struct vtnet_statistics {
 	uint64_t	rx_csum_bad_ethtype;
 	uint64_t	rx_csum_bad_ipproto;
 	uint64_t	rx_csum_bad_offset;
-	uint64_t	rx_csum_bad_proto;
+	uint64_t	rx_csum_inaccessible_ipproto;
 	uint64_t	tx_csum_unknown_ethtype;
 	uint64_t	tx_csum_proto_mismatch;
 	uint64_t	tx_tso_not_tcp;
@@ -191,6 +191,11 @@ struct vtnet_softc {
 	char			 vtnet_mtx_name[16];
 	uint8_t			 vtnet_hwaddr[ETHER_ADDR_LEN];
 };
+/* vtnet flag descriptions for use with printf(9) %b identifier. */
+#define VTNET_FLAGS_BITS \
+    "\20\1MODERN\2MAC\3CTRL_VQ\4CTRL_RX\5CTRL_MAC\6VLAN_FILTER\7TSO_ECN" \
+    "\10MRG_RXBUFS\11LRO_NOMRG\12MQ\13INDIRECT\14EVENT_IDX\15SUSPENDED" \
+    "\16FIXUP_NEEDS_CSUM\17SW_LRO"
 
 static bool
 vtnet_modern(struct vtnet_softc *sc)

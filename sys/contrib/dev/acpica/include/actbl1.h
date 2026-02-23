@@ -262,7 +262,7 @@ typedef struct acpi_whea_header
 
 /* Larger subtable header (when Length can exceed 255) */
 
-typedef struct acpi_subtable_header_16
+typedef struct acpi_subtbl_hdr_16
 {
     UINT16                  Type;
     UINT16                  Length;
@@ -826,11 +826,12 @@ typedef struct acpi_cedt_cfmws_target_element
 
 /* Values for Restrictions field above */
 
-#define ACPI_CEDT_CFMWS_RESTRICT_TYPE2      (1)
-#define ACPI_CEDT_CFMWS_RESTRICT_TYPE3      (1<<1)
+#define ACPI_CEDT_CFMWS_RESTRICT_DEVMEM     (1)
+#define ACPI_CEDT_CFMWS_RESTRICT_HOSTONLYMEM (1<<1)
 #define ACPI_CEDT_CFMWS_RESTRICT_VOLATILE   (1<<2)
 #define ACPI_CEDT_CFMWS_RESTRICT_PMEM       (1<<3)
 #define ACPI_CEDT_CFMWS_RESTRICT_FIXED      (1<<4)
+#define ACPI_CEDT_CFMWS_RESTRICT_BI         (1<<5)
 
 /* 2: CXL XOR Interleave Math Structure */
 

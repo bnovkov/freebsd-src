@@ -51,6 +51,7 @@
 #include <vm/vm_map.h>
 
 #include <machine/armreg.h>
+#include <machine/elf.h>
 #include <machine/kdb.h>
 #include <machine/md_var.h>
 #include <machine/pcb.h>
@@ -58,6 +59,10 @@
 #ifdef VFP
 #include <machine/vfp.h>
 #endif
+
+#define	CTX_SIZE_SVE(buf_size)					\
+    roundup2(sizeof(struct sve_context) + (buf_size),		\
+      _Alignof(struct sve_context))
 
 _Static_assert(sizeof(mcontext_t) == 880, "mcontext_t size incorrect");
 _Static_assert(sizeof(ucontext_t) == 960, "ucontext_t size incorrect");
@@ -411,6 +416,7 @@ exec_setregs(struct thread *td, struct image_params *imgp, uintptr_t stack)
 {
 	struct trapframe *tf = td->td_frame;
 	struct pcb *pcb = td->td_pcb;
+	uint64_t new_tcr, tcr;
 
 	memset(tf, 0, sizeof(struct trapframe));
 
@@ -432,6 +438,35 @@ exec_setregs(struct thread *td, struct image_params *imgp, uintptr_t stack)
 	 * Clear debug register state. It is not applicable to the new process.
 	 */
 	bzero(&pcb->pcb_dbg_regs, sizeof(pcb->pcb_dbg_regs));
+
+	/* If the process is new enough enable TBI */
+	if (td->td_proc->p_osrel >= TBI_VERSION)
+		new_tcr = TCR_TBI0;
+	else
+		new_tcr = 0;
+	td->td_proc->p_md.md_tcr = new_tcr;
+
+	/* TODO: should create a pmap function for this... */
+	tcr = READ_SPECIALREG(tcr_el1);
+	if ((tcr & MD_TCR_FIELDS) != new_tcr) {
+		uint64_t asid;
+
+		tcr &= ~MD_TCR_FIELDS;
+		tcr |= new_tcr;
+		WRITE_SPECIALREG(tcr_el1, tcr);
+		isb();
+
+		/*
+		 * TCR_EL1.TBI0 is permitted to be cached in the TLB, so
+		 * we need to perform a TLB invalidation.
+		 */
+		asid = READ_SPECIALREG(ttbr0_el1) & TTBR_ASID_MASK;
+		__asm __volatile(
+		    "tlbi aside1is, %0		\n"
+		    "dsb ish			\n"
+		    "isb			\n"
+		    : : "r" (asid));
+	}
 
 	/* Generate new pointer authentication keys */
 	ptrauth_exec(td);
@@ -554,8 +589,7 @@ set_mcontext(struct thread *td, mcontext_t *mcp)
 
 				buf_size = sve_buf_size(td);
 				/* Check the size is valid */
-				if (ctx.ctx_size !=
-				    (sizeof(sve_ctx) + buf_size))
+				if (ctx.ctx_size != CTX_SIZE_SVE(buf_size))
 					return (EINVAL);
 
 				memset(pcb->pcb_svesaved, 0,
@@ -698,7 +732,7 @@ sendsig_ctx_sve(struct thread *td, vm_offset_t *addrp)
 {
 	struct sve_context ctx;
 	struct pcb *pcb;
-	size_t buf_size;
+	size_t buf_size, ctx_size;
 	vm_offset_t ctx_addr;
 
 	pcb = td->td_pcb;
@@ -709,14 +743,15 @@ sendsig_ctx_sve(struct thread *td, vm_offset_t *addrp)
 	MPASS(pcb->pcb_svesaved != NULL);
 
 	buf_size = sve_buf_size(td);
+	ctx_size = CTX_SIZE_SVE(buf_size);
 
 	/* Address for the full context */
-	*addrp -= sizeof(ctx) + buf_size;
+	*addrp -= ctx_size;
 	ctx_addr = *addrp;
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.sve_ctx.ctx_id = ARM64_CTX_SVE;
-	ctx.sve_ctx.ctx_size = sizeof(ctx) + buf_size;
+	ctx.sve_ctx.ctx_size = ctx_size;
 	ctx.sve_vector_len = pcb->pcb_sve_len;
 	ctx.sve_flags = 0;
 
@@ -803,7 +838,7 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	/* Make room, keeping the stack aligned */
 	fp = (struct sigframe *)addr;
 	fp--;
-	fp = (struct sigframe *)STACKALIGN(fp);
+	fp = STACKALIGN(fp);
 
 	/* Copy the sigframe out to the user's stack. */
 	if (copyout(&frame, fp, sizeof(*fp)) != 0) {

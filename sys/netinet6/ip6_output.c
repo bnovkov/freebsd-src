@@ -60,7 +60,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_ipsec.h"
@@ -111,6 +110,7 @@
 #include <netinet/tcp_var.h>
 #include <netinet6/nd6.h>
 #include <netinet6/in6_rss.h>
+#include <netinet6/ip6_mroute.h>
 
 #include <netipsec/ipsec_support.h>
 #if defined(SCTP) || defined(SCTP_SUPPORT)
@@ -143,13 +143,11 @@ static int ip6_setpktopt(int, u_char *, int, struct ip6_pktopts *,
 static int ip6_copyexthdr(struct mbuf **, caddr_t, int);
 static int ip6_insertfraghdr(struct mbuf *, struct mbuf *, int,
 	struct ip6_frag **);
-static int ip6_insert_jumboopt(struct ip6_exthdrs *, u_int32_t);
 static int ip6_splithdr(struct mbuf *, struct ip6_exthdrs *);
-static int ip6_getpmtu(struct route_in6 *, int,
-	struct ifnet *, const struct in6_addr *, u_long *, int *, u_int,
-	u_int);
-static int ip6_calcmtu(struct ifnet *, const struct in6_addr *, u_long,
-	u_long *, int *, u_int);
+static void ip6_getpmtu(struct route_in6 *, int,
+	struct ifnet *, const struct in6_addr *, u_long *, u_int, u_int);
+static void ip6_calcmtu(struct ifnet *, const struct in6_addr *, u_long,
+	u_long *, u_int);
 static int ip6_getpmtu_ctl(u_int, const struct in6_addr *, u_long *);
 static int copypktopts(struct ip6_pktopts *, struct ip6_pktopts *, int);
 
@@ -418,7 +416,7 @@ ip6_output(struct mbuf *m0, struct ip6_pktopts *opt,
 	int vlan_pcp = -1;
 	struct in6_ifaddr *ia = NULL;
 	u_long mtu;
-	int alwaysfrag, dontfrag;
+	int dontfrag;
 	u_int32_t optlen, plen = 0, unfragpartlen;
 	struct ip6_exthdrs exthdrs;
 	struct in6_addr src0, dst0;
@@ -544,20 +542,9 @@ ip6_output(struct mbuf *m0, struct ip6_pktopts *opt,
 	m->m_pkthdr.len += optlen;
 	plen = m->m_pkthdr.len - sizeof(*ip6);
 
-	/* If this is a jumbo payload, insert a jumbo payload option. */
 	if (plen > IPV6_MAXPACKET) {
-		if (!hdrsplit) {
-			if ((error = ip6_splithdr(m, &exthdrs)) != 0) {
-				m = NULL;
-				goto freehdrs;
-			}
-			m = exthdrs.ip6e_ip6;
-			ip6 = mtod(m, struct ip6_hdr *);
-			hdrsplit = true;
-		}
-		if ((error = ip6_insert_jumboopt(&exthdrs, plen)) != 0)
-			goto freehdrs;
-		ip6->ip6_plen = 0;
+		error = EMSGSIZE;
+		goto freehdrs;
 	} else
 		ip6->ip6_plen = htons(plen);
 	nexthdrp = &ip6->ip6_nxt;
@@ -903,7 +890,8 @@ nonh6lookup:
 			 * above, will be forwarded by the ip6_input() routine,
 			 * if necessary.
 			 */
-			if (V_ip6_mrouter && (flags & IPV6_FORWARDING) == 0) {
+			if (V_ip6_mrouting_enabled &&
+			    (flags & IPV6_FORWARDING) == 0) {
 				/*
 				 * XXX: ip6_mforward expects that rcvif is NULL
 				 * when it is called from the originating path.
@@ -939,12 +927,10 @@ nonh6lookup:
 		*ifpp = ifp;
 
 	/* Determine path MTU. */
-	if ((error = ip6_getpmtu(ro_pmtu, ro != ro_pmtu, ifp, &ip6->ip6_dst,
-		    &mtu, &alwaysfrag, fibnum, *nexthdrp)) != 0)
-		goto bad;
-	KASSERT(mtu > 0, ("%s:%d: mtu %ld, ro_pmtu %p ro %p ifp %p "
-	    "alwaysfrag %d fibnum %u\n", __func__, __LINE__, mtu, ro_pmtu, ro,
-	    ifp, alwaysfrag, fibnum));
+	ip6_getpmtu(ro_pmtu, ro != ro_pmtu, ifp, &ip6->ip6_dst, &mtu, fibnum,
+	    *nexthdrp);
+	KASSERT(mtu > 0, ("%s:%d: mtu %ld, ro_pmtu %p ro %p ifp %p fibnum %u",
+	    __func__, __LINE__, mtu, ro_pmtu, ro, ifp, fibnum));
 
 	/*
 	 * The caller of this function may specify to use the minimum MTU
@@ -985,7 +971,6 @@ nonh6lookup:
 	if (exthdrs.ip6e_hbh) {
 		struct ip6_hbh *hbh = mtod(exthdrs.ip6e_hbh, struct ip6_hbh *);
 		u_int32_t dummy; /* XXX unused */
-		u_int32_t plen = 0; /* XXX: ip6_process will check the value */
 
 #ifdef DIAGNOSTIC
 		if ((hbh->ip6h_len + 1) << 3 > exthdrs.ip6e_hbh->m_len)
@@ -1001,7 +986,7 @@ nonh6lookup:
 		m->m_pkthdr.rcvif = ifp;
 		if (ip6_process_hopopts(m, (u_int8_t *)(hbh + 1),
 		    ((hbh->ip6h_len + 1) << 3) - sizeof(struct ip6_hbh),
-		    &dummy, &plen) < 0) {
+		    &dummy) < 0) {
 			/* m was already freed at this point. */
 			error = EINVAL;/* better error? */
 			goto done;
@@ -1121,20 +1106,13 @@ passout:
 	 * Send the packet to the outgoing interface.
 	 * If necessary, do IPv6 fragmentation before sending.
 	 *
-	 * The logic here is rather complex:
-	 * 1: normal case (dontfrag == 0, alwaysfrag == 0)
+	 * 1: normal case (dontfrag == 0)
 	 * 1-a:	send as is if tlen <= path mtu
 	 * 1-b:	fragment if tlen > path mtu
 	 *
 	 * 2: if user asks us not to fragment (dontfrag == 1)
 	 * 2-a:	send as is if tlen <= interface mtu
 	 * 2-b:	error if tlen > interface mtu
-	 *
-	 * 3: if we always need to attach fragment header (alwaysfrag == 1)
-	 *	always fragment
-	 *
-	 * 4: if dontfrag == 1 && alwaysfrag == 1
-	 *	error, as we cannot handle this conflicting request.
 	 */
 	sw_csum = m->m_pkthdr.csum_flags;
 	if (!hdrsplit) {
@@ -1157,14 +1135,9 @@ passout:
 		dontfrag = 1;
 	else
 		dontfrag = 0;
-	if (dontfrag && alwaysfrag) {	/* Case 4. */
-		/* Conflicting request - can't transmit. */
-		error = EMSGSIZE;
-		goto bad;
-	}
-	if (dontfrag && tlen > IN6_LINKMTU(ifp) && !tso) {	/* Case 2-b. */
+	if (dontfrag && tlen > in6_ifmtu(ifp) && !tso) {	/* Case 2-b. */
 		/*
-		 * Even if the DONTFRAG option is specified, we cannot send the
+		 * If the DONTFRAG option is specified, we cannot send the
 		 * packet when the data length is larger than the MTU of the
 		 * outgoing interface.
 		 * Notify the error by sending IPV6_PATHMTU ancillary data if
@@ -1178,7 +1151,7 @@ passout:
 	}
 
 	/* Transmit packet without fragmentation. */
-	if (dontfrag || (!alwaysfrag && tlen <= mtu)) {	/* Cases 1-a and 2-a. */
+	if (dontfrag || tlen <= mtu) {	/* Cases 1-a and 2-a. */
 		struct in6_ifaddr *ia6;
 
 		ip6 = mtod(m, struct ip6_hdr *);
@@ -1194,14 +1167,14 @@ passout:
 		goto done;
 	}
 
-	/* Try to fragment the packet.  Cases 1-b and 3. */
+	/* Try to fragment the packet.  Case 1-b. */
 	if (mtu < IPV6_MMTU) {
 		/* Path MTU cannot be less than IPV6_MMTU. */
 		error = EMSGSIZE;
 		in6_ifstat_inc(ifp, ifs6_out_fragfail);
 		goto bad;
 	} else if (ip6->ip6_plen == 0) {
-		/* Jumbo payload cannot be fragmented. */
+		/* We do not support jumbo payload. */
 		error = EMSGSIZE;
 		in6_ifstat_inc(ifp, ifs6_out_fragfail);
 		goto bad;
@@ -1328,94 +1301,6 @@ ip6_copyexthdr(struct mbuf **mp, caddr_t hdr, int hlen)
 }
 
 /*
- * Insert jumbo payload option.
- */
-static int
-ip6_insert_jumboopt(struct ip6_exthdrs *exthdrs, u_int32_t plen)
-{
-	struct mbuf *mopt;
-	u_char *optbuf;
-	u_int32_t v;
-
-#define JUMBOOPTLEN	8	/* length of jumbo payload option and padding */
-
-	/*
-	 * If there is no hop-by-hop options header, allocate new one.
-	 * If there is one but it doesn't have enough space to store the
-	 * jumbo payload option, allocate a cluster to store the whole options.
-	 * Otherwise, use it to store the options.
-	 */
-	if (exthdrs->ip6e_hbh == NULL) {
-		mopt = m_get(M_NOWAIT, MT_DATA);
-		if (mopt == NULL)
-			return (ENOBUFS);
-		mopt->m_len = JUMBOOPTLEN;
-		optbuf = mtod(mopt, u_char *);
-		optbuf[1] = 0;	/* = ((JUMBOOPTLEN) >> 3) - 1 */
-		exthdrs->ip6e_hbh = mopt;
-	} else {
-		struct ip6_hbh *hbh;
-
-		mopt = exthdrs->ip6e_hbh;
-		if (M_TRAILINGSPACE(mopt) < JUMBOOPTLEN) {
-			/*
-			 * XXX assumption:
-			 * - exthdrs->ip6e_hbh is not referenced from places
-			 *   other than exthdrs.
-			 * - exthdrs->ip6e_hbh is not an mbuf chain.
-			 */
-			int oldoptlen = mopt->m_len;
-			struct mbuf *n;
-
-			/*
-			 * XXX: give up if the whole (new) hbh header does
-			 * not fit even in an mbuf cluster.
-			 */
-			if (oldoptlen + JUMBOOPTLEN > MCLBYTES)
-				return (ENOBUFS);
-
-			/*
-			 * As a consequence, we must always prepare a cluster
-			 * at this point.
-			 */
-			n = m_getcl(M_NOWAIT, MT_DATA, 0);
-			if (n == NULL)
-				return (ENOBUFS);
-			n->m_len = oldoptlen + JUMBOOPTLEN;
-			bcopy(mtod(mopt, caddr_t), mtod(n, caddr_t),
-			    oldoptlen);
-			optbuf = mtod(n, caddr_t) + oldoptlen;
-			m_freem(mopt);
-			mopt = exthdrs->ip6e_hbh = n;
-		} else {
-			optbuf = mtod(mopt, u_char *) + mopt->m_len;
-			mopt->m_len += JUMBOOPTLEN;
-		}
-		optbuf[0] = IP6OPT_PADN;
-		optbuf[1] = 1;
-
-		/*
-		 * Adjust the header length according to the pad and
-		 * the jumbo payload option.
-		 */
-		hbh = mtod(mopt, struct ip6_hbh *);
-		hbh->ip6h_len += (JUMBOOPTLEN >> 3);
-	}
-
-	/* fill in the option. */
-	optbuf[2] = IP6OPT_JUMBO;
-	optbuf[3] = 4;
-	v = (u_int32_t)htonl(plen + JUMBOOPTLEN);
-	bcopy(&v, &optbuf[4], sizeof(u_int32_t));
-
-	/* finally, adjust the packet header length */
-	exthdrs->ip6e_ip6->m_pkthdr.len += JUMBOOPTLEN;
-
-	return (0);
-#undef JUMBOOPTLEN
-}
-
-/*
  * Insert fragment header and copy unfragmentable header portions.
  */
 static int
@@ -1478,9 +1363,10 @@ ip6_getpmtu_ctl(u_int fibnum, const struct in6_addr *dst, u_long *mtup)
 
 	NET_EPOCH_ENTER(et);
 	nh = fib6_lookup(fibnum, &kdst, scopeid, NHR_NONE, 0);
-	if (nh != NULL)
-		error = ip6_calcmtu(nh->nh_ifp, dst, nh->nh_mtu, mtup, NULL, 0);
-	else
+	if (nh != NULL) {
+		ip6_calcmtu(nh->nh_ifp, dst, nh->nh_mtu, mtup, 0);
+		error = 0;
+	} else
 		error = EHOSTUNREACH;
 	NET_EPOCH_EXIT(et);
 
@@ -1494,13 +1380,12 @@ ip6_getpmtu_ctl(u_int fibnum, const struct in6_addr *dst, u_long *mtup)
  * inside @ro_pmtu to avoid subsequent route lookups after packet
  * filter processing.
  *
- * Stores mtu and always-frag value into @mtup and @alwaysfragp.
- * Returns 0 on success.
+ * Stores mtu into @mtup.
  */
-static int
+static void
 ip6_getpmtu(struct route_in6 *ro_pmtu, int do_lookup,
     struct ifnet *ifp, const struct in6_addr *dst, u_long *mtup,
-    int *alwaysfragp, u_int fibnum, u_int proto)
+    u_int fibnum, u_int proto)
 {
 	struct nhop_object *nh;
 	struct in6_addr kdst;
@@ -1544,65 +1429,41 @@ ip6_getpmtu(struct route_in6 *ro_pmtu, int do_lookup,
 	if (ro_pmtu != NULL && ro_pmtu->ro_nh != NULL)
 		mtu = ro_pmtu->ro_nh->nh_mtu;
 
-	return (ip6_calcmtu(ifp, dst, mtu, mtup, alwaysfragp, proto));
+	ip6_calcmtu(ifp, dst, mtu, mtup, proto);
 }
 
 /*
  * Calculate MTU based on transmit @ifp, route mtu @rt_mtu and
  * hostcache data for @dst.
- * Stores mtu and always-frag value into @mtup and @alwaysfragp.
- *
- * Returns 0 on success.
+ * Stores mtu into @mtup.
  */
-static int
+static void
 ip6_calcmtu(struct ifnet *ifp, const struct in6_addr *dst, u_long rt_mtu,
-    u_long *mtup, int *alwaysfragp, u_int proto)
+    u_long *mtup, u_int proto)
 {
 	u_long mtu = 0;
-	int alwaysfrag = 0;
-	int error = 0;
 
 	if (rt_mtu > 0) {
-		u_int32_t ifmtu;
-		struct in_conninfo inc;
+		/* Skip the hostcache if the protocol handles PMTU changes. */
+		if (proto != IPPROTO_TCP && proto != IPPROTO_SCTP) {
+			struct in_conninfo inc = {
+			    .inc_flags = INC_ISIPV6,
+			    .inc6_faddr = *dst,
+			};
 
-		bzero(&inc, sizeof(inc));
-		inc.inc_flags |= INC_ISIPV6;
-		inc.inc6_faddr = *dst;
-
-		ifmtu = IN6_LINKMTU(ifp);
-
-		/* TCP is known to react to pmtu changes so skip hc */
-		if (proto != IPPROTO_TCP)
 			mtu = tcp_hc_getmtu(&inc);
+		}
 
 		if (mtu)
 			mtu = min(mtu, rt_mtu);
 		else
 			mtu = rt_mtu;
-		if (mtu == 0)
-			mtu = ifmtu;
-		else if (mtu < IPV6_MMTU) {
-			/*
-			 * RFC2460 section 5, last paragraph:
-			 * if we record ICMPv6 too big message with
-			 * mtu < IPV6_MMTU, transmit packets sized IPV6_MMTU
-			 * or smaller, with framgent header attached.
-			 * (fragment header is needed regardless from the
-			 * packet size, for translators to identify packets)
-			 */
-			alwaysfrag = 1;
-			mtu = IPV6_MMTU;
-		}
-	} else if (ifp) {
-		mtu = IN6_LINKMTU(ifp);
-	} else
-		error = EHOSTUNREACH; /* XXX */
+	}
+
+	if (mtu == 0)
+		mtu = in6_ifmtu(ifp);
 
 	*mtup = mtu;
-	if (alwaysfragp)
-		*alwaysfragp = alwaysfrag;
-	return (error);
 }
 
 /*
@@ -2960,8 +2821,8 @@ ip6_setpktopt(int optname, u_char *buf, int len, struct ip6_pktopts *opt,
 			if (ifp == NULL)
 				return (ENXIO);
 		}
-		if (ifp != NULL && (ifp->if_afdata[AF_INET6] == NULL ||
-		    (ND_IFINFO(ifp)->flags & ND6_IFF_IFDISABLED) != 0))
+		if (ifp != NULL && (ifp->if_inet6 == NULL ||
+		    (ifp->if_inet6->nd_flags & ND6_IFF_IFDISABLED) != 0))
 			return (ENETDOWN);
 
 		if (ifp != NULL &&

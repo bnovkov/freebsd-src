@@ -73,7 +73,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	liblzma \
 	libmemstat \
 	libmd \
-	libmixer \
 	libmt \
 	lib80211 \
 	libnetbsd \
@@ -107,6 +106,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libulog \
 	libutil \
 	libutil++ \
+	libuvmem \
 	${_libvgl} \
 	libwrap \
 	libxo \
@@ -137,7 +137,9 @@ SUBDIR_DEPEND_libdevstat= libkvm
 SUBDIR_DEPEND_libdpv= libfigpar ncurses libutil
 SUBDIR_DEPEND_libedit= ncurses
 SUBDIR_DEPEND_libgeom= libexpat libsbuf
+.if ${MK_MITKRB5} == "no"
 SUBDIR_DEPEND_librpcsec_gss= libgssapi
+.endif
 SUBDIR_DEPEND_libmagic= libz
 SUBDIR_DEPEND_libmemstat= libkvm
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}
@@ -155,11 +157,13 @@ SUBDIR_DEPEND_liblzma= libthr
 SUBDIR_DEPEND_libpcap= ofed
 .endif
 SUBDIR_DEPEND_nss_tacplus= libtacplus
+SUBDIR_DEPEND_virtual_oss= libsamplerate
 
 # NB: keep these sorted by MK_* knobs
 
 SUBDIR.${MK_BEARSSL}+=	libbearssl libsecureboot
 SUBDIR.${MK_BLACKLIST}+=libblacklist
+SUBDIR.${MK_BLOCKLIST}+=libblocklist
 SUBDIR.${MK_BLUETOOTH}+=libbluetooth libsdp
 SUBDIR.${MK_BSNMP}+=	libbsnmp
 
@@ -176,10 +180,13 @@ SUBDIR.${MK_DIALOG}+=	libdpv libfigpar
 SUBDIR.${MK_FDT}+=	libfdt
 SUBDIR.${MK_FILE}+=	libmagic
 SUBDIR.${MK_GPIO}+=	libgpio
-SUBDIR.${MK_GSSAPI}+=	libgssapi librpcsec_gss
+.if ${MK_MITKRB5} == "no"
+SUBDIR.${MK_KERBEROS}+=	libgssapi
+.endif
+SUBDIR.${MK_KERBEROS}+=	librpcsec_gss
 SUBDIR.${MK_ICONV}+=	libiconv_modules
 .if ${MK_MITKRB5} == "no"
-SUBDIR.${MK_KERBEROS_SUPPORT}+=	libcom_err
+SUBDIR.${MK_KERBEROS}+=	libcom_err
 .endif
 SUBDIR.${MK_LDNS}+=	libldns
 SUBDIR.${MK_STATS}+=	libstats
@@ -229,6 +236,8 @@ SUBDIR.${MK_PMC}+=	libpmc libpmcstat
 SUBDIR.${MK_RADIUS_SUPPORT}+=	libradius
 SUBDIR.${MK_SENDMAIL}+=	libmilter libsm libsmdb libsmutil
 SUBDIR.${MK_TELNET}+=	libtelnet
+SUBDIR.${MK_SOUND}+=	libmixer
+SUBDIR.${MK_CUSE}.${MK_SOUND}+=	virtual_oss
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf
 SUBDIR.${MK_TESTS_SUPPORT}+=	liblutok
 SUBDIR.${MK_TESTS}+=	tests

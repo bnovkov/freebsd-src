@@ -41,7 +41,6 @@ SUBDIR=	adduser \
 	makefs \
 	memcontrol \
 	mfiutil \
-	mixer \
 	mlxcontrol \
 	mountd \
 	mount_smbfs \
@@ -56,7 +55,6 @@ SUBDIR=	adduser \
 	nfsuserd \
 	nmtree \
 	nologin \
-	nvmfd \
 	pciconf \
 	periodic \
 	pnfsdscopymr \
@@ -85,7 +83,6 @@ SUBDIR=	adduser \
 	setpmac \
 	smbmsg \
 	snapinfo \
-	sndctl \
 	spi \
 	spray \
 	syslogd \
@@ -118,10 +115,13 @@ SUBDIR.${MK_AUDIT}+=	auditdistd
 .endif
 SUBDIR.${MK_AUDIT}+=	auditreduce
 SUBDIR.${MK_AUDIT}+=	praudit
+SUBDIR.${MK_AUDIT}+=	setaudit
 SUBDIR.${MK_AUTHPF}+=	authpf
 SUBDIR.${MK_AUTOFS}+=	autofs
 SUBDIR.${MK_BLACKLIST}+=	blacklistctl
 SUBDIR.${MK_BLACKLIST}+=	blacklistd
+SUBDIR.${MK_BLOCKLIST}+=	blocklistctl
+SUBDIR.${MK_BLOCKLIST}+=	blocklistd
 SUBDIR.${MK_BLUETOOTH}+=	bluetooth
 SUBDIR.${MK_BOOTPARAMD}+=	bootparamd
 SUBDIR.${MK_BSDINSTALL}+=	bsdinstall
@@ -140,7 +140,7 @@ SUBDIR.${MK_FLOPPY}+=	fdformat
 SUBDIR.${MK_FLOPPY}+=	fdread
 SUBDIR.${MK_FLOPPY}+=	fdwrite
 SUBDIR.${MK_FREEBSD_UPDATE}+=	freebsd-update
-SUBDIR.${MK_GSSAPI}+=	gssd
+SUBDIR.${MK_KERBEROS_SUPPORT}+=	gssd
 SUBDIR.${MK_GPIO}+=	gpioctl
 SUBDIR.${MK_HYPERV}+=	hyperv
 SUBDIR.${MK_INET6}+=	ip6addrctl
@@ -197,6 +197,9 @@ SUBDIR.${MK_SENDMAIL}+=	mailstats
 SUBDIR.${MK_SENDMAIL}+=	makemap
 SUBDIR.${MK_SENDMAIL}+=	praliases
 SUBDIR.${MK_SENDMAIL}+=	sendmail
+SUBDIR.${MK_SOUND}+=	mixer
+SUBDIR.${MK_SOUND}+=	sndctl
+SUBDIR.${MK_CUSE}.${MK_SOUND}+=	virtual_oss
 SUBDIR.${MK_TCP_WRAPPERS}+=	tcpdchk
 SUBDIR.${MK_TCP_WRAPPERS}+=	tcpdmatch
 SUBDIR.${MK_TOOLCHAIN}+=	config
@@ -210,7 +213,7 @@ SUBDIR.${MK_UTMPX}+=	ac
 SUBDIR.${MK_UTMPX}+=	lastlogin
 SUBDIR.${MK_UTMPX}+=	utx
 SUBDIR.${MK_WIRELESS}+=	wlandebug
-SUBDIR.${MK_WIRELESS}+=	wlanstats
+SUBDIR.${MK_WIRELESS}+=	wlanstat
 SUBDIR.${MK_WIRELESS}+=	wpa
 
 SUBDIR.${MK_TESTS}+=	tests

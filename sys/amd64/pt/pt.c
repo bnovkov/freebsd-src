@@ -42,15 +42,15 @@
  */
 
 #include <sys/systm.h>
+#include <sys/bus.h>
 #include <sys/hwt.h>
+#include <sys/interrupt.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/smp.h>
-#include <sys/bus.h>
-#include <sys/interrupt.h>
 
 #include <vm/vm.h>
 #include <vm/vm_page.h>
@@ -210,7 +210,7 @@ pt_fill_buffer_record(int id, struct pt_buffer *buf,
 	rec->record_type = HWT_RECORD_BUFFER;
 	rec->buf_id = id;
 	rec->curpage = offset / PAGE_SIZE;
-	rec->offset = offset & PAGE_MASK;;
+	rec->offset = offset & PAGE_MASK;
 }
 
 /*

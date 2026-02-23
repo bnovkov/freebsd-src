@@ -128,7 +128,7 @@ struct tpm_sc {
 	lwpid_t		owner_tid;
 
 	struct callout 	discard_buffer_callout;
-#ifdef TPM_HARVEST
+#if defined TPM_HARVEST || defined RANDOM_ENABLE_TPM
 	struct timeout_task 	harvest_task;
 #endif
 
@@ -136,6 +136,7 @@ struct tpm_sc {
 };
 
 int tpm20_suspend(device_t dev);
+int tpm20_resume(device_t dev);
 int tpm20_shutdown(device_t dev);
 int32_t tpm20_get_timeout(uint32_t command);
 int tpm20_init(struct tpm_sc *sc);

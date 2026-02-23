@@ -37,7 +37,14 @@
 #include "assym.inc"
 
 .macro check_user_access user_arg, size_arg, bad_access_func
-	adds	x6, x\user_arg, x\size_arg
+	/*
+	 * TBI is enabled from 15.0. Clear the top byte of the userspace
+	 * address before checking whether it's within the given limit.
+	 * The later load/store instructions will fault if TBI is disabled
+	 * for the current process.
+	 */
+	and	x6, x\user_arg, #(~TBI_ADDR_MASK)
+	adds	x6, x6, x\size_arg
 	b.cs	\bad_access_func
 	ldr	x7, =VM_MAXUSER_ADDRESS
 	cmp	x6, x7
@@ -58,9 +65,9 @@ END(copyio_fault)
 /*
  * Copies from a kernel to user address
  *
- * int copyout(const void *kaddr, void *udaddr, size_t len)
+ * int copyout_std(const void *kaddr, void *udaddr, size_t len)
  */
-ENTRY(copyout)
+ENTRY(copyout_std)
 	cbz	x2, 1f
 	check_user_access 1, 2, copyio_fault_nopcb
 
@@ -69,14 +76,37 @@ ENTRY(copyout)
 1:	mov	x0, xzr		/* return 0 */
 	ret
 
-END(copyout)
+END(copyout_std)
+
+/*
+ * Copies from a kernel to user address
+ *
+ * int copyout_mops(const void *kaddr, void *udaddr, size_t len)
+ */
+ENTRY(copyout_mops)
+	cbz	x2, 1f
+	check_user_access 1, 2, copyio_fault_nopcb
+
+	adr	x6, copyio_fault /* Get the handler address */
+	SET_FAULT_HANDLER(x6, x7) /* Set the handler */
+
+	.inst   0x19001441      /* cpyfpwt   [x1]!, [x0]!, x2!  */
+	.inst   0x19401441      /* cpyfmwt   [x1]!, [x0]!, x2!  */
+	.inst   0x19801441      /* cpyfewt   [x1]!, [x0]!, x2!  */
+
+	SET_FAULT_HANDLER(xzr, x7) /* Clear the handler */
+
+1:	mov	x0, xzr		/* return 0 */
+	ret
+
+END(copyout_mops)
 
 /*
  * Copies from a user to kernel address
  *
- * int copyin(const void *uaddr, void *kdaddr, size_t len)
+ * int copyin_std(const void *uaddr, void *kdaddr, size_t len)
  */
-ENTRY(copyin)
+ENTRY(copyin_std)
 	cbz	x2, 1f
 	check_user_access 0, 2, copyio_fault_nopcb
 
@@ -85,7 +115,30 @@ ENTRY(copyin)
 1:	mov	x0, xzr		/* return 0 */
 	ret
 
-END(copyin)
+END(copyin_std)
+
+/*
+ * Copies from a user to kernel address
+ *
+ * int copyin_mops(const void *uaddr, void *kdaddr, size_t len)
+ */
+ENTRY(copyin_mops)
+	cbz	x2, 1f
+	check_user_access 0, 2, copyio_fault_nopcb
+
+	adr	x6, copyio_fault /* Get the handler address */
+	SET_FAULT_HANDLER(x6, x7) /* Set the handler */
+
+	.inst   0x19002441      /* cpyfprt   [x1]!, [x0]!, x2!  */
+	.inst   0x19402441      /* cpyfmrt   [x1]!, [x0]!, x2!  */
+	.inst   0x19802441      /* cpyfert   [x1]!, [x0]!, x2!  */
+
+	SET_FAULT_HANDLER(xzr, x7) /* Clear the handler */
+
+1:	mov	x0, xzr		/* return 0 */
+	ret
+
+END(copyin_mops)
 
 /*
  * Copies a string from a user to kernel address
@@ -100,13 +153,20 @@ ENTRY(copyinstr)
 	adr	x6, copyio_fault /* Get the handler address */
 	SET_FAULT_HANDLER(x6, x7) /* Set the handler */
 
+	/*
+	 *  As in check_user_access mask off the TBI bits for the cmp
+	 * instruction. The load will fail trap if TBI is disabled, but we
+	 * need to check the address didn't wrap.
+	 */
+	and	x6, x0, #(~TBI_ADDR_MASK)
 	ldr	x7, =VM_MAXUSER_ADDRESS
-1:	cmp	x0, x7
+1:	cmp	x6, x7
 	b.cs	copyio_fault
 	ldtrb	w4, [x0]	/* Load from uaddr */
 	add	x0, x0, #1	/* Next char */
 	strb	w4, [x1], #1	/* Store in kaddr */
 	add	x5, x5, #1	/* count++ */
+	add	x6, x6, #1	/* Increment masked address */
 	cbz	w4, 2f		/* Break when NUL-terminated */
 	sub	x2, x2, #1	/* len-- */
 	cbnz	x2, 1b

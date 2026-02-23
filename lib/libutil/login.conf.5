@@ -17,7 +17,7 @@
 .\" 5. Modifications may be freely made to this file providing the above
 .\"    conditions are met.
 .\"
-.Dd June 28, 2023
+.Dd December 15, 2025
 .Dt LOGIN.CONF 5
 .Os
 .Sh NAME
@@ -288,7 +288,6 @@ explicitly indicates not to change the umask.
 .Bl -column passwd_prompt indent indent
 .It Sy "Name	Type	Default	Description"
 .\" .It "approve	program 	Program to approve login.
-.It "copyright	file		File containing additional copyright information"
 .It "host.allow	list		List of remote host wildcards from which users in"
 the class may access.
 .It "host.deny	list		List of remote host wildcards from which users"
@@ -380,14 +379,15 @@ If
 is specified, then logins are only allowed during the periods given.
 If
 .Em times.deny
-is specified, then logins are denied during the periods given, regardless of whether
-one of the periods specified in
+is specified, then logins are denied during the periods given,
+regardless of whether one of the periods specified in
 .Em times.allow
 applies.
 .Pp
 Note that
 .Xr login 1
-enforces only that the actual login falls within periods allowed by these entries.
+enforces only that the actual login falls within periods allowed by
+these entries.
 Further enforcement over the life of a session requires a separate daemon to
 monitor transitions from an allowed period to a non-allowed one.
 .Pp
@@ -495,7 +495,7 @@ lists.
 .Xr pam 3 ,
 .Xr passwd 5 ,
 .Xr ttys 5 ,
-.Xr ftpd 8 ,
+.Xr ftpd 8 Pq Pa ports/ftp/freebsd-ftpd ,
 .Xr pam_passwdqc 8
 .Sh HISTORY
 The file

@@ -195,8 +195,8 @@ static void vt_update_static(void *);
 #ifndef SC_NO_CUTPASTE
 static void vt_mouse_paste(void);
 #endif
-static void vt_suspend_handler(void *priv);
-static void vt_resume_handler(void *priv);
+static void vt_suspend_handler(void *priv, enum power_stype stype);
+static void vt_resume_handler(void *priv, enum power_stype stype);
 
 SET_DECLARE(vt_drv_set, struct vt_driver);
 
@@ -804,11 +804,11 @@ vt_machine_kbdevent(struct vt_device *vd, int c)
 		return (1);
 	case SPCLKEY | STBY: /* XXX Not present in kbdcontrol parser. */
 		/* Put machine into Stand-By mode. */
-		power_pm_suspend(POWER_SLEEP_STATE_STANDBY);
+		power_pm_suspend(POWER_SSTATE_TRANSITION_STANDBY);
 		return (1);
 	case SPCLKEY | SUSP: /* kbdmap(5) keyword `susp`. */
 		/* Suspend machine. */
-		power_pm_suspend(POWER_SLEEP_STATE_SUSPEND);
+		power_pm_suspend(POWER_SSTATE_TRANSITION_SUSPEND);
 		return (1);
 	}
 
@@ -876,7 +876,9 @@ vt_processkey(keyboard_t *kbd, struct vt_device *vd, int c)
 {
 	struct vt_window *vw = vd->vd_curwindow;
 
+#ifdef RANDOM_ENABLE_KBD
 	random_harvest_queue(&c, sizeof(c), RANDOM_KEYBOARD);
+#endif
 #if VT_ALT_TO_ESC_HACK
 	if (c & RELKEY) {
 		switch (c & ~RELKEY) {
@@ -950,6 +952,9 @@ vt_processkey(keyboard_t *kbd, struct vt_device *vd, int c)
 			VT_UNLOCK(vd);
 			break;
 		}
+		case BKEY | BTAB: /* Back tab (usually, shift+tab). */
+			terminal_input_special(vw->vw_terminal, TKEY_BTAB);
+			break;
 		case FKEY | F(1):  case FKEY | F(2):  case FKEY | F(3):
 		case FKEY | F(4):  case FKEY | F(5):  case FKEY | F(6):
 		case FKEY | F(7):  case FKEY | F(8):  case FKEY | F(9):
@@ -1961,6 +1966,9 @@ vtterm_cngetc(struct terminal *tm)
 				vw->vw_flags &= ~VWF_SCROLL;
 				VTBUF_SLCK_DISABLE(&vw->vw_buf);
 			}
+			break;
+		case SPCLKEY | BTAB: /* Back tab (usually, shift+tab). */
+			vw->vw_kbdsq = "\x1b[Z";
 			break;
 		/* XXX: KDB can handle history. */
 		case SPCLKEY | FKEY | F(50): /* Arrow up. */
@@ -3044,9 +3052,9 @@ skip_thunk:
 				DPRINTF(5, "reset WAIT_ACQ, ");
 			return (0);
 		} else if (mode->mode == VT_PROCESS) {
-			if (!ISSIGVALID(mode->relsig) ||
-			    !ISSIGVALID(mode->acqsig) ||
-			    !ISSIGVALID(mode->frsig)) {
+			if (!(_SIG_VALID(mode->relsig) &&
+			    _SIG_VALID(mode->acqsig) &&
+			    (mode->frsig == 0 || _SIG_VALID(mode->frsig)))) {
 				DPRINTF(5, "error EINVAL\n");
 				return (EINVAL);
 			}
@@ -3330,7 +3338,7 @@ vt_replace_backend(const struct vt_driver *drv, void *softc)
 }
 
 static void
-vt_suspend_handler(void *priv)
+vt_suspend_handler(void *priv, enum power_stype stype)
 {
 	struct vt_device *vd;
 
@@ -3341,7 +3349,7 @@ vt_suspend_handler(void *priv)
 }
 
 static void
-vt_resume_handler(void *priv)
+vt_resume_handler(void *priv, enum power_stype stype)
 {
 	struct vt_device *vd;
 

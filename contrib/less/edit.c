@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1984-2025  Mark Nudelman
+ * Copyright (C) 1984-2026  Mark Nudelman
  *
  * You may distribute under the terms of either the GNU General Public
  * License or the Less License, as specified in the README file.
@@ -77,20 +77,20 @@ public void init_textlist(struct textlist *tlist, mutable char *str)
 #if SPACES_IN_FILENAMES
 		if (meta_quoted)
 		{
-			meta_quoted = 0;
+			meta_quoted = FALSE;
 		} else if (esclen > 0 && s + esclen < tlist->endstring &&
 		           strncmp(s, esc, esclen) == 0)
 		{
-			meta_quoted = 1;
+			meta_quoted = TRUE;
 			s += esclen - 1;
 		} else if (delim_quoted)
 		{
 			if (*s == closequote)
-				delim_quoted = 0;
+				delim_quoted = FALSE;
 		} else /* (!delim_quoted) */
 		{
 			if (*s == openquote)
-				delim_quoted = 1;
+				delim_quoted = TRUE;
 			else if (*s == ' ')
 				*s = '\0';
 		}
@@ -101,7 +101,7 @@ public void init_textlist(struct textlist *tlist, mutable char *str)
 	}
 }
 
-public constant char * forw_textlist(struct textlist *tlist, constant char *prev)
+public constant char * forw_textlist(constant struct textlist *tlist, constant char *prev)
 {
 	constant char *s;
 	
@@ -113,16 +113,14 @@ public constant char * forw_textlist(struct textlist *tlist, constant char *prev
 		s = tlist->string;
 	else
 		s = prev + strlen(prev);
-	if (s >= tlist->endstring)
-		return (NULL);
-	while (*s == '\0')
+	while (s < tlist->endstring && *s == '\0')
 		s++;
 	if (s >= tlist->endstring)
 		return (NULL);
 	return (s);
 }
 
-public constant char * back_textlist(struct textlist *tlist, constant char *prev)
+public constant char * back_textlist(constant struct textlist *tlist, constant char *prev)
 {
 	constant char *s;
 	
@@ -212,7 +210,6 @@ static void modeline_options(constant char *str, char end_char)
  */
 static void check_modeline(constant char *line)
 {
-#if HAVE_STRSTR
 	static constant char *pgms[] = { "less:", "vim:", "vi:", "ex:", NULL };
 	constant char **pgm;
 	for (pgm = pgms;  *pgm != NULL;  ++pgm)
@@ -237,7 +234,6 @@ static void check_modeline(constant char *line)
 			pline = str;
 		}
 	}
-#endif /* HAVE_STRSTR */
 }
 
 /*
@@ -306,7 +302,11 @@ static void close_pipe(FILE *pipefd)
 	if (WIFSIGNALED(status))
 	{
 		int sig = WTERMSIG(status);
-		if (sig != SIGPIPE || ch_length() != NULL_POSITION)
+		if (
+#ifdef SIGPIPE
+			sig != SIGPIPE || 
+#endif
+			ch_length() != NULL_POSITION)
 		{
 			parg.p_string = signal_message(sig);
 			error("Input preprocessor terminated: %s", &parg);

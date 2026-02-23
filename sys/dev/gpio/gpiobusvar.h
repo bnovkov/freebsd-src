@@ -109,7 +109,7 @@ struct gpiobus_ivar
 };
 
 enum gpiobus_ivars {
-	GPIOBUS_IVAR_NPINS	= 10500,
+	GPIOBUS_IVAR_NPINS	= BUS_IVARS_GPIOBUS,
 	GPIOBUS_IVAR_PINS,
 };
 
@@ -166,12 +166,11 @@ int gpio_pin_getcaps(gpio_pin_t pin, uint32_t *caps);
 int gpio_pin_is_active(gpio_pin_t pin, bool *active);
 int gpio_pin_set_active(gpio_pin_t pin, bool active);
 int gpio_pin_setflags(gpio_pin_t pin, uint32_t flags);
-struct resource *gpio_alloc_intr_resource(device_t consumer_dev, int *rid,
+struct resource *gpio_alloc_intr_resource(device_t consumer_dev, int rid,
     u_int alloc_flags, gpio_pin_t pin, uint32_t intr_mode);
 
 int gpio_check_flags(uint32_t, uint32_t);
 device_t gpiobus_add_bus(device_t);
-device_t gpiobus_attach_bus(device_t);
 int gpiobus_detach_bus(device_t);
 
 #endif	/* __GPIOBUS_H__ */

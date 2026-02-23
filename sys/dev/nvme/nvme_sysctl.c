@@ -153,7 +153,6 @@ nvme_sysctl_timeout_period(SYSCTL_HANDLER_ARGS)
 static void
 nvme_qpair_reset_stats(struct nvme_qpair *qpair)
 {
-
 	/*
 	 * Reset the values. Due to sanity checks in
 	 * nvme_qpair_process_completions, we reset the number of interrupt
@@ -426,7 +425,7 @@ nvme_sysctl_initialize_ctrlr(struct nvme_controller *ctrlr)
 	    CTLFLAG_RD, &ctrlr->cap_hi, 0,
 	    "Hi 32-bits of capacities for the drive");
 
-	SYSCTL_ADD_UINT(ctrlr_ctx, ctrlr_list, OID_AUTO, "fail_on_reset",
+	SYSCTL_ADD_BOOL(ctrlr_ctx, ctrlr_list, OID_AUTO, "fail_on_reset",
 	    CTLFLAG_RD, &ctrlr->fail_on_reset, 0,
 	    "Pretend the next reset fails and fail the controller");
 

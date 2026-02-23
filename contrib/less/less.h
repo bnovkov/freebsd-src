@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1984-2025  Mark Nudelman
+ * Copyright (C) 1984-2026  Mark Nudelman
  *
  * You may distribute under the terms of either the GNU General Public
  * License or the Less License, as specified in the README file.
@@ -51,9 +51,6 @@
 #endif
 #if HAVE_CTYPE_H
 #include <ctype.h>
-#endif
-#if HAVE_WCTYPE_H
-#include <wctype.h>
 #endif
 #if HAVE_LIMITS_H
 #include <limits.h>
@@ -216,7 +213,7 @@ void free();
  * Special types and constants.
  */
 typedef unsigned long LWCHAR;
-#if defined(MINGW) || (defined(_MSC_VER) && _MSC_VER >= 1500)
+#if defined(__MINGW32__) || (defined(_MSC_VER) && _MSC_VER >= 1500)
 typedef long long less_off_t;  /* __int64 */
 typedef struct _stat64 less_stat_t;
 #define less_fstat _fstat64
@@ -264,6 +261,11 @@ typedef off_t           LINENUM;
 #else
 #define OPEN_APPEND     (1)
 #endif
+#endif
+
+/* Use iread() to read tty? */
+#if !MSDOS_COMPILER || MSDOS_COMPILER == DJGPPC
+#define LESS_IREAD_TTY 1
 #endif
 
 /*
@@ -435,6 +437,7 @@ typedef enum osc8_state {
 #define AT_ANSI         (1 << 4)  /* Content-supplied "ANSI" escape sequence */
 #define AT_BINARY       (1 << 5)  /* LESS*BINFMT representation */
 #define AT_HILITE       (1 << 6)  /* Internal highlights (e.g., for search) */
+#define AT_PLACEHOLDER  (1 << 7)  /* Placeholder for half of double-wide char */
 
 #define AT_COLOR_SHIFT    8
 #define AT_NUM_COLORS     16
@@ -554,6 +557,8 @@ typedef enum {
 #define ESC             CONTROL('[')
 #define ESCS            "\33"
 #define CSI             ((unsigned char)'\233')
+#define VARSEL_15       ((LWCHAR)0xFE0E)  /* VARIATION SELECTOR 15 */
+#define VARSEL_16       ((LWCHAR)0xFE0F)  /* VARIATION SELECTOR 16 */
 
 #if _OSK_MWC32
 #define LSIGNAL(sig,func)       os9_signal(sig,func)
@@ -671,4 +676,13 @@ POSITION lstrtoposc(constant char*, constant char**, int);
 unsigned long lstrtoulc(constant char*, constant char**, int);
 #if MSDOS_COMPILER==WIN32C
 int pclose(FILE*);
+#endif
+#if !HAVE_STRCHR
+char * strchr(char *s, char c);
+#endif
+#if !HAVE_MEMCPY
+void * memcpy(void *dst, constant void *src, size_t len);
+#endif
+#if !HAVE_STRSTR
+char * strstr(constant char *haystack, constant char *needle);
 #endif

@@ -5,6 +5,7 @@ TESTS_SUBDIRS+=	ioctl
 
 ATF_TESTS_SH+=	altq \
 		anchor \
+		counters \
 		debug \
 		divert-to \
 		dup \
@@ -18,6 +19,7 @@ ATF_TESTS_SH+=	altq \
 		icmp6 \
 		if_enc \
 		limits \
+		limiters \
 		loginterface \
 		killstate \
 		macro \
@@ -30,6 +32,7 @@ ATF_TESTS_SH+=	altq \
 		names \
 		nat \
 		nat64 \
+		once \
 		pass_block \
 		pflog \
 		pflow \
@@ -55,11 +58,13 @@ ATF_TESTS_SH+=	altq \
 		tcp \
 		tos
 
+ATF_TESTS_PYTEST+=	frag4.py
 ATF_TESTS_PYTEST+=	frag6.py
 ATF_TESTS_PYTEST+=	header.py
 ATF_TESTS_PYTEST+=	icmp.py
 ATF_TESTS_PYTEST+=	igmp.py
 ATF_TESTS_PYTEST+=	mld.py
+ATF_TESTS_PYTEST+=	nat44.py
 ATF_TESTS_PYTEST+=	nat64.py
 ATF_TESTS_PYTEST+=	nat66.py
 ATF_TESTS_PYTEST+=	return.py
@@ -68,7 +73,7 @@ ATF_TESTS_PYTEST+=	tcp.py
 
 # Allow tests to run in parallel in their own jails
 TEST_METADATA+= execenv="jail"
-TEST_METADATA+= execenv_jail_params="vnet allow.raw_sockets"
+TEST_METADATA+= execenv_jail_params="vnet allow.raw_sockets allow.read_msgbuf"
 
 ${PACKAGE}FILES+=	\
 			bsnmpd.conf \
@@ -86,6 +91,8 @@ ${PACKAGE}FILES+=	\
 			pft_ether.py \
 			pft_read_ipfix.py \
 			rdr-srcport.py \
+			tftpd_inetd.conf \
+			tftpd_proxy_inetd.conf \
 			utils.subr \
 			utils.py
 

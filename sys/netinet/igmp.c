@@ -47,7 +47,6 @@
  * MULTICAST Revision: 3.5.1.4
  */
 
-#include <sys/cdefs.h>
 #include "opt_ddb.h"
 
 #include <sys/param.h>
@@ -80,6 +79,7 @@
 #include <netinet/ip_options.h>
 #include <netinet/igmp.h>
 #include <netinet/igmp_var.h>
+#include <netinet/ip_mroute.h>
 
 #include <machine/in_cksum.h>
 
@@ -691,7 +691,7 @@ igmp_ifdetach(struct ifnet *ifp)
 	SLIST_INIT(&inm_free_tmp);
 	IGMP_LOCK();
 
-	igi = ((struct in_ifinfo *)ifp->if_afdata[AF_INET])->ii_igmp;
+	igi = ((struct in_ifinfo *)ifp->if_inet)->ii_igmp;
 	if (igi->igi_version == IGMP_VERSION_3) {
 		IF_ADDR_WLOCK(ifp);
 		NET_EPOCH_ENTER(et);
@@ -782,7 +782,7 @@ igmp_input_v1_query(struct ifnet *ifp, const struct ip *ip,
 	IN_MULTI_LIST_LOCK();
 	IGMP_LOCK();
 
-	igi = ((struct in_ifinfo *)ifp->if_afdata[AF_INET])->ii_igmp;
+	igi = ((struct in_ifinfo *)ifp->if_inet)->ii_igmp;
 	KASSERT(igi != NULL, ("%s: no igmp_ifsoftc for ifp %p", __func__, ifp));
 
 	if (igi->igi_flags & IGIF_LOOPBACK) {
@@ -875,7 +875,7 @@ igmp_input_v2_query(struct ifnet *ifp, const struct ip *ip,
 	IN_MULTI_LIST_LOCK();
 	IGMP_LOCK();
 
-	igi = ((struct in_ifinfo *)ifp->if_afdata[AF_INET])->ii_igmp;
+	igi = ((struct in_ifinfo *)ifp->if_inet)->ii_igmp;
 	KASSERT(igi != NULL, ("%s: no igmp_ifsoftc for ifp %p", __func__, ifp));
 
 	if (igi->igi_flags & IGIF_LOOPBACK) {
@@ -1067,7 +1067,7 @@ igmp_input_v3_query(struct ifnet *ifp, const struct ip *ip,
 	IN_MULTI_LIST_LOCK();
 	IGMP_LOCK();
 
-	igi = ((struct in_ifinfo *)ifp->if_afdata[AF_INET])->ii_igmp;
+	igi = ((struct in_ifinfo *)ifp->if_inet)->ii_igmp;
 	KASSERT(igi != NULL, ("%s: no igmp_ifsoftc for ifp %p", __func__, ifp));
 
 	if (igi->igi_flags & IGIF_LOOPBACK) {
@@ -2348,7 +2348,7 @@ igmp_change_state(struct in_multi *inm)
 
 	IGMP_LOCK();
 
-	igi = ((struct in_ifinfo *)ifp->if_afdata[AF_INET])->ii_igmp;
+	igi = ((struct in_ifinfo *)ifp->if_inet)->ii_igmp;
 	KASSERT(igi != NULL, ("%s: no igmp_ifsoftc for ifp %p", __func__, ifp));
 
 	/*
@@ -3489,7 +3489,7 @@ igmp_intr(struct mbuf *m)
 
 	imo.imo_multicast_ttl  = 1;
 	imo.imo_multicast_vif  = -1;
-	imo.imo_multicast_loop = (V_ip_mrouter != NULL);
+	imo.imo_multicast_loop = V_ip_mrouting_enabled;
 
 	/*
 	 * If the user requested that IGMP traffic be explicitly

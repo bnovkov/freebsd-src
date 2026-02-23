@@ -286,6 +286,8 @@ int nfsrvd_deallocate(struct nfsrv_descript *, int,
     vnode_t, struct nfsexstuff *);
 int nfsrvd_copy_file_range(struct nfsrv_descript *, int,
     vnode_t, vnode_t, struct nfsexstuff *, struct nfsexstuff *);
+int nfsrvd_clone(struct nfsrv_descript *, int,
+    vnode_t, vnode_t, struct nfsexstuff *, struct nfsexstuff *);
 int nfsrvd_seek(struct nfsrv_descript *, int,
     vnode_t, struct nfsexstuff *);
 int nfsrvd_getxattr(struct nfsrv_descript *, int,
@@ -332,8 +334,8 @@ int nfsm_advance(struct nfsrv_descript *, int, int);
 void *nfsm_dissct(struct nfsrv_descript *, int, int);
 void newnfs_copycred(struct nfscred *, struct ucred *);
 void newnfs_copyincred(struct ucred *, struct nfscred *);
-int nfsrv_dissectacl(struct nfsrv_descript *, NFSACL_T *, bool, int *,
-    int *, NFSPROC_T *);
+int nfsrv_dissectacl(struct nfsrv_descript *, NFSACL_T *, bool, bool, int *,
+    int *);
 int nfsrv_getattrbits(struct nfsrv_descript *, nfsattrbit_t *, int *,
     int *);
 int nfsrv_getopbits(struct nfsrv_descript *, nfsopbit_t *, int *);
@@ -341,7 +343,8 @@ int nfsv4_loadattr(struct nfsrv_descript *, vnode_t,
     struct nfsvattr *, struct nfsfh **, fhandle_t *, int,
     struct nfsv3_pathconf *, struct statfs *, struct nfsstatfs *,
     struct nfsfsinfo *, NFSACL_T *,
-    int, int *, u_int32_t *, u_int32_t *, bool *, NFSPROC_T *, struct ucred *);
+    int, int *, u_int32_t *, u_int32_t *, bool *, uint32_t *, uint32_t *,
+    NFSPROC_T *, struct ucred *);
 int nfsv4_lock(struct nfsv4lock *, int, int *, struct mtx *, struct mount *);
 void nfsv4_unlock(struct nfsv4lock *, int);
 void nfsv4_relref(struct nfsv4lock *);
@@ -358,8 +361,6 @@ int nfsv4_getipaddr(struct nfsrv_descript *, struct sockaddr_in *,
 int nfsv4_seqsession(uint32_t, uint32_t, uint32_t, struct nfsslot *,
     struct mbuf **, uint16_t);
 void nfsv4_seqsess_cacherep(uint32_t, struct nfsslot *, int, struct mbuf **);
-void nfsv4_setsequence(struct nfsmount *, struct nfsrv_descript *,
-    struct nfsclsession *, int, struct ucred *);
 int nfsv4_sequencelookup(struct nfsmount *, struct nfsclsession *, int *,
     int *, uint32_t *, uint8_t *, bool);
 void nfsv4_freeslot(struct nfsclsession *, int, bool);
@@ -397,7 +398,7 @@ void nfsrv_wcc(struct nfsrv_descript *, int, struct nfsvattr *, int,
 int nfsv4_fillattr(struct nfsrv_descript *, struct mount *, vnode_t, NFSACL_T *,
     struct vattr *, fhandle_t *, int, nfsattrbit_t *, struct ucred *,
     NFSPROC_T *, int, int, int, int, uint64_t, struct statfs *, bool, bool,
-    bool);
+    bool, uint32_t, fsid_t *, bool);
 void nfsrv_fillattr(struct nfsrv_descript *, struct nfsvattr *);
 struct mbuf *nfsrv_adj(struct mbuf *, int, int);
 void nfsrv_postopattr(struct nfsrv_descript *, int, struct nfsvattr *);
@@ -408,8 +409,8 @@ void nfsv4_gidtostr(gid_t, u_char **, int *);
 int nfsv4_strtogid(struct nfsrv_descript *, u_char *, int, gid_t *);
 int nfsrv_checkuidgid(struct nfsrv_descript *, struct nfsvattr *);
 void nfsrv_fixattr(struct nfsrv_descript *, vnode_t,
-    struct nfsvattr *, NFSACL_T *, NFSPROC_T *, nfsattrbit_t *,
-    struct nfsexstuff *);
+    struct nfsvattr *, NFSACL_T *, NFSACL_T *, NFSPROC_T *, nfsattrbit_t *,
+    bool);
 int nfsrv_errmoved(int);
 int nfsrv_putreferralattr(struct nfsrv_descript *, nfsattrbit_t *,
     struct nfsreferral *, int, int *);
@@ -436,13 +437,17 @@ struct nfsreferral *nfsv4root_getreferral(vnode_t, vnode_t, u_int32_t);
 int nfsvno_pathconf(vnode_t, int, long *, struct ucred *, NFSPROC_T *);
 int nfsrv_atroot(vnode_t, uint64_t *);
 int nfs_supportsnfsv4acls(vnode_t);
+int nfs_supportsposixacls(struct vnode *);
 
 /* nfs_commonacl.c */
 int nfsrv_dissectace(struct nfsrv_descript *, struct acl_entry *,
-    bool, int *, int *, NFSPROC_T *);
+    bool, int *, int *);
 uint32_t nfs_aceperm(acl_perm_t);
+int nfsrv_dissectposixace(struct nfsrv_descript *, struct acl_entry *,
+    bool, int *, int *);
 int nfsrv_buildacl(struct nfsrv_descript *, NFSACL_T *, __enum_uint8(vtype),
     NFSPROC_T *);
+int nfsrv_buildposixacl(struct nfsrv_descript *, NFSACL_T *, acl_type_t);
 int nfsrv_compareacl(NFSACL_T *, NFSACL_T *);
 
 /* nfs_clrpcops.c */
@@ -467,8 +472,8 @@ int nfsrpc_setclient(struct nfsmount *, struct nfsclclient *, int,
 int nfsrpc_getattr(vnode_t, struct ucred *, NFSPROC_T *, struct nfsvattr *);
 int nfsrpc_getattrnovp(struct nfsmount *, u_int8_t *, int, int,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, u_int64_t *, uint32_t *);
-int nfsrpc_setattr(vnode_t, struct vattr *, NFSACL_T *, struct ucred *,
-    NFSPROC_T *, struct nfsvattr *, int *);
+int nfsrpc_setattr(vnode_t, struct vattr *, NFSACL_T *, acl_type_t,
+    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *);
 int nfsrpc_lookup(vnode_t, char *, int, struct ucred *, NFSPROC_T *,
     struct nfsvattr *, struct nfsvattr *, struct nfsfh **, int *, int *,
     uint32_t);
@@ -517,11 +522,11 @@ int nfsrpc_lock(struct nfsrv_descript *, struct nfsmount *, vnode_t,
     u_int8_t *, int, struct nfscllockowner *, int, int, u_int64_t,
     u_int64_t, short, struct ucred *, NFSPROC_T *, int);
 int nfsrpc_statfs(vnode_t, struct nfsstatfs *, struct nfsfsinfo *, uint32_t *,
-    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *);
+    uint32_t *, struct ucred *, NFSPROC_T *, struct nfsvattr *, int *);
 int nfsrpc_fsinfo(vnode_t, struct nfsfsinfo *, struct ucred *,
     NFSPROC_T *, struct nfsvattr *, int *);
-int nfsrpc_pathconf(vnode_t, struct nfsv3_pathconf *, bool *,
-    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *);
+int nfsrpc_pathconf(vnode_t, struct nfsv3_pathconf *, bool *, uint32_t *,
+    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *, uint32_t *);
 int nfsrpc_renew(struct nfsclclient *, struct nfsclds *, struct ucred *,
     NFSPROC_T *);
 int nfsrpc_rellockown(struct nfsmount *, struct nfscllockowner *, uint8_t *,
@@ -530,8 +535,10 @@ int nfsrpc_getdirpath(struct nfsmount *, u_char *, struct ucred *,
     NFSPROC_T *);
 int nfsrpc_delegreturn(struct nfscldeleg *, struct ucred *,
     struct nfsmount *, NFSPROC_T *, int);
-int nfsrpc_getacl(vnode_t, struct ucred *, NFSPROC_T *, NFSACL_T *);
-int nfsrpc_setacl(vnode_t, struct ucred *, NFSPROC_T *, NFSACL_T *);
+int nfsrpc_getacl(struct vnode *, acl_type_t, struct ucred *, NFSPROC_T *,
+    NFSACL_T *);
+int nfsrpc_setacl(struct vnode *, acl_type_t, struct ucred *, NFSPROC_T *,
+    NFSACL_T *);
 int nfsrpc_exchangeid(struct nfsmount *, struct nfsclclient *,
     struct nfssockreq *, int, uint32_t, struct nfsclds **, struct ucred *,
     NFSPROC_T *);
@@ -562,6 +569,8 @@ int nfsrpc_deallocate(vnode_t, off_t, off_t, struct nfsvattr *, int *,
 int nfsrpc_copy_file_range(vnode_t, off_t *, vnode_t, off_t *, size_t *,
     unsigned int, int *, struct nfsvattr *, int *, struct nfsvattr *,
     struct ucred *, bool, bool *);
+int nfsrpc_clone(vnode_t, off_t *, vnode_t, off_t *, size_t *, bool,
+    int *, struct nfsvattr *, int *, struct nfsvattr *, struct ucred *);
 int nfsrpc_seek(vnode_t, off_t *, bool *, int, struct ucred *,
     struct nfsvattr *, int *);
 int nfsrpc_getextattr(vnode_t, const char *, struct uio *, ssize_t *,
@@ -668,7 +677,7 @@ int nfscl_nget(mount_t, vnode_t, struct nfsfh *,
 NFSPROC_T *nfscl_getparent(NFSPROC_T *);
 void nfscl_start_renewthread(struct nfsclclient *);
 void nfscl_loadsbinfo(struct nfsmount *, struct nfsstatfs *, void *);
-void nfscl_loadfsinfo (struct nfsmount *, struct nfsfsinfo *);
+void nfscl_loadfsinfo(struct nfsmount *, struct nfsfsinfo *, uint32_t);
 void nfscl_delegreturn(struct nfscldeleg *, int, struct nfsmount *,
     struct ucred *, NFSPROC_T *);
 void nfsrvd_cbinit(int);
@@ -730,18 +739,18 @@ int nfsvno_statfs(vnode_t, struct statfs *);
 void nfsvno_getfs(struct nfsfsinfo *, int);
 void nfsvno_open(struct nfsrv_descript *, struct nameidata *, nfsquad_t,
     nfsv4stateid_t *, struct nfsstate *, int *, struct nfsvattr *, int32_t *,
-    int, NFSACL_T *, nfsattrbit_t *, struct ucred *, bool,
+    int, NFSACL_T *, NFSACL_T *, nfsattrbit_t *, struct ucred *, bool,
     struct nfsexstuff *, vnode_t *);
 int nfsvno_updfilerev(vnode_t, struct nfsvattr *, struct nfsrv_descript *,
     NFSPROC_T *);
 int nfsvno_fillattr(struct nfsrv_descript *, struct mount *, vnode_t,
     struct nfsvattr *, fhandle_t *, int, nfsattrbit_t *,
     struct ucred *, NFSPROC_T *, int, int, int, int, uint64_t, bool, bool,
-    bool);
-int nfsrv_sattr(struct nfsrv_descript *, vnode_t, struct nfsvattr *, nfsattrbit_t *,
-    NFSACL_T *, NFSPROC_T *);
-int nfsv4_sattr(struct nfsrv_descript *, vnode_t, struct nfsvattr *, nfsattrbit_t *,
-    NFSACL_T *, NFSPROC_T *);
+    bool, uint32_t, bool);
+int nfsrv_sattr(struct nfsrv_descript *, vnode_t, struct nfsvattr *,
+    nfsattrbit_t *, NFSACL_T *, NFSACL_T *, NFSPROC_T *);
+int nfsv4_sattr(struct nfsrv_descript *, vnode_t, struct nfsvattr *,
+    nfsattrbit_t *, NFSACL_T *, NFSACL_T *, NFSPROC_T *);
 int nfsvno_checkexp(mount_t, NFSSOCKADDR_T, struct nfsexstuff *,
     struct ucred **);
 int nfsvno_fhtovp(mount_t, fhandle_t *, NFSSOCKADDR_T, int,
@@ -763,7 +772,8 @@ int nfsrv_dscreate(struct vnode *, struct vattr *, struct vattr *,
     struct ucred *, NFSPROC_T *, struct vnode **);
 int nfsrv_updatemdsattr(struct vnode *, struct nfsvattr *, NFSPROC_T *);
 void nfsrv_killrpcs(struct nfsmount *);
-int nfsrv_setacl(struct vnode *, NFSACL_T *, struct ucred *, NFSPROC_T *);
+int nfsrv_setacl(struct vnode *,
+    NFSACL_T *, acl_type_t, struct ucred *, NFSPROC_T *);
 int nfsvno_seek(struct nfsrv_descript *, struct vnode *, u_long, off_t *, int,
     bool *, struct ucred *, NFSPROC_T *);
 int nfsvno_allocate(struct vnode *, off_t, off_t, struct ucred *, NFSPROC_T *);
@@ -781,6 +791,7 @@ void nfsm_trimtrailing(struct nfsrv_descript *, struct mbuf *, char *, int,
     int);
 bool nfsrv_checkwrongsec(struct nfsrv_descript *, int, __enum_uint8(vtype));
 void nfsrv_checknospc(void);
+int nfs_supportsacls(struct vnode *);
 
 /* nfs_commonkrpc.c */
 int newnfs_nmcancelreqs(struct nfsmount *);

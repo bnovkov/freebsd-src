@@ -89,7 +89,6 @@ FBSD_1.0 {
 	geteuid;
 	getfh;
 	getgid;
-	getgroups;
 	getitimer;
 	getpagesize;
 	getpeername;
@@ -183,6 +182,7 @@ FBSD_1.0 {
 	rename;
 	revoke;
 	rfork;
+	rfork_thread;
 	rmdir;
 	rtprio;
 	rtprio_thread;
@@ -204,7 +204,6 @@ FBSD_1.0 {
 	setegid;
 	seteuid;
 	setgid;
-	setgroups;
 	setitimer;
 	setlogin;
 	setpgid;
@@ -380,11 +379,20 @@ FBSD_1.7 {
 FBSD_1.8 {
 	exterrctl;
 	fchroot;
+	getgroups;
 	getrlimitusage;
 	inotify_add_watch_at;
 	inotify_rm_watch;
+	jail_attach_jd;
+	jail_remove_jd;
 	kcmp;
 	setcred;
+	setgroups;
+};
+
+FBSD_1.9 {
+	pdrfork;
+	pdrfork_thread;
 };
 
 FBSDprivate_1.0 {

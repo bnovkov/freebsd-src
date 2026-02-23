@@ -2059,8 +2059,9 @@ dainit(void)
 	status = xpt_register_async(AC_FOUND_DEVICE, daasync, NULL, NULL);
 
 	if (status != CAM_REQ_CMP) {
-		printf("da: Failed to attach master async callback "
-		       "due to status 0x%x!\n", status);
+		printf(
+		    "da: Failed to attach master async callback due to status 0x%x!\n",
+		    status);
 	} else if (da_send_ordered) {
 		/* Register our shutdown event handler */
 		if ((EVENTHANDLER_REGISTER(shutdown_post_sync, dashutdown,
@@ -2186,10 +2187,10 @@ daasync(void *callback_arg, uint32_t code,
 					  path, daasync,
 					  AC_FOUND_DEVICE, cgd);
 
-		if (status != CAM_REQ_CMP
-		 && status != CAM_REQ_INPROG)
-			printf("daasync: Unable to attach to new device "
-				"due to status 0x%x\n", status);
+		if (status != CAM_REQ_CMP && status != CAM_REQ_INPROG)
+			printf(
+			    "daasync: Unable to attach to new device due to status 0x%x\n",
+			    status);
 		return;
 	}
 	case AC_ADVINFO_CHANGED:	/* Doesn't touch periph */
@@ -2372,8 +2373,7 @@ dasysctlinit(void *context, int pending)
 		SYSCTL_CHILDREN(softc->sysctl_tree), OID_AUTO,
 		"optimal_nonseq_zones", CTLFLAG_RD,
 		&softc->optimal_nonseq_zones,
-		"Optimal Number of Non-Sequentially Written Sequential Write "
-		"Preferred Zones");
+		"Optimal Number of Non-Sequentially Written Sequential Write Preferred Zones");
 	SYSCTL_ADD_UQUAD(&softc->sysctl_ctx,
 		SYSCTL_CHILDREN(softc->sysctl_tree), OID_AUTO,
 		"max_seq_zones", CTLFLAG_RD, &softc->max_seq_zones,
@@ -2408,11 +2408,11 @@ dasysctlinit(void *context, int pending)
 	SYSCTL_ADD_PROC(&softc->sysctl_ctx, SYSCTL_CHILDREN(softc->sysctl_tree),
 	    OID_AUTO, "rotating", CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
 	    &softc->flags, (u_int)DA_FLAG_ROTATING, dabitsysctl, "I",
-	    "Rotating media *DEPRECATED* gone in FreeBSD 15");
+	    "Rotating media *DEPRECATED* gone in FreeBSD 16");
 	SYSCTL_ADD_PROC(&softc->sysctl_ctx, SYSCTL_CHILDREN(softc->sysctl_tree),
 	    OID_AUTO, "unmapped_io", CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
 	    &softc->flags, (u_int)DA_FLAG_UNMAPPEDIO, dabitsysctl, "I",
-	    "Unmapped I/O support *DEPRECATED* gone in FreeBSD 15");
+	    "Unmapped I/O support *DEPRECATED* gone in FreeBSD 16");
 
 #ifdef CAM_TEST_FAILURE
 	SYSCTL_ADD_PROC(&softc->sysctl_ctx, SYSCTL_CHILDREN(softc->sysctl_tree),
@@ -2859,8 +2859,8 @@ daregister(struct cam_periph *periph, void *arg)
 	    M_NOWAIT|M_ZERO);
 
 	if (softc == NULL) {
-		printf("daregister: Unable to probe new device. "
-		       "Unable to allocate softc\n");
+		printf(
+		    "daregister: Unable to probe new device. Unable to allocate softc\n");
 		return(CAM_REQ_CMP_ERR);
 	}
 
@@ -3035,8 +3035,8 @@ daregister(struct cam_periph *periph, void *arg)
 
 	if (cam_iosched_init(&softc->cam_iosched, periph, softc->disk,
 	    daschedule) != 0) {
-		printf("daregister: Unable to probe new device. "
-		       "Unable to allocate iosched memory\n");
+		printf(
+	"daregister: Unable to probe new device. Unable to allocate iosched memory\n");
 		free(softc, M_DEVBUF);
 		return(CAM_REQ_CMP_ERR);
 	}
@@ -3115,8 +3115,9 @@ da_zone_cmd(struct cam_periph *periph, union ccb *ccb, struct bio *bp,
 
 		zone_sa = da_zone_bio_to_scsi(bp->bio_zone.zone_cmd);
 		if (zone_sa == -1) {
-			xpt_print(periph->path, "Cannot translate zone "
-			    "cmd %#x to SCSI\n", bp->bio_zone.zone_cmd);
+			xpt_print(periph->path,
+			    "Cannot translate zone cmd %#x to SCSI\n",
+			    bp->bio_zone.zone_cmd);
 			error = EINVAL;
 			goto bailout;
 		}
@@ -3180,8 +3181,7 @@ da_zone_cmd(struct cam_periph *periph, union ccb *ccb, struct bio *bp,
 			if (error != 0) {
 				error = EINVAL;
 				xpt_print(periph->path,
-				    "scsi_ata_zac_mgmt_out() returned an "
-				    "error!");
+				    "scsi_ata_zac_mgmt_out() returned an error!");
 				goto bailout;
 			}
 		}
@@ -3198,8 +3198,8 @@ da_zone_cmd(struct cam_periph *periph, union ccb *ccb, struct bio *bp,
 
 		num_entries = rep->entries_allocated;
 		if (num_entries == 0) {
-			xpt_print(periph->path, "No entries allocated for "
-			    "Report Zones request\n");
+			xpt_print(periph->path,
+			    "No entries allocated for Report Zones request\n");
 			error = EINVAL;
 			goto bailout;
 		}
@@ -3208,8 +3208,8 @@ da_zone_cmd(struct cam_periph *periph, union ccb *ccb, struct bio *bp,
 		alloc_size = min(alloc_size, softc->disk->d_maxsize);
 		rz_ptr = malloc(alloc_size, M_SCSIDA, M_NOWAIT | M_ZERO);
 		if (rz_ptr == NULL) {
-			xpt_print(periph->path, "Unable to allocate memory "
-			   "for Report Zones request\n");
+			xpt_print(periph->path,
+			    "Unable to allocate memory for Report Zones request\n");
 			error = ENOMEM;
 			goto bailout;
 		}
@@ -3266,8 +3266,7 @@ da_zone_cmd(struct cam_periph *periph, union ccb *ccb, struct bio *bp,
 			if (error != 0) {
 				error = EINVAL;
 				xpt_print(periph->path,
-				    "scsi_ata_zac_mgmt_in() returned an "
-				    "error!");
+				    "scsi_ata_zac_mgmt_in() returned an error!");
 				goto bailout;
 			}
 		}
@@ -3369,11 +3368,32 @@ static void
 dastart(struct cam_periph *periph, union ccb *start_ccb)
 {
 	struct da_softc *softc;
+	uint32_t priority = start_ccb->ccb_h.pinfo.priority;
 
 	cam_periph_assert(periph, MA_OWNED);
 	softc = (struct da_softc *)periph->softc;
 
 	CAM_DEBUG(periph->path, CAM_DEBUG_TRACE, ("dastart\n"));
+
+	/*
+	 * When we're running the state machine, we should only accept DEV CCBs.
+	 * When we're doing normal I/O we should only accept NORMAL CCBs.
+	 *
+	 * While in the state machine, we carefully single step the queue, but
+	 * there's no protection for 'extra' calls to xpt_schedule() at the
+	 * wrong priority. Guard against that so that we filter any CCBs that
+	 * are offered at the wrong priority. This avoids generating requests
+	 * that are at normal priority. In addition, though we can't easily
+	 * enforce it, one must not transition to the NORMAL state via the
+	 * skipstate mechanism.
+`        */
+	if ((softc->state != DA_STATE_NORMAL && priority != CAM_PRIORITY_DEV) ||
+	    (softc->state == DA_STATE_NORMAL && priority != CAM_PRIORITY_NORMAL)) {
+		xpt_print(periph->path, "Bad priority for state %d prio %d\n",
+		    softc->state, priority);
+		xpt_release_ccb(start_ccb);
+		return;
+	}
 
 skipstate:
 	switch (softc->state) {
@@ -3578,8 +3598,8 @@ out:
 		mode_buf_len = 192;
 		mode_buf = malloc(mode_buf_len, M_SCSIDA, M_NOWAIT);
 		if (mode_buf == NULL) {
-			xpt_print(periph->path, "Unable to send mode sense - "
-			    "malloc failure\n");
+			xpt_print(periph->path,
+			    "Unable to send mode sense - malloc failure\n");
 			if ((softc->flags & DA_FLAG_CAN_RC16) != 0)
 				softc->state = DA_STATE_PROBE_RC16;
 			else
@@ -3861,8 +3881,7 @@ out:
 
 		log_dir = malloc(sizeof(*log_dir), M_SCSIDA, M_NOWAIT|M_ZERO);
 		if (log_dir == NULL) {
-			xpt_print(periph->path, "Couldn't malloc log_dir "
-			    "data\n");
+			xpt_print(periph->path, "Couldn't malloc log_dir data\n");
 			daprobedone(periph, start_ccb);
 			break;
 		}
@@ -3911,8 +3930,7 @@ out:
 
 		id_dir = malloc(sizeof(*id_dir), M_SCSIDA, M_NOWAIT | M_ZERO);
 		if (id_dir == NULL) {
-			xpt_print(periph->path, "Couldn't malloc id_dir "
-			    "data\n");
+			xpt_print(periph->path, "Couldn't malloc id_dir data\n");
 			daprobedone(periph, start_ccb);
 			break;
 		}
@@ -3960,8 +3978,7 @@ out:
 
 		sup_cap = malloc(sizeof(*sup_cap), M_SCSIDA, M_NOWAIT|M_ZERO);
 		if (sup_cap == NULL) {
-			xpt_print(periph->path, "Couldn't malloc sup_cap "
-			    "data\n");
+			xpt_print(periph->path, "Couldn't malloc sup_cap data\n");
 			daprobedone(periph, start_ccb);
 			break;
 		}
@@ -4011,8 +4028,7 @@ out:
 		ata_zone = malloc(sizeof(*ata_zone), M_SCSIDA,
 				  M_NOWAIT|M_ZERO);
 		if (ata_zone == NULL) {
-			xpt_print(periph->path, "Couldn't malloc ata_zone "
-			    "data\n");
+			xpt_print(periph->path, "Couldn't malloc ata_zone data\n");
 			daprobedone(periph, start_ccb);
 			break;
 		}
@@ -4063,8 +4079,7 @@ out:
 
 		if (bdc == NULL) {
 			xpt_release_ccb(start_ccb);
-			xpt_print(periph->path, "Couldn't malloc zone VPD "
-			    "data\n");
+			xpt_print(periph->path, "Couldn't malloc zone VPD data\n");
 			break;
 		}
 		scsi_inquiry(&start_ccb->csio,
@@ -4180,8 +4195,7 @@ da_delete_unmap(struct cam_periph *periph, union ccb *ccb, struct bio *bp)
 			if (totalcount + c > softc->unmap_max_lba ||
 			    ranges >= softc->unmap_max_ranges) {
 				xpt_print(periph->path,
-				    "%s issuing short delete %ld > %ld"
-				    "|| %d >= %d",
+				    "%s issuing short delete %ld > %ld || %d >= %d",
 				    da_delete_method_desc[softc->delete_method],
 				    totalcount + c, softc->unmap_max_lba,
 				    ranges, softc->unmap_max_ranges);
@@ -4462,8 +4476,8 @@ cmd6workaround(union ccb *ccb)
 	    (*cdb != READ_6 && *cdb != WRITE_6))
 		return 0;
 
-	xpt_print(ccb->ccb_h.path, "READ(6)/WRITE(6) not supported, "
-	    "increasing minimum_cmd_size to 10.\n");
+	xpt_print(ccb->ccb_h.path,
+	    "READ(6)/WRITE(6) not supported, increasing minimum_cmd_size to 10.\n");
 	softc->minimum_cmd_size = 10;
 
 	bcopy(cdb, &cmd6, sizeof(struct scsi_rw_6));
@@ -5103,8 +5117,7 @@ dadone_proberc(struct cam_periph *periph, union ccb *done_ccb)
 						&cgd.inq_data, &sense_key_desc,
 						&asc_desc);
 				snprintf(announce_buf, DA_ANNOUNCETMP_SZ,
-				    "Attempt to query device "
-				    "size failed: %s, %s",
+				    "Attempt to query device size failed: %s, %s",
 				    sense_key_desc, asc_desc);
 			} else {
 				if (have_sense)
@@ -5114,9 +5127,8 @@ dadone_proberc(struct cam_periph *periph, union ccb *done_ccb)
 					    "got CAM status %#x\n",
 					    done_ccb->ccb_h.status);
 				}
-
-				xpt_print(periph->path, "fatal error, "
-				    "failed to attach to device\n");
+				xpt_print(periph->path,
+				    "fatal error, failed to attach to device\n");
 
 				announce_buf = NULL;
 
@@ -5150,8 +5162,8 @@ dadone_proberc(struct cam_periph *periph, union ccb *done_ccb)
 					  &softc->sysctl_task);
 		} else {
 			/* XXX This message is useless! */
-			xpt_print(periph->path, "fatal error, "
-			    "could not acquire reference count\n");
+			xpt_print(periph->path,
+			    "fatal error, could not acquire reference count\n");
 		}
 	}
 
@@ -5389,8 +5401,7 @@ dadone_probebdc(struct cam_periph *periph, union ccb *done_ccb)
 				   DA_ZONE_IF_ATA_SAT : DA_ZONE_IF_SCSI;
 			} else if ((bdc->flags & SVPD_ZBC_MASK) !=
 				  SVPD_ZBC_NR) {
-				xpt_print(periph->path, "Unknown zoned "
-				    "type %#x",
+				xpt_print(periph->path, "Unknown zoned type %#x",
 				    bdc->flags & SVPD_ZBC_MASK);
 			}
 		}
@@ -6495,8 +6506,9 @@ dasetgeom(struct cam_periph *periph, uint32_t block_len, uint64_t maxsector,
 		if ((cdai.ccb_h.status & CAM_DEV_QFRZN) != 0)
 			cam_release_devq(cdai.ccb_h.path, 0, 0, 0, FALSE);
 		if (cdai.ccb_h.status != CAM_REQ_CMP) {
-			xpt_print(periph->path, "%s: failed to set read "
-				  "capacity advinfo\n", __func__);
+			xpt_print(periph->path,
+			    "%s: failed to set read capacity advinfo\n",
+			    __func__);
 			/* Use cam_error_print() to decode the status */
 			cam_error_print((union ccb *)&cdai, CAM_ESF_CAM_STATUS,
 					CAM_EPF_ALL);
@@ -6830,7 +6842,7 @@ scsi_ata_zac_mgmt_out(struct ccb_scsiio *csio, uint32_t retries,
 			/*
 			 * For SEND FPDMA QUEUED, the transfer length is
 			 * encoded in the FEATURE register, and 0 means
-			 * that 65536 512 byte blocks are to be tranferred.
+			 * that 65536 512 byte blocks are to be transferred.
 			 * In practice, it seems unlikely that we'll see
 			 * a transfer that large, and it may confuse the
 			 * the SAT layer, because generally that means that
@@ -6916,7 +6928,7 @@ scsi_ata_zac_mgmt_in(struct ccb_scsiio *csio, uint32_t retries,
 		/*
 		 * For RECEIVE FPDMA QUEUED, the transfer length is
 		 * encoded in the FEATURE register, and 0 means
-		 * that 65536 512 byte blocks are to be tranferred.
+		 * that 65536 512 byte blocks are to be transferred.
 		 * In practice, it seems unlikely that we'll see
 		 * a transfer that large, and it may confuse the
 		 * the SAT layer, because generally that means that

@@ -54,7 +54,8 @@
  * consumer of a socket is starting to tear down the socket, and that the
  * protocol should terminate the connection.  Historically, pr_abort() also
  * detached protocol state from the socket state, but this is no longer the
- * case.
+ * case.  pr_fdclose() is called when userspace invokes close(2) on a socket
+ * file descriptor.
  *
  * socreate() creates a socket and attaches protocol state.  This is a public
  * interface that may be used by socket layer consumers to create new
@@ -191,16 +192,19 @@ static const struct filterops soread_filtops = {
 	.f_isfd = 1,
 	.f_detach = filt_sordetach,
 	.f_event = filt_soread,
+	.f_copy = knote_triv_copy,
 };
 static const struct filterops sowrite_filtops = {
 	.f_isfd = 1,
 	.f_detach = filt_sowdetach,
 	.f_event = filt_sowrite,
+	.f_copy = knote_triv_copy,
 };
 static const struct filterops soempty_filtops = {
 	.f_isfd = 1,
 	.f_detach = filt_sowdetach,
 	.f_event = filt_soempty,
+	.f_copy = knote_triv_copy,
 };
 
 so_gen_t	so_gencnt;	/* generation count for sockets */
@@ -814,8 +818,6 @@ soalloc(struct vnet *vnet)
 	 * a feature to change class of an existing lock, so we use DUPOK.
 	 */
 	mtx_init(&so->so_lock, "socket", NULL, MTX_DEF | MTX_DUPOK);
-	mtx_init(&so->so_snd_mtx, "so_snd", NULL, MTX_DEF);
-	mtx_init(&so->so_rcv_mtx, "so_rcv", NULL, MTX_DEF);
 	so->so_rcv.sb_sel = &so->so_rdsel;
 	so->so_snd.sb_sel = &so->so_wrsel;
 	sx_init(&so->so_snd_sx, "so_snd_sx");
@@ -889,12 +891,51 @@ sodealloc(struct socket *so)
 			    &so->so_snd.sb_hiwat, 0, RLIM_INFINITY);
 		sx_destroy(&so->so_snd_sx);
 		sx_destroy(&so->so_rcv_sx);
-		mtx_destroy(&so->so_snd_mtx);
-		mtx_destroy(&so->so_rcv_mtx);
 	}
 	crfree(so->so_cred);
 	mtx_destroy(&so->so_lock);
 	uma_zfree(socket_zone, so);
+}
+
+/*
+ * Shim to accomodate protocols that already do their own socket buffers
+ * management (marked with PR_SOCKBUF) with protocols that yet do not.
+ *
+ * Attach via socket(2) is different from attach via accept(2).  In case of
+ * normal socket(2) syscall it is the pr_attach that calls soreserve(), even
+ * for protocols that don't yet do PR_SOCKBUF.  In case of accepted connection
+ * it is our shim that calls soreserve() and the hiwat values are taken from
+ * the parent socket.  The SCTP's sopeeloff() hands us a non-listening parent
+ * socket.
+ *
+ * This whole shim should go away when all major protocols fully manage their
+ * socket buffers.
+ */
+static int
+soattach(struct socket *so, int proto, struct thread *td, struct socket *head)
+{
+	int error;
+
+	VNET_ASSERT(curvnet == so->so_vnet,
+	    ("%s: %p != %p", __func__, curvnet,  so->so_vnet));
+
+	if ((so->so_proto->pr_flags & PR_SOCKBUF) == 0) {
+		mtx_init(&so->so_snd_mtx, "so_snd", NULL, MTX_DEF);
+		mtx_init(&so->so_rcv_mtx, "so_rcv", NULL, MTX_DEF);
+		so->so_snd.sb_mtx = &so->so_snd_mtx;
+		so->so_rcv.sb_mtx = &so->so_rcv_mtx;
+	}
+	if (head == NULL || (error = soreserve(so,
+	    SOLISTENING(head) ? head->sol_sbsnd_hiwat : head->so_snd.sb_hiwat,
+	    SOLISTENING(head) ? head->sol_sbrcv_hiwat : head->so_rcv.sb_hiwat))
+	    == 0)
+		error = so->so_proto->pr_attach(so, proto, td);
+	if (error != 0 && (so->so_proto->pr_flags & PR_SOCKBUF) == 0) {
+		mtx_destroy(&so->so_snd_mtx);
+		mtx_destroy(&so->so_rcv_mtx);
+	}
+
+	return (error);
 }
 
 /*
@@ -908,17 +949,6 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	struct protosw *prp;
 	struct socket *so;
 	int error;
-
-	/*
-	 * XXX: divert(4) historically abused PF_INET.  Keep this compatibility
-	 * shim until all applications have been updated.
-	 */
-	if (__predict_false(dom == PF_INET && type == SOCK_RAW &&
-	    proto == IPPROTO_DIVERT)) {
-		dom = PF_DIVERT;
-		printf("%s uses obsolete way to create divert(4) socket\n",
-		    td->td_proc->p_comm);
-	}
 
 	prp = pffindproto(dom, type, proto);
 	if (prp == NULL) {
@@ -963,16 +993,8 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	    so_rdknl_assert_lock);
 	knlist_init(&so->so_wrsel.si_note, so, so_wrknl_lock, so_wrknl_unlock,
 	    so_wrknl_assert_lock);
-	if ((prp->pr_flags & PR_SOCKBUF) == 0) {
-		so->so_snd.sb_mtx = &so->so_snd_mtx;
-		so->so_rcv.sb_mtx = &so->so_rcv_mtx;
-	}
-	/*
-	 * Auto-sizing of socket buffers is managed by the protocols and
-	 * the appropriate flags must be set in the pr_attach() method.
-	 */
 	CURVNET_SET(so->so_vnet);
-	error = prp->pr_attach(so, proto, td);
+	error = soattach(so, proto, td, NULL);
 	CURVNET_RESTORE();
 	if (error) {
 		sodealloc(so);
@@ -1199,13 +1221,6 @@ solisten_clone(struct socket *head)
 	    so_rdknl_assert_lock);
 	knlist_init(&so->so_wrsel.si_note, so, so_wrknl_lock, so_wrknl_unlock,
 	    so_wrknl_assert_lock);
-	VNET_SO_ASSERT(head);
-	if (soreserve(so, head->sol_sbsnd_hiwat, head->sol_sbrcv_hiwat)) {
-		sodealloc(so);
-		log(LOG_DEBUG, "%s: pcb %p: soreserve() failed\n",
-		    __func__, head->so_pcb);
-		return (NULL);
-	}
 	so->so_rcv.sb_lowat = head->sol_sbrcv_lowat;
 	so->so_snd.sb_lowat = head->sol_sbsnd_lowat;
 	so->so_rcv.sb_timeo = head->sol_sbrcv_timeo;
@@ -1213,10 +1228,6 @@ solisten_clone(struct socket *head)
 	so->so_rcv.sb_flags = head->sol_sbrcv_flags & SB_AUTOSIZE;
 	so->so_snd.sb_flags = head->sol_sbsnd_flags &
 	    (SB_AUTOSIZE | SB_AUTOLOWAT);
-	if ((so->so_proto->pr_flags & PR_SOCKBUF) == 0) {
-		so->so_snd.sb_mtx = &so->so_snd_mtx;
-		so->so_rcv.sb_mtx = &so->so_rcv_mtx;
-	}
 
 	return (so);
 }
@@ -1230,7 +1241,7 @@ sonewconn(struct socket *head, int connstatus)
 	if ((so = solisten_clone(head)) == NULL)
 		return (NULL);
 
-	if (so->so_proto->pr_attach(so, 0, NULL) != 0) {
+	if (soattach(so, 0, NULL, head) != 0) {
 		sodealloc(so);
 		log(LOG_DEBUG, "%s: pcb %p: pr_attach() failed\n",
 		    __func__, head->so_pcb);
@@ -1299,7 +1310,7 @@ solisten_enqueue(struct socket *so, int connstatus)
 
 #if defined(SCTP) || defined(SCTP_SUPPORT)
 /*
- * Socket part of sctp_peeloff().  Detach a new socket from an
+ * Socket part of sctp_peeloff().  Create a new socket for an
  * association.  The new socket is returned with a reference.
  *
  * XXXGL: reduce copy-paste with solisten_clone().
@@ -1311,6 +1322,8 @@ sopeeloff(struct socket *head)
 
 	VNET_ASSERT(head->so_vnet != NULL, ("%s:%d so_vnet is NULL, head=%p",
 	    __func__, __LINE__, head));
+	KASSERT(head->so_type == SOCK_SEQPACKET,
+	    ("%s: unexpecte so_type: %d", __func__, head->so_type));
 	so = soalloc(head->so_vnet);
 	if (so == NULL) {
 		log(LOG_DEBUG, "%s: pcb %p: New socket allocation failure: "
@@ -1318,7 +1331,7 @@ sopeeloff(struct socket *head)
 		    __func__, head->so_pcb);
 		return (NULL);
 	}
-	so->so_type = head->so_type;
+	so->so_type = SOCK_STREAM;
 	so->so_options = head->so_options;
 	so->so_linger = head->so_linger;
 	so->so_state = (head->so_state & SS_NBIO) | SS_ISCONNECTED;
@@ -1332,14 +1345,7 @@ sopeeloff(struct socket *head)
 	    so_rdknl_assert_lock);
 	knlist_init(&so->so_wrsel.si_note, so, so_wrknl_lock, so_wrknl_unlock,
 	    so_wrknl_assert_lock);
-	VNET_SO_ASSERT(head);
-	if (soreserve(so, head->so_snd.sb_hiwat, head->so_rcv.sb_hiwat)) {
-		sodealloc(so);
-		log(LOG_DEBUG, "%s: pcb %p: soreserve() failed\n",
-		    __func__, head->so_pcb);
-		return (NULL);
-	}
-	if (so->so_proto->pr_attach(so, 0, NULL)) {
+	if (soattach(so, 0, NULL, head)) {
 		sodealloc(so);
 		log(LOG_DEBUG, "%s: pcb %p: pr_attach() failed\n",
 		    __func__, head->so_pcb);
@@ -1351,10 +1357,6 @@ sopeeloff(struct socket *head)
 	so->so_snd.sb_timeo = head->so_snd.sb_timeo;
 	so->so_rcv.sb_flags |= head->so_rcv.sb_flags & SB_AUTOSIZE;
 	so->so_snd.sb_flags |= head->so_snd.sb_flags & SB_AUTOSIZE;
-	if ((so->so_proto->pr_flags & PR_SOCKBUF) == 0) {
-		so->so_snd.sb_mtx = &so->so_snd_mtx;
-		so->so_rcv.sb_mtx = &so->so_rcv_mtx;
-	}
 
 	soref(so);
 
@@ -1722,6 +1724,10 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 		error = EBUSY;
 	if (error != 0) {
 		SOCK_UNLOCK(so2);
+		mtx_lock(&sp->mtx);
+		sp->dst = NULL;
+		sp->state = SPLICE_EXCEPTION;
+		mtx_unlock(&sp->mtx);
 		so_unsplice(so, false);
 		return (error);
 	}
@@ -1729,6 +1735,10 @@ so_splice(struct socket *so, struct socket *so2, struct splice *splice)
 	if (so->so_snd.sb_tls_info != NULL) {
 		SOCK_SENDBUF_UNLOCK(so2);
 		SOCK_UNLOCK(so2);
+		mtx_lock(&sp->mtx);
+		sp->dst = NULL;
+		sp->state = SPLICE_EXCEPTION;
+		mtx_unlock(&sp->mtx);
 		so_unsplice(so, false);
 		return (EINVAL);
 	}
@@ -1795,20 +1805,20 @@ so_unsplice(struct socket *so, bool timeout)
 	SOCK_UNLOCK(so);
 
 	so2 = sp->dst;
-	SOCK_LOCK(so2);
-	KASSERT(!SOLISTENING(so2), ("%s: so2 is listening", __func__));
-	SOCK_SENDBUF_LOCK(so2);
-	KASSERT(sp->state == SPLICE_INIT ||
-	    (so2->so_snd.sb_flags & SB_SPLICED) != 0,
-	    ("%s: so2 is not spliced", __func__));
-	KASSERT(sp->state == SPLICE_INIT ||
-	    so2->so_splice_back == sp,
-	    ("%s: so_splice_back != sp", __func__));
-	so2->so_snd.sb_flags &= ~SB_SPLICED;
-	so2rele = so2->so_splice_back != NULL;
-	so2->so_splice_back = NULL;
-	SOCK_SENDBUF_UNLOCK(so2);
-	SOCK_UNLOCK(so2);
+	if (so2 != NULL) {
+		SOCK_LOCK(so2);
+		KASSERT(!SOLISTENING(so2), ("%s: so2 is listening", __func__));
+		SOCK_SENDBUF_LOCK(so2);
+		KASSERT((so2->so_snd.sb_flags & SB_SPLICED) != 0,
+		    ("%s: so2 is not spliced", __func__));
+		KASSERT(so2->so_splice_back == sp,
+		    ("%s: so_splice_back != sp", __func__));
+		so2->so_snd.sb_flags &= ~SB_SPLICED;
+		so2rele = so2->so_splice_back != NULL;
+		so2->so_splice_back = NULL;
+		SOCK_SENDBUF_UNLOCK(so2);
+		SOCK_UNLOCK(so2);
+	}
 
 	/*
 	 * No new work is being enqueued.  The worker thread might be
@@ -1848,9 +1858,11 @@ so_unsplice(struct socket *so, bool timeout)
 	sorwakeup(so);
 	CURVNET_SET(so->so_vnet);
 	sorele(so);
-	sowwakeup(so2);
-	if (so2rele)
-		sorele(so2);
+	if (so2 != NULL) {
+		sowwakeup(so2);
+		if (so2rele)
+			sorele(so2);
+	}
 	CURVNET_RESTORE();
 	so_splice_free(sp);
 	return (0);
@@ -1901,6 +1913,8 @@ sofree(struct socket *so)
 		SOCK_SENDBUF_UNLOCK(so);
 		SOCK_RECVBUF_UNLOCK(so);
 #endif
+		mtx_destroy(&so->so_snd_mtx);
+		mtx_destroy(&so->so_rcv_mtx);
 	}
 	seldrain(&so->so_rdsel);
 	seldrain(&so->so_wrsel);
@@ -2735,7 +2749,7 @@ sockbuf_pushsync(struct sockbuf *sb, struct mbuf *nextrecord)
  * time.
  *
  * The caller may receive the data as a single mbuf chain by supplying an
- * mbuf **mp0 for use in returning the chain.  The uio is then used only for
+ * mbuf **mp for use in returning the chain.  The uio is then used only for
  * the count in uio_resid.
  */
 static int
