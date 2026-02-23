@@ -237,15 +237,12 @@ proc_dtor(void *mem, int size, void *arg)
 	struct proc *p;
 	struct thread *td;
 
-	/* INVARIANTS checks go here */
-	p = (struct proc *)mem;
+	p = mem;
 	td = FIRST_THREAD_IN_PROC(p);
 	if (td != NULL) {
-#ifdef INVARIANTS
-		KASSERT((p->p_numthreads == 1),
-		    ("bad number of threads in exiting process"));
-		KASSERT(STAILQ_EMPTY(&p->p_ktr), ("proc_dtor: non-empty p_ktr"));
-#endif
+		KASSERT(p->p_numthreads == 1,
+		    ("too many threads in exiting process"));
+
 		/* Free all OSD associated to this thread. */
 		osd_thread_exit(td);
 		ast_kclear(td);
@@ -253,12 +250,12 @@ proc_dtor(void *mem, int size, void *arg)
 		/* Make sure all thread destructors are executed */
 		EVENTHANDLER_DIRECT_INVOKE(thread_dtor, td);
 	}
+	KASSERT(STAILQ_EMPTY(&p->p_ktr), ("proc_dtor: non-empty p_ktr"));
 	EVENTHANDLER_DIRECT_INVOKE(process_dtor, p);
 #ifdef KDTRACE_HOOKS
 	kdtrace_proc_dtor(p);
 #endif
-	if (p->p_ksi != NULL)
-		KASSERT(! KSI_ONQ(p->p_ksi), ("SIGCHLD queue"));
+	KASSERT(p->p_ksi == NULL || !KSI_ONQ(p->p_ksi), ("SIGCHLD queue"));
 }
 
 /*
@@ -281,6 +278,7 @@ proc_init(void *mem, int size, int flags)
 	p->p_stats = pstats_alloc();
 	p->p_pgrp = NULL;
 	TAILQ_INIT(&p->p_kqtim_stop);
+	STAILQ_INIT(&p->p_ktr);
 	return (0);
 }
 
@@ -1439,7 +1437,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_sid);
 	CP(*ki, *ki32, ki_tsid);
 	CP(*ki, *ki32, ki_jobc);
-	CP(*ki, *ki32, ki_tdev);
+	FU64_CP(*ki, *ki32, ki_tdev);
 	CP(*ki, *ki32, ki_tdev_freebsd11);
 	CP(*ki, *ki32, ki_siglist);
 	CP(*ki, *ki32, ki_sigmask);
@@ -1466,7 +1464,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	CP(*ki, *ki32, ki_slptime);
 	CP(*ki, *ki32, ki_swtime);
 	CP(*ki, *ki32, ki_cow);
-	CP(*ki, *ki32, ki_runtime);
+	FU64_CP(*ki, *ki32, ki_runtime);
 	TV_CP(*ki, *ki32, ki_start);
 	TV_CP(*ki, *ki32, ki_childtime);
 	CP(*ki, *ki32, ki_flag);
@@ -1505,6 +1503,7 @@ freebsd32_kinfo_proc_out(const struct kinfo_proc *ki, struct kinfo_proc32 *ki32)
 	PTRTRIM_CP(*ki, *ki32, ki_kstack);
 	PTRTRIM_CP(*ki, *ki32, ki_udata);
 	PTRTRIM_CP(*ki, *ki32, ki_tdaddr);
+	PTRTRIM_CP(*ki, *ki32, ki_pd);
 	CP(*ki, *ki32, ki_sflag);
 	CP(*ki, *ki32, ki_tdflags);
 	PTRTRIM_CP(*ki, *ki32, ki_uerrmsg);

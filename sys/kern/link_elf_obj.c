@@ -1305,6 +1305,20 @@ link_elf_unload_file(linker_file_t file)
 				vnet_data_free(ef->progtab[i].addr,
 				    ef->progtab[i].size);
 #endif
+			else if (ef->preloaded) {
+				vm_offset_t start, end;
+
+				start = (vm_offset_t)ef->progtab[i].addr;
+				end = start + ef->progtab[i].size;
+
+				/*
+				 * Reset mapping protections to their original
+				 * state.  This affects the direct map alias of
+				 * the module mapping as well.
+				 */
+				link_elf_protect_range(ef, trunc_page(start),
+				    round_page(end), VM_PROT_RW);
+			}
 		}
 	}
 	if (ef->preloaded) {
@@ -1702,7 +1716,7 @@ elf_obj_cleanup_globals_cache(elf_file_t ef)
 
 	for (i = 0; i < ef->ddbsymcnt; i++) {
 		sym = ef->ddbsymtab + i;
-		if (sym->st_shndx == SHN_FBSD_CACHED) {
+		if (sym->st_shndx == SHN_FREEBSD_CACHED) {
 			sym->st_shndx = SHN_UNDEF;
 			sym->st_value = 0;
 		}
@@ -1771,7 +1785,7 @@ elf_obj_lookup(linker_file_t lf, Elf_Size symidx, int deps, Elf_Addr *res)
 		 * above.
 		 */
 		if (res1 != 0) {
-			sym->st_shndx = SHN_FBSD_CACHED;
+			sym->st_shndx = SHN_FREEBSD_CACHED;
 			sym->st_value = res1;
 			*res = res1;
 			return (0);

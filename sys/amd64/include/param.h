@@ -41,7 +41,10 @@
 #ifndef _AMD64_INCLUDE_PARAM_H_
 #define	_AMD64_INCLUDE_PARAM_H_
 
-#include <machine/_align.h>
+#include <sys/_align.h>
+
+#define	STACKALIGNBYTES	(16 - 1)
+#define	REDZONE_SZ	128
 
 /*
  * Machine dependent constants for AMD64.

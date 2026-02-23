@@ -48,7 +48,7 @@ struct vmmdev_ioctl {
 #define	VMMDEV_IOCTL_LOCK_ALL_VCPUS	0x08
 #define	VMMDEV_IOCTL_ALLOC_VCPU		0x10
 #define	VMMDEV_IOCTL_MAYBE_ALLOC_VCPU	0x20
-#define	VMMDEV_IOCTL_PRIV_CHECK_DRIVER	0x40
+#define	VMMDEV_IOCTL_PPT		0x40
 	int		flags;
 };
 
@@ -70,9 +70,13 @@ extern u_int vm_maxcpu;
 
 #endif /* _KERNEL */
 
+#define VMMCTL_CREATE_DESTROY_ON_CLOSE 0x1
+#define VMMCTL_FLAGS_MASK	       (VMMCTL_CREATE_DESTROY_ON_CLOSE)
+
 struct vmmctl_vm_create {
 	char name[VM_MAX_NAMELEN + 1];
-	int reserved[16];
+	uint32_t flags;
+	int reserved[15];
 };
 
 struct vmmctl_vm_destroy {

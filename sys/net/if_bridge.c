@@ -801,8 +801,6 @@ bridge_reassign(struct ifnet *ifp, struct vnet *newvnet, char *arg)
 	}
 
 	BRIDGE_UNLOCK(sc);
-
-	ether_reassign(ifp, newvnet, arg);
 }
 #endif
 
@@ -1992,9 +1990,6 @@ bridge_ioctl_sifvlanset(struct bridge_softc *sc, void *arg)
 	struct ifbif_vlan_req *req = arg;
 	struct bridge_iflist *bif;
 
-	if ((sc->sc_flags & IFBRF_VLANFILTER) == 0)
-		return (EXTERROR(EINVAL, "VLAN filtering not enabled"));
-
 	bif = bridge_lookup_member(sc, req->bv_ifname);
 	if (bif == NULL)
 		return (EXTERROR(ENOENT, "Interface is not a bridge member"));
@@ -2296,8 +2291,6 @@ bridge_ifdetach(void *arg __unused, struct ifnet *ifp)
 	if (bif)
 		sc = bif->bif_sc;
 
-	if (ifp->if_flags & IFF_RENAMING)
-		return;
 	if (V_bridge_cloner == NULL) {
 		/*
 		 * This detach handler can be called after

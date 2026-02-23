@@ -51,15 +51,79 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260209: Moved allwinner pages to share/man/man4
+OLD_FILES+=usr/share/man/man4/arm/aw_gpio.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_mmc.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_rtc.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_sid.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_spi.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_syscon.4.gz
+
+# 20260204: replaced with ATF test
+OLD_FILES+=usr/tests/usr.bin/m4/legacy_test
+OLD_FILES+=usr/tests/usr.bin/m4/regress.sh
+
+# 20260120: remove obsolete MIT KRB5 plugin files
+OLD_LIBS+=usr/lib/krb5/plugins/kdb/db2.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/otp.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/pkinit.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/spake.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/test.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/tls/k5tls.so.121
+
+# 20260120: Made libkrb5profile INTERNALLIB
+OLD_LIBS+=usr/lib/libkrb5profile.so.122
+OLD_FILES+=usr/lib/libkrb5profile.so
+
+# 20260114: remove ncurses html documentation
+OLD_FILES+=usr/share/doc/ncurses/hackguide.html
+OLD_FILES+=usr/share/doc/ncurses/ncurses-intro.html
+OLD_DIRS+=usr/share/doc/ncurses
+
+# 20251215: Remove intrinsic utilities
+OLD_FILES+=usr/bin/alias
+OLD_FILES+=usr/bin/bg
+OLD_FILES+=usr/bin/cd
+OLD_FILES+=usr/bin/fc
+OLD_FILES+=usr/bin/fg
+OLD_FILES+=usr/bin/getopts
+OLD_FILES+=usr/bin/hash
+OLD_FILES+=usr/bin/jobs
+OLD_FILES+=usr/bin/read
+OLD_FILES+=usr/bin/type
+OLD_FILES+=usr/bin/ulimit
+OLD_FILES+=usr/bin/umask
+OLD_FILES+=usr/bin/unalias
+OLD_FILES+=usr/bin/wait
+
+# 20251208: Rename iwm8000C to correct name.
+OLD_FILES+=boot/firmware/iwm8000C
+
+# 20251207: removed libuutil and libtpool
+OLD_LIBS+=lib/libuutil.so.2
+OLD_FILES+=usr/lib/libuutil.a
+OLD_FILES+=usr/lib/libuutil.so
+OLD_LIBS+=lib/libtpool.so.2
+OLD_FILES+=usr/lib/libtpool.a
+OLD_FILES+=usr/lib/libtpool.so
+OLD_FILES+=usr/tests/cddl/lib/libtpool/libtpool_test
+OLD_FILES+=usr/tests/cddl/lib/libtpool/Kyuafile
+
+# 20251204: zpfind.9 alias to pfind.9 removed
+OLD_FILES+=usr/share/man/man9/zpfind.9.gz
+
+# 20251121: Remove duplicate pam_krb5 manual page
+OLD_FILES+=usr/share/man/man8/pam-krb5.8.gz
+
 # 20251112: Remove old MLINK to apmconf(8)
-OLD_FILES+=share/man/man8/apmconf.8.gz
+OLD_FILES+=usr/share/man/man8/apmconf.8.gz
 
 # 20251112: Remove pccard(4) and related
-OLD_FILES+=share/man/man4/pccard.4.gz
-OLD_FILES+=share/man/man4/pcic.4.gz
+OLD_FILES+=usr/share/man/man4/pccard.4.gz
+OLD_FILES+=usr/share/man/man4/pcic.4.gz
 
 # 20251028: Remove hifn(4)
-OLD_FILES+=share/man/man4/hifn.4.gz
+OLD_FILES+=usr/share/man/man4/hifn.4.gz
 
 # 20251006: Remove libnss_tacplus.a (it never should have been installed)
 OLD_FILES+=usr/lib/libnss_tacplus.a
@@ -189,6 +253,7 @@ OLD_DIRS+=usr/share/examples/drivers
 
 # 20250710: shar(1) removed
 OLD_FILES+=usr/bin/shar
+OLD_FILES+=usr/share/man/man1/shar.1.gz
 
 # 20250708: For 34 days 15.0-CURRENT installed libkadm5clnt symlink without .so
 OLD_FILES+=usr/lib/libkadm5clnt
@@ -309,6 +374,8 @@ OLD_FILES+=usr/lib/libalias_skinny_p.a
 OLD_FILES+=usr/lib/libalias_smedia_p.a
 OLD_FILES+=usr/lib/libarchive_p.a
 OLD_FILES+=usr/lib/libasn1_p.a
+OLD_FILES+=usr/lib/libatf-c++_p.a
+OLD_FILES+=usr/lib/libatf-c_p.a
 OLD_FILES+=usr/lib/libavl_p.a
 OLD_FILES+=usr/lib/libbe_p.a
 OLD_FILES+=usr/lib/libbegemot_p.a
@@ -317,6 +384,7 @@ OLD_FILES+=usr/lib/libbluetooth_p.a
 OLD_FILES+=usr/lib/libbsdxml_p.a
 OLD_FILES+=usr/lib/libbsm_p.a
 OLD_FILES+=usr/lib/libbsnmp_p.a
+OLD_FILES+=usr/lib/libbsnmptools_p.a
 OLD_FILES+=usr/lib/libbz2_p.a
 OLD_FILES+=usr/lib/libc++_p.a
 OLD_FILES+=usr/lib/libc_p.a
@@ -1956,8 +2024,9 @@ OLD_FILES+=usr/share/examples/diskless/README.BOOTP
 OLD_FILES+=usr/share/examples/diskless/README.TEMPLATING
 OLD_FILES+=usr/share/examples/diskless/clone_root
 
-# 20230905
+# 20230905: Removed rtw8x firmware files from src.git
 OLD_FILES+=usr/share/doc/legal/realtek_rtw88_firmware.LICENCE
+OLD_FILES+=usr/share/man/man4/rtw88fw.4.gz
 
 # 20230828
 MOVED_LIBS+=usr/lib/librt.so.1

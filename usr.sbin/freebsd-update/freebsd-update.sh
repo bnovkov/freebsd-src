@@ -755,6 +755,10 @@ fetchupgrade_check_params () {
 	esac
 	chmod 700 ${WORKDIR}
 	cd ${WORKDIR} || exit 1
+	if [ "$BASEDIR" != / ] && [ -z "$UNAME_r" ]; then
+		echo "$(basename $0): -b basedir requires --currently-running to be specified."
+		exit 1
+	fi
 
 	# Generate release number.  The s/SECURITY/RELEASE/ bit exists
 	# to provide an upgrade path for FreeBSD Update 1.x users, since
@@ -3196,8 +3200,8 @@ Kernel updates have been installed.  Please reboot and run
 			cat <<-EOF
 
 Completing this upgrade requires removing old shared object files.
-Please rebuild all installed 3rd party software (e.g., programs
-installed from the ports tree) and then run
+Please upgrade or rebuild all installed 3rd party software (e.g.,
+programs installed with pkg or from the ports tree) and then run
 '`basename $0` [options] install' again to finish installing updates.
 			EOF
 			rm newfiles

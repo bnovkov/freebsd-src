@@ -66,6 +66,7 @@
 #include <net/if_private.h>
 #include <netinet/ip_var.h>
 #include <netinet/igmp_var.h>
+#include <netinet/ip_mroute.h>
 
 #ifndef KTR_IGMPV3
 #define KTR_IGMPV3 KTR_INET
@@ -500,7 +501,7 @@ in_getmulti(struct ifnet *ifp, const struct in_addr *group,
 
 	IN_MULTI_LOCK_ASSERT();
 
-	ii = (struct in_ifinfo *)ifp->if_afdata[AF_INET];
+	ii = (struct in_ifinfo *)ifp->if_inet;
 	IN_MULTI_LIST_LOCK();
 	inm = inm_lookup(ifp, *group);
 	if (inm != NULL) {

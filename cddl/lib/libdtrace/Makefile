@@ -51,7 +51,8 @@ SRCS=		dt_aggregate.c \
 		dt_xlator.c \
 		gmatch.c
 
-DSRCS=		errno.d			\
+DSRCS=		cam.d			\
+		errno.d			\
 		io.d			\
 		ip.d			\
 		psinfo.d		\
@@ -78,11 +79,11 @@ WARNS?=		1
 
 CFLAGS+= -DIN_BASE
 CFLAGS+= -DSKIP_SPL_SYS_CONDVAR_H
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/include
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/
-CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/lib/libspl/include/os/freebsd
+CFLAGS+= -I${ZFSTOP}/include
+CFLAGS+= -I${ZFSTOP}/lib/libspl/include/
+CFLAGS+= -I${ZFSTOP}/lib/libspl/include/os/freebsd
 CFLAGS+= -I${SRCTOP}/sys
-CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
+CFLAGS+= -include ${ZFSTOP}/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -DHAVE_ISSETUGID
 
 

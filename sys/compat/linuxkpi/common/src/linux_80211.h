@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2020-2023 The FreeBSD Foundation
+ * Copyright (c) 2020-2026 The FreeBSD Foundation
  * Copyright (c) 2020-2021 Bjoern A. Zeeb
  *
  * This software was developed by Björn Zeeb under sponsorship from
@@ -154,6 +154,9 @@ struct lkpi_txq {
 	bool			stopped;
 	uint32_t		txq_generation;
 	struct sk_buff_head	skbq;
+	uint64_t		frms_enqueued;
+	uint64_t		frms_dequeued;
+	uint64_t		frms_tx;
 
 	/* Must be last! */
 	struct ieee80211_txq	txq __aligned(CACHE_LINE_SIZE);
@@ -180,6 +183,7 @@ struct lkpi_sta {
 	bool			in_mgd;				/* XXX-BZ should this be per-vif? */
 
 	struct station_info	sinfo;				/* statistics */
+	uint64_t		frms_tx;			/* (*tx) */
 
 	/* Must be last! */
 	struct ieee80211_sta	sta __aligned(CACHE_LINE_SIZE);
@@ -252,7 +256,8 @@ struct lkpi_hw {	/* name it mac80211_sc? */
 
 	struct mtx			txq_mtx;
 	uint32_t			txq_generation[IEEE80211_NUM_ACS];
-	TAILQ_HEAD(, lkpi_txq)		scheduled_txqs[IEEE80211_NUM_ACS];
+	spinlock_t			txq_scheduled_lock[IEEE80211_NUM_ACS];
+	TAILQ_HEAD(, lkpi_txq)		txq_scheduled[IEEE80211_NUM_ACS];
 	spinlock_t			txq_lock;
 
 	/* Deferred RX path. */
@@ -476,7 +481,8 @@ void lkpi_80211_mo_mgd_complete_tx(struct ieee80211_hw *, struct ieee80211_vif *
     struct ieee80211_prep_tx_info *);
 void lkpi_80211_mo_tx(struct ieee80211_hw *, struct ieee80211_tx_control *,
     struct sk_buff *);
-void lkpi_80211_mo_wake_tx_queue(struct ieee80211_hw *, struct ieee80211_txq *);
+void lkpi_80211_mo_wake_tx_queue(struct ieee80211_hw *, struct ieee80211_txq *,
+    bool);
 void lkpi_80211_mo_sync_rx_queues(struct ieee80211_hw *);
 void lkpi_80211_mo_sta_pre_rcu_remove(struct ieee80211_hw *,
     struct ieee80211_vif *, struct ieee80211_sta *);

@@ -99,6 +99,9 @@ SYSINCS+=	stat.h
 SRCS+=		futimens.c utimensat.c
 .endif
 
+# Define ptraddr_t for bootstrapping
+INCS+=		stddef.h
+
 _WITH_EXPLICIT_BZERO!= cat ${HOST_INCLUDE_ROOT}/strings.h ${HOST_INCLUDE_ROOT}/string.h | grep -c explicit_bzero || true
 .if ${_WITH_EXPLICIT_BZERO} == 0
 # .PATH: ${SRCTOP}/sys/libkern
@@ -350,6 +353,13 @@ MSDOSFSINCS+=	${SRCTOP}/sys/fs/msdosfs/direntry.h
 MSDOSFSINCS+=	${SRCTOP}/sys/fs/msdosfs/fat.h
 MSDOSFSINCS+=	${SRCTOP}/sys/fs/msdosfs/msdosfsmount.h
 DISKINCS+=	${SRCTOP}/sys/sys/disk/bsd.h
+
+.if ${.MAKE.OS} == "FreeBSD"
+# Needed to build most of the things below, which include sys/cdefs.h either
+# directly or transitively
+SYSINCS+=	${SRCTOP}/sys/sys/_visible.h
+SYSINCS+=	${SRCTOP}/sys/sys/cdefs.h
+.endif
 
 # Needed to build config (since it uses libnv)
 SYSINCS+=	${SRCTOP}/sys/sys/_nv.h

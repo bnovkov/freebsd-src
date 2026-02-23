@@ -29,7 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_inet.h"
 #include "opt_ipsec.h"
 #include "opt_kern_tls.h"
@@ -79,6 +78,7 @@
 #include <netinet/in_var.h>
 #include <netinet/ip_var.h>
 #include <netinet/ip_options.h>
+#include <netinet/ip_mroute.h>
 
 #include <netinet/udp.h>
 #include <netinet/udp_var.h>
@@ -610,7 +610,8 @@ again:
 			 * above, will be forwarded by the ip_input() routine,
 			 * if necessary.
 			 */
-			if (V_ip_mrouter && (flags & IP_FORWARDING) == 0) {
+			if (V_ip_mrouting_enabled &&
+			    (flags & IP_FORWARDING) == 0) {
 				/*
 				 * If rsvp daemon is not running, do not
 				 * set ip_moptions. This ensures that the packet
@@ -1067,8 +1068,8 @@ in_delayed_cksum_o(struct mbuf *m, uint16_t iph_offset)
 		if (csum == 0)
 			csum = 0xffff;
 	} else {
-		cklen = ntohs(ip->ip_len);
-		csum = in_cksum_skip(m, cklen, offset);
+		cklen = ntohs(ip->ip_len) - (ip->ip_hl << 2);
+		csum = in_cksum_skip(m, cklen + offset, offset);
 	}
 	offset += m->m_pkthdr.csum_data;	/* checksum offset */
 

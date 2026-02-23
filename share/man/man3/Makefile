@@ -31,6 +31,7 @@ MAN=		alloca.3 \
 		snl.3 \
 		stats.3 \
 		stdarg.3 \
+		stdbit.3 \
 		stdckdint.3 \
 		sysexits.3 \
 		tgmath.3 \
@@ -539,6 +540,7 @@ PTHREAD_MLINKS+=pthread_spin_init.3 pthread_spin_destroy.3 \
 PTHREAD_MLINKS+=pthread_testcancel.3 pthread_setcancelstate.3 \
 		pthread_testcancel.3 pthread_setcanceltype.3
 PTHREAD_MLINKS+=pthread_join.3 pthread_peekjoin_np.3 \
-		pthread_join.3 pthread_timedjoin_np.3
+		pthread_join.3 pthread_timedjoin_np.3 \
+		pthread_join.3 pthread_tryjoin_np.3
 
 .include <bsd.prog.mk>

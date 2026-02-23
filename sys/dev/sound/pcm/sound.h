@@ -66,7 +66,6 @@
 #include <sys/poll.h>
 #include <sys/sbuf.h>
 #include <sys/soundcard.h>
-#include <sys/sndstat.h>
 #include <sys/sysctl.h>
 #include <sys/kobj.h>
 #include <vm/vm.h>
@@ -133,8 +132,8 @@ struct snd_mixer;
 				"\015PVCHANS"				\
 				"\016RVCHANS"
 
-#define PCM_ALIVE(x)		((x) != NULL && (x)->lock != NULL)
-#define PCM_REGISTERED(x)	(PCM_ALIVE(x) && ((x)->flags & SD_F_REGISTERED))
+#define PCM_REGISTERED(x)	\
+	((x) != NULL && ((x)->flags & SD_F_REGISTERED))
 
 #define	PCM_MAXCHANS		10000
 #define	PCM_CHANCOUNT(d)	\
@@ -166,15 +165,6 @@ void *pcm_getdevinfo(device_t dev);
 
 int snd_setup_intr(device_t dev, struct resource *res, int flags,
 		   driver_intr_t hand, void *param, void **cookiep);
-
-void *snd_mtxcreate(const char *desc, const char *type);
-void snd_mtxfree(void *m);
-void snd_mtxassert(void *m);
-#define	snd_mtxlock(m) mtx_lock(m)
-#define	snd_mtxunlock(m) mtx_unlock(m)
-
-int sndstat_register(device_t dev, char *str);
-int sndstat_unregister(device_t dev);
 
 /* These are the function codes assigned to the children of sound cards. */
 enum {
@@ -218,7 +208,7 @@ struct snddev_info {
 	void *devinfo;
 	device_t dev;
 	char status[SND_STATUSLEN];
-	struct mtx *lock;
+	struct mtx lock;
 	struct cdev *mixer_dev;
 	struct cdev *dsp_dev;
 	uint32_t pvchanrate, pvchanformat, pvchanmode;
@@ -240,12 +230,12 @@ int	sound_oss_card_info(oss_card_info *);
 #define	PCM_MODE_PLAY		0x02
 #define	PCM_MODE_REC		0x04
 
-#define PCM_LOCKOWNED(d)	mtx_owned((d)->lock)
-#define	PCM_LOCK(d)		mtx_lock((d)->lock)
-#define	PCM_UNLOCK(d)		mtx_unlock((d)->lock)
-#define PCM_TRYLOCK(d)		mtx_trylock((d)->lock)
-#define PCM_LOCKASSERT(d)	mtx_assert((d)->lock, MA_OWNED)
-#define PCM_UNLOCKASSERT(d)	mtx_assert((d)->lock, MA_NOTOWNED)
+#define PCM_LOCKOWNED(d)	mtx_owned(&(d)->lock)
+#define	PCM_LOCK(d)		mtx_lock(&(d)->lock)
+#define	PCM_UNLOCK(d)		mtx_unlock(&(d)->lock)
+#define PCM_TRYLOCK(d)		mtx_trylock(&(d)->lock)
+#define PCM_LOCKASSERT(d)	mtx_assert(&(d)->lock, MA_OWNED)
+#define PCM_UNLOCKASSERT(d)	mtx_assert(&(d)->lock, MA_NOTOWNED)
 
 /*
  * For PCM_[WAIT | ACQUIRE | RELEASE], be sure to surround these
@@ -254,7 +244,7 @@ int	sound_oss_card_info(oss_card_info *);
 #define PCM_WAIT(x)		do {					\
 	PCM_LOCKASSERT(x);						\
 	while ((x)->flags & SD_F_BUSY)					\
-		cv_wait(&(x)->cv, (x)->lock);				\
+		cv_wait(&(x)->cv, &(x)->lock);				\
 } while (0)
 
 #define PCM_ACQUIRE(x)		do {					\

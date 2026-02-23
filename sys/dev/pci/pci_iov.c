@@ -350,7 +350,7 @@ pci_iov_alloc_bar(struct pci_devinfo *dinfo, int bar, pci_addr_t bar_shift)
 	rid = iov->iov_pos + PCIR_SRIOV_BAR(bar);
 	bar_size = 1 << bar_shift;
 
-	res = pci_alloc_multi_resource(bus, dev, SYS_RES_MEMORY, &rid, 0,
+	res = pci_alloc_multi_resource(bus, dev, SYS_RES_MEMORY, rid, 0,
 	    ~0, 1, iov->iov_num_vfs, RF_ACTIVE);
 
 	if (res == NULL)
@@ -735,16 +735,27 @@ pci_iov_config(struct cdev *cdev, struct pci_iov_arg *arg)
 	last_rid = first_rid + (num_vfs - 1) * rid_stride;
 
 	if (pci_get_bus(dev) != PCI_RID2BUS(last_rid)) {
-		int rid = 0;
-		uint16_t last_rid_bus = PCI_RID2BUS(last_rid);
+		device_t pcib = device_get_parent(bus);
+		uint8_t secbus = pci_read_config(pcib, PCIR_SECBUS_1, 1);
+		uint8_t subbus = pci_read_config(pcib, PCIR_SUBBUS_1, 1);
+		uint16_t vf_bus = PCI_RID2BUS(last_rid);
 
-		iov->iov_bus_res = bus_alloc_resource(bus, PCI_RES_BUS, &rid,
-		    last_rid_bus, last_rid_bus, 1, RF_ACTIVE);
-		if (iov->iov_bus_res == NULL) {
-			device_printf(dev,
-			    "failed to allocate PCIe bus number for VFs\n");
-			error = ENOSPC;
-			goto out;
+		/* 
+		 * XXX: This should not be directly accessing the bridge registers and does
+		 * nothing to prevent some other device from releasing this bus number while
+		 * another PF is using it.
+		 */
+		if (secbus == 0 || vf_bus < secbus || vf_bus > subbus) {
+			int rid = 0;
+
+			iov->iov_bus_res = bus_alloc_resource(bus, PCI_RES_BUS, &rid,
+							      vf_bus, vf_bus, 1, RF_ACTIVE);
+			if (iov->iov_bus_res == NULL) {
+				device_printf(dev,
+				    "failed to allocate PCIe bus number for VFs\n");
+				error = ENOSPC;
+				goto out;
+			}
 		}
 	}
 
@@ -1016,7 +1027,7 @@ pci_iov_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 }
 
 struct resource *
-pci_vf_alloc_mem_resource(device_t dev, device_t child, int *rid,
+pci_vf_alloc_mem_resource(device_t dev, device_t child, int rid,
     rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
 {
 	struct pci_devinfo *dinfo;
@@ -1031,7 +1042,7 @@ pci_vf_alloc_mem_resource(device_t dev, device_t child, int *rid,
 	dinfo = device_get_ivars(child);
 	iov = dinfo->cfg.iov;
 
-	map = pci_find_bar(child, *rid);
+	map = pci_find_bar(child, rid);
 	if (map == NULL)
 		return (NULL);
 
@@ -1055,21 +1066,21 @@ pci_vf_alloc_mem_resource(device_t dev, device_t child, int *rid,
 	if (res == NULL)
 		return (NULL);
 
-	rle = resource_list_add(&dinfo->resources, SYS_RES_MEMORY, *rid,
+	rle = resource_list_add(&dinfo->resources, SYS_RES_MEMORY, rid,
 	    bar_start, bar_end, 1);
 	if (rle == NULL) {
 		rman_release_resource(res);
 		return (NULL);
 	}
 
-	rman_set_rid(res, *rid);
+	rman_set_rid(res, rid);
 	rman_set_type(res, SYS_RES_MEMORY);
 
 	if (flags & RF_ACTIVE) {
-		error = bus_activate_resource(child, SYS_RES_MEMORY, *rid, res);
+		error = bus_activate_resource(child, SYS_RES_MEMORY, rid, res);
 		if (error != 0) {
 			resource_list_delete(&dinfo->resources, SYS_RES_MEMORY,
-			    *rid);
+			    rid);
 			rman_release_resource(res);
 			return (NULL);
 		}

@@ -64,7 +64,7 @@ random_rndr_read_one(u_long *buf)
 		    /* 1 on success, 0 on failure */
 		    "cset	%w1, ne\n"
 		    : "=&r" (val), "=&r"(ret) :: "cc");
-	} while (ret != 0 && --loop > 0);
+	} while (ret == 0 && --loop > 0);
 
 	if (ret != 0)
 		*buf = val;
@@ -98,8 +98,8 @@ rndr_modevent(module_t mod, int type, void *unused)
 	switch (type) {
 	case MOD_LOAD:
 		has_rndr = false;
-		if (get_kernel_reg(ID_AA64ISAR0_EL1, &reg) &&
-		    ID_AA64ISAR0_RNDR_VAL(reg) != ID_AA64ISAR0_RNDR_NONE) {
+		get_kernel_reg(ID_AA64ISAR0_EL1, &reg);
+		if (ID_AA64ISAR0_RNDR_VAL(reg) != ID_AA64ISAR0_RNDR_NONE) {
 			has_rndr = true;
 			random_source_register(&random_armv8_rndr);
 			printf("random: fast provider: \"%s\"\n",

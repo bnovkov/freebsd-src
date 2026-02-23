@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2021-2022 The FreeBSD Foundation
+ * Copyright (c) 2021-2026 The FreeBSD Foundation
  *
  * This software was developed by Björn Zeeb under sponsorship from
  * the FreeBSD Foundation.
@@ -308,9 +308,6 @@ lkpi_80211_mo_configure_filter(struct ieee80211_hw *hw, unsigned int changed_fla
 
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->configure_filter == NULL)
-		return;
-
-	if (mc_ptr == 0)
 		return;
 
 	LKPI_80211_TRACE_MO("hw %p changed_flags %#x total_flags %p mc_ptr %ju", hw, changed_flags, total_flags, (uintmax_t)mc_ptr);
@@ -647,11 +644,17 @@ lkpi_80211_mo_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *txctrl,
 }
 
 void
-lkpi_80211_mo_wake_tx_queue(struct ieee80211_hw *hw, struct ieee80211_txq *txq)
+lkpi_80211_mo_wake_tx_queue(struct ieee80211_hw *hw, struct ieee80211_txq *txq,
+    bool schedule)
 {
 	struct lkpi_hw *lhw;
 
 	lhw = HW_TO_LHW(hw);
+
+	/* Do the schedule before the check for wake_tx_queue supported! */
+	if (schedule)
+		ieee80211_schedule_txq(hw, txq);
+
 	if (lhw->ops->wake_tx_queue == NULL)
 		return;
 

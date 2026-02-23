@@ -167,7 +167,7 @@ gpio_aei_enumerate(ACPI_RESOURCE * res, void * context)
 
 		ctx->intr_rid = 0;
 		ctx->intr_res = gpio_alloc_intr_resource(sc->dev,
-		    &ctx->intr_rid, RF_ACTIVE, ctx->gpio,
+		    ctx->intr_rid, RF_ACTIVE, ctx->gpio,
 		    flags & GPIO_INTR_MASK);
 		if (ctx->intr_res == NULL) {
 			device_printf(sc->dev,
@@ -208,7 +208,7 @@ gpio_aei_attach(device_t dev)
 	/* This is us. */
 	device_set_desc(dev, "ACPI Event Information Device");
 
-	handle = acpi_gpiobus_get_handle(dev);
+	handle = acpi_get_handle(dev);
 	status = AcpiGetParent(handle, &sc->dev_handle);
 	if (ACPI_FAILURE(status)) {
 		device_printf(dev, "Cannot get parent of %s\n",

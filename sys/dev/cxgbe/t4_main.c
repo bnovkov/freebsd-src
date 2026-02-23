@@ -57,9 +57,7 @@
 #include <net/if_types.h>
 #include <net/if_dl.h>
 #include <net/if_vlan_var.h>
-#ifdef RSS
 #include <net/rss_config.h>
-#endif
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #ifdef KERN_TLS
@@ -902,6 +900,7 @@ static int sysctl_ulprx_la(SYSCTL_HANDLER_ARGS);
 static int sysctl_wcwr_stats(SYSCTL_HANDLER_ARGS);
 static int sysctl_cpus(SYSCTL_HANDLER_ARGS);
 static int sysctl_reset(SYSCTL_HANDLER_ARGS);
+static int sysctl_tcb_cache(SYSCTL_HANDLER_ARGS);
 #ifdef TCP_OFFLOAD
 static int sysctl_tls(SYSCTL_HANDLER_ARGS);
 static int sysctl_tp_tick(SYSCTL_HANDLER_ARGS);
@@ -1250,7 +1249,7 @@ t4_calibration(void *arg)
 
 	sc = (struct adapter *)arg;
 
-	KASSERT(hw_all_ok(sc), ("!hw_all_ok at t4_calibration"));
+	KASSERT(!hw_off_limits(sc), ("hw_off_limits at t4_calibration"));
 	hw = t4_read_reg64(sc, A_SGE_TIMESTAMP_LO);
 	sbt = sbinuptime();
 
@@ -2662,8 +2661,8 @@ reset_adapter_with_pl_rst(struct adapter *sc)
 {
 	/* This is a t4_write_reg without the hw_off_limits check. */
 	MPASS(sc->error_flags & HW_OFF_LIMITS);
-	bus_space_write_4(sc->bt, sc->bh, A_PL_RST,
-			  F_PIORSTMODE | F_PIORST | F_AUTOPCIEPAUSE);
+	bus_write_4(sc->regs_res, A_PL_RST,
+	    F_PIORSTMODE | F_PIORST | F_AUTOPCIEPAUSE);
 	pause("pl_rst", 1 * hz);		/* Wait 1s for reset */
 	return (0);
 }
@@ -2819,7 +2818,7 @@ cxgbe_probe(device_t dev)
 #define T4_CAP (IFCAP_VLAN_HWTAGGING | IFCAP_VLAN_MTU | IFCAP_HWCSUM | \
     IFCAP_VLAN_HWCSUM | IFCAP_TSO | IFCAP_JUMBO_MTU | IFCAP_LRO | \
     IFCAP_VLAN_HWTSO | IFCAP_LINKSTATE | IFCAP_HWCSUM_IPV6 | IFCAP_HWSTATS | \
-    IFCAP_HWRXTSTMP | IFCAP_MEXTPG)
+    IFCAP_HWRXTSTMP | IFCAP_MEXTPG | IFCAP_NV)
 #define T4_CAP_ENABLE (T4_CAP)
 
 static void
@@ -3067,7 +3066,7 @@ cxgbe_ioctl(if_t ifp, unsigned long cmd, caddr_t data)
 	struct port_info *pi = vi->pi;
 	struct adapter *sc = pi->adapter;
 	struct ifreq *ifr = (struct ifreq *)data;
-	uint32_t mask;
+	uint32_t mask, mask2;
 
 	switch (cmd) {
 	case SIOCSIFMTU:
@@ -3126,12 +3125,24 @@ cxgbe_ioctl(if_t ifp, unsigned long cmd, caddr_t data)
 		end_synchronized_op(sc, 0);
 		break;
 
+	case SIOCGIFCAPNV:
+		break;
+	case SIOCSIFCAPNV:
 	case SIOCSIFCAP:
 		rc = begin_synchronized_op(sc, vi, SLEEP_OK | INTR_OK, "t4cap");
 		if (rc)
 			return (rc);
 
-		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
+		if (cmd == SIOCSIFCAPNV) {
+			const struct siocsifcapnv_driver_data *ifr_nv =
+			    (struct siocsifcapnv_driver_data *)data;
+
+			mask = ifr_nv->reqcap ^ if_getcapenable(ifp);
+			mask2 = ifr_nv->reqcap2 ^ if_getcapenable2(ifp);
+		} else {
+			mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
+			mask2 = 0;
+		}
 		if (mask & IFCAP_TXCSUM) {
 			if_togglecapenable(ifp, IFCAP_TXCSUM);
 			if_togglehwassist(ifp, CSUM_TCP | CSUM_UDP | CSUM_IP);
@@ -3265,6 +3276,9 @@ cxgbe_ioctl(if_t ifp, unsigned long cmd, caddr_t data)
 			if_togglehwassist(ifp, CSUM_INNER_IP6_TSO |
 			    CSUM_INNER_IP_TSO);
 		}
+
+		MPASS(mask2 == 0);
+		(void)mask2;
 
 #ifdef VLAN_CAPABILITIES
 		VLAN_CAPABILITIES(ifp);
@@ -3984,8 +3998,6 @@ t4_map_bars_0_and_4(struct adapter *sc)
 		device_printf(sc->dev, "cannot map registers.\n");
 		return (ENXIO);
 	}
-	sc->bt = rman_get_bustag(sc->regs_res);
-	sc->bh = rman_get_bushandle(sc->regs_res);
 	sc->mmio_len = rman_get_size(sc->regs_res);
 	setbit(&sc->doorbells, DOORBELL_KDB);
 
@@ -7035,7 +7047,6 @@ t4_setup_intr_handlers(struct adapter *sc)
 static void
 write_global_rss_key(struct adapter *sc)
 {
-#ifdef RSS
 	int i;
 	uint32_t raw_rss_key[RSS_KEYSIZE / sizeof(uint32_t)];
 	uint32_t rss_key[RSS_KEYSIZE / sizeof(uint32_t)];
@@ -7047,7 +7058,6 @@ write_global_rss_key(struct adapter *sc)
 		rss_key[i] = htobe32(raw_rss_key[nitems(rss_key) - 1 - i]);
 	}
 	t4_write_rss_key(sc, &rss_key[0], -1, 1);
-#endif
 }
 
 /*
@@ -7127,7 +7137,6 @@ adapter_full_uninit(struct adapter *sc)
 	sc->flags &= ~FULL_INIT_DONE;
 }
 
-#ifdef RSS
 #define SUPPORTED_RSS_HASHTYPES (RSS_HASHTYPE_RSS_IPV4 | \
     RSS_HASHTYPE_RSS_TCP_IPV4 | RSS_HASHTYPE_RSS_IPV6 | \
     RSS_HASHTYPE_RSS_TCP_IPV6 | RSS_HASHTYPE_RSS_UDP_IPV4 | \
@@ -7190,7 +7199,6 @@ hashen_to_hashconfig(int hashen)
 
 	return (hashconfig);
 }
-#endif
 
 /*
  * Idempotent.
@@ -7200,11 +7208,10 @@ vi_full_init(struct vi_info *vi)
 {
 	struct adapter *sc = vi->adapter;
 	struct sge_rxq *rxq;
-	int rc, i, j;
+	int rc, i, j, extra;
+	int hashconfig = rss_gethashconfig();
 #ifdef RSS
 	int nbuckets = rss_getnumbuckets();
-	int hashconfig = rss_gethashconfig();
-	int extra;
 #endif
 
 	ASSERT_SYNCHRONIZED_OP(sc);
@@ -7259,7 +7266,6 @@ vi_full_init(struct vi_info *vi)
 		return (rc);
 	}
 
-#ifdef RSS
 	vi->hashen = hashconfig_to_hashen(hashconfig);
 
 	/*
@@ -7295,12 +7301,7 @@ vi_full_init(struct vi_info *vi)
 		CH_ALERT(vi, "UDP/IPv4 4-tuple hashing forced on.\n");
 	if (extra & RSS_HASHTYPE_RSS_UDP_IPV6)
 		CH_ALERT(vi, "UDP/IPv6 4-tuple hashing forced on.\n");
-#else
-	vi->hashen = F_FW_RSS_VI_CONFIG_CMD_IP6FOURTUPEN |
-	    F_FW_RSS_VI_CONFIG_CMD_IP6TWOTUPEN |
-	    F_FW_RSS_VI_CONFIG_CMD_IP4FOURTUPEN |
-	    F_FW_RSS_VI_CONFIG_CMD_IP4TWOTUPEN | F_FW_RSS_VI_CONFIG_CMD_UDPEN;
-#endif
+
 	rc = -t4_config_vi_rss(sc, sc->mbox, vi->viid, vi->hashen, vi->rss[0],
 	    0, 0);
 	if (rc != 0) {
@@ -8117,6 +8118,12 @@ t4_sysctls(struct adapter *sc)
 		SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "wcwr_stats",
 		    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, sc, 0,
 		    sysctl_wcwr_stats, "A", "write combined work requests");
+	}
+
+	if (chip_id(sc) >= CHELSIO_T7) {
+		SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "tcb_cache",
+		    CTLTYPE_INT | CTLFLAG_RW, sc, 0, sysctl_tcb_cache, "I",
+		    "1 = enabled (default), 0 = disabled (for debug only)");
 	}
 
 #ifdef KERN_TLS
@@ -11587,7 +11594,7 @@ sysctl_tids(SYSCTL_HANDLER_ARGS)
 		if (hashen) {
 			if (x)
 				sbuf_printf(sb, "%u-%u, ", t->tid_base, x - 1);
-			sbuf_printf(sb, "%u-%u", y, t->ntids - 1);
+			sbuf_printf(sb, "%u-%u", y, t->tid_base + t->ntids - 1);
 		} else {
 			sbuf_printf(sb, "%u-%u", t->tid_base, t->tid_base +
 			    t->ntids - 1);
@@ -12202,6 +12209,40 @@ sysctl_reset(SYSCTL_HANDLER_ARGS)
 
 	taskqueue_enqueue(reset_tq, &sc->reset_task);
 	return (0);
+}
+
+static int
+sysctl_tcb_cache(SYSCTL_HANDLER_ARGS)
+{
+	struct adapter *sc = arg1;
+	u_int val, v;
+	int rc;
+
+	mtx_lock(&sc->reg_lock);
+	if (hw_off_limits(sc)) {
+		rc = ENXIO;
+		goto done;
+	}
+	t4_tp_pio_read(sc, &v, 1, A_TP_CMM_CONFIG, 1);
+	mtx_unlock(&sc->reg_lock);
+
+	val = v & F_GLFL ? 0 : 1;
+	rc = sysctl_handle_int(oidp, &val, 0, req);
+	if (rc != 0 || req->newptr == NULL)
+		return (rc);
+	if (val == 0)
+		v |= F_GLFL;
+	else
+		v &= ~F_GLFL;
+
+	mtx_lock(&sc->reg_lock);
+	if (hw_off_limits(sc))
+		rc = ENXIO;
+	else
+		t4_tp_pio_write(sc, &v, 1, A_TP_CMM_CONFIG, 1);
+done:
+	mtx_unlock(&sc->reg_lock);
+	return (rc);
 }
 
 #ifdef TCP_OFFLOAD

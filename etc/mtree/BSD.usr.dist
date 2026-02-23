@@ -103,8 +103,8 @@
         ..
         ossl-modules
         ..
-	virtual_oss
-	..
+        virtual_oss
+        ..
     ..
     libdata
         ldscripts
@@ -181,8 +181,8 @@
         ..
         hyperv
         ..
-        lpr
-            ru
+        lpr			tags=package=lp
+            ru			tags=package=lp
             ..
         ..
         sendmail
@@ -245,8 +245,6 @@
             llvm            tags=package=clang
                 clang       tags=package=clang
                 ..
-            ..
-            ncurses
             ..
             ntp
                 drivers
@@ -354,7 +352,7 @@
             ..
             ppp
             ..
-            printing
+            printing		tags=package=lp
             ..
             scsi_target
             ..
@@ -841,6 +839,10 @@
                 ..
                 man7
                 ..
+            ..
+        ..
+        pkg
+            triggers
             ..
         ..
         security

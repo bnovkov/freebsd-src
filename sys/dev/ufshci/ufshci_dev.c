@@ -33,7 +33,8 @@ ufshci_dev_read_descriptor(struct ufshci_controller *ctrlr,
 	    &status, param);
 	ufshci_completion_poll(&status);
 	if (status.error) {
-		ufshci_printf(ctrlr, "ufshci_dev_read_descriptor failed!\n");
+		ufshci_printf(ctrlr,
+		    "Failed to send Read Descriptor query request!\n");
 		return (ENXIO);
 	}
 
@@ -272,40 +273,31 @@ ufshci_dev_init_unipro(struct ufshci_controller *ctrlr)
 	uint32_t pa_granularity, peer_pa_granularity;
 	uint32_t t_activate, pear_t_activate;
 
-	/*
-	 * Unipro Version:
-	 * - 7~15 = Above 2.0, 6 = 2.0, 5 = 1.8, 4 = 1.61, 3 = 1.6, 2 = 1.41,
-	 * 1 = 1.40, 0 = Reserved
-	 */
-	if (ufshci_uic_send_dme_get(ctrlr, PA_LocalVerInfo,
-		&ctrlr->unipro_version))
-		return (ENXIO);
-	if (ufshci_uic_send_dme_get(ctrlr, PA_RemoteVerInfo,
-		&ctrlr->ufs_dev.unipro_version))
-		return (ENXIO);
-
-	/*
-	 * PA_Granularity: Granularity for PA_TActivate and PA_Hibern8Time
-	 * - 1=1us, 2=4us, 3=8us, 4=16us, 5=32us, 6=100us
-	 */
-	if (ufshci_uic_send_dme_get(ctrlr, PA_Granularity, &pa_granularity))
-		return (ENXIO);
-	if (ufshci_uic_send_dme_peer_get(ctrlr, PA_Granularity,
-		&peer_pa_granularity))
-		return (ENXIO);
-
-	/*
-	 * PA_TActivate: Time to wait before activating a burst in order to
-	 * wake-up peer M-RX
-	 * UniPro automatically sets timing information such as PA_TActivate
-	 * through the PACP_CAP_EXT1_ind command during Link Startup operation.
-	 */
-	if (ufshci_uic_send_dme_get(ctrlr, PA_TActivate, &t_activate))
-		return (ENXIO);
-	if (ufshci_uic_send_dme_peer_get(ctrlr, PA_TActivate, &pear_t_activate))
-		return (ENXIO);
-
 	if (ctrlr->quirks & UFSHCI_QUIRK_LONG_PEER_PA_TACTIVATE) {
+		/*
+		 * PA_Granularity: Granularity for PA_TActivate and
+		 * PA_Hibern8Time
+		 * - 1=1us, 2=4us, 3=8us, 4=16us, 5=32us, 6=100us
+		 */
+		if (ufshci_uic_send_dme_get(ctrlr, PA_Granularity,
+			&pa_granularity))
+			return (ENXIO);
+		if (ufshci_uic_send_dme_peer_get(ctrlr, PA_Granularity,
+			&peer_pa_granularity))
+			return (ENXIO);
+
+		/*
+		 * PA_TActivate: Time to wait before activating a burst in order
+		 * to wake-up peer M-RX UniPro automatically sets timing
+		 * information such as PA_TActivate through the
+		 * PACP_CAP_EXT1_ind command during Link Startup operation.
+		 */
+		if (ufshci_uic_send_dme_get(ctrlr, PA_TActivate, &t_activate))
+			return (ENXIO);
+		if (ufshci_uic_send_dme_peer_get(ctrlr, PA_TActivate,
+			&pear_t_activate))
+			return (ENXIO);
+
 		/*
 		 * Intel Lake-field UFSHCI has a quirk. We need to add 200us to
 		 * the PEER's PA_TActivate.
@@ -433,9 +425,6 @@ ufshci_dev_init_uic_power_mode(struct ufshci_controller *ctrlr)
 		return (ENXIO);
 	}
 
-	/* Clear 'Power Mode completion status' */
-	ufshci_mmio_write_4(ctrlr, is, UFSHCIM(UFSHCI_IS_REG_UPMS));
-
 	if (ctrlr->quirks & UFSHCI_QUIRK_WAIT_AFTER_POWER_MODE_CHANGE) {
 		/*
 		 * Intel Lake-field UFSHCI has a quirk.
@@ -452,10 +441,57 @@ ufshci_dev_init_uic_power_mode(struct ufshci_controller *ctrlr)
 	return (0);
 }
 
+void
+ufshci_dev_enable_auto_hibernate(struct ufshci_controller *ctrlr)
+{
+	if (!ctrlr->ufs_dev.auto_hibernation_supported)
+		return;
+
+	ufshci_mmio_write_4(ctrlr, ahit, ctrlr->ufs_dev.ahit);
+}
+
+void
+ufshci_dev_init_auto_hibernate(struct ufshci_controller *ctrlr)
+{
+	ctrlr->ufs_dev.auto_hibernation_supported =
+	    UFSHCIV(UFSHCI_CAP_REG_AUTOH8, ctrlr->cap) &&
+	    !(ctrlr->quirks & UFSHCI_QUIRK_BROKEN_AUTO_HIBERNATE);
+
+	if (!ctrlr->ufs_dev.auto_hibernation_supported)
+		return;
+
+	/* The default value for auto hibernation is 150 ms */
+	ctrlr->ufs_dev.ahit = 0;
+	ctrlr->ufs_dev.ahit |= UFSHCIF(UFSHCI_AHIT_REG_AH8ITV, 150);
+	ctrlr->ufs_dev.ahit |= UFSHCIF(UFSHCI_AHIT_REG_TS, 3);
+
+	ufshci_dev_enable_auto_hibernate(ctrlr);
+}
+
+void
+ufshci_dev_init_uic_link_state(struct ufshci_controller *ctrlr)
+{
+	ctrlr->ufs_dev.link_state = UFSHCI_UIC_LINK_STATE_ACTIVE;
+}
+
 int
 ufshci_dev_init_ufs_power_mode(struct ufshci_controller *ctrlr)
 {
-	/* TODO: Need to implement */
+	ctrlr->ufs_dev.power_mode_supported = false;
+
+	if (ctrlr->quirks & UFSHCI_QUIRK_SKIP_WELL_KNOWN_LUNS)
+		return (0);
+
+	ctrlr->ufs_device_wlun_periph = ufshci_sim_find_periph(ctrlr,
+	    UFSHCI_WLUN_UFS_DEVICE);
+	if (ctrlr->ufs_device_wlun_periph == NULL) {
+		ufshci_printf(ctrlr,
+		    "Well-known LUN `UFS Device (0x50)` not found\n");
+		return (0);
+	}
+
+	ctrlr->ufs_dev.power_mode_supported = true;
+	ctrlr->ufs_dev.power_mode = UFSHCI_DEV_PWR_ACTIVE;
 
 	return (0);
 }
@@ -773,4 +809,89 @@ ufshci_dev_config_write_booster(struct ufshci_controller *ctrlr)
 out:
 	ufshci_dev_disable_write_booster(ctrlr);
 	return (error);
+}
+
+int
+ufshci_dev_get_current_power_mode(struct ufshci_controller *ctrlr,
+    uint8_t *power_mode)
+{
+	uint64_t value;
+	int err;
+
+	err = ufshci_dev_read_attribute(ctrlr, UFSHCI_ATTR_B_CURRENT_POWER_MODE,
+	    /*index*/ 0, /*selector*/ 0, &value);
+	if (err)
+		return (err);
+
+	*power_mode = (uint8_t)value;
+
+	return (0);
+}
+
+static int
+ufshci_dev_hibernate_enter(struct ufshci_controller *ctrlr)
+{
+	int error;
+
+	error = ufshci_uic_send_dme_hibernate_enter(ctrlr);
+	if (error)
+		return (error);
+
+	return (ufshci_uic_hibernation_ready(ctrlr));
+}
+
+static int
+ufshci_dev_hibernate_exit(struct ufshci_controller *ctrlr)
+{
+	int error;
+
+	error = ufshci_uic_send_dme_hibernate_exit(ctrlr);
+	if (error)
+		return (error);
+
+	return (ufshci_uic_hibernation_ready(ctrlr));
+}
+
+int
+ufshci_dev_link_state_transition(struct ufshci_controller *ctrlr,
+    enum ufshci_uic_link_state target_state)
+{
+	struct ufshci_device *dev = &ctrlr->ufs_dev;
+	int error = 0;
+
+	if (dev->link_state == target_state)
+		return (0);
+
+	switch (target_state) {
+	case UFSHCI_UIC_LINK_STATE_OFF:
+		error = ufshci_dev_hibernate_enter(ctrlr);
+		if (error)
+			break;
+		error = ufshci_ctrlr_disable(ctrlr);
+		break;
+	case UFSHCI_UIC_LINK_STATE_ACTIVE:
+		if (dev->link_state == UFSHCI_UIC_LINK_STATE_HIBERNATE)
+			error = ufshci_dev_hibernate_exit(ctrlr);
+		else
+			error = EINVAL;
+		break;
+	case UFSHCI_UIC_LINK_STATE_HIBERNATE:
+		if (dev->link_state == UFSHCI_UIC_LINK_STATE_ACTIVE)
+			error = ufshci_dev_hibernate_enter(ctrlr);
+		else
+			error = EINVAL;
+		break;
+	case UFSHCI_UIC_LINK_STATE_BROKEN:
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+
+	if (error)
+		return (error);
+
+	dev->link_state = target_state;
+
+	return (0);
 }

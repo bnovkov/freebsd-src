@@ -385,14 +385,16 @@ lkpifill_pci_dev(device_t dev, struct pci_dev *pdev)
 	pdev->dev.bsddev = dev;
 	pdev->dev.parent = &linux_root_device;
 	pdev->dev.release = lkpi_pci_dev_release;
-	INIT_LIST_HEAD(&pdev->dev.irqents);
 
 	if (pci_msi_count(dev) > 0)
 		pdev->msi_desc = malloc(pci_msi_count(dev) *
 		    sizeof(*pdev->msi_desc), M_DEVBUF, M_WAITOK | M_ZERO);
 
+	TAILQ_INIT(&pdev->mmio);
+	spin_lock_init(&pdev->pcie_cap_lock);
 	spin_lock_init(&pdev->dev.devres_lock);
 	INIT_LIST_HEAD(&pdev->dev.devres_head);
+	INIT_LIST_HEAD(&pdev->dev.irqents);
 
 	return (0);
 }
@@ -547,7 +549,7 @@ linux_pci_reserve_bar(struct pci_dev *pdev, struct resource_list *rl,
 
 	dev = pdev->pdrv != NULL && pdev->pdrv->isdrm ?
 	    device_get_parent(pdev->dev.bsddev) : pdev->dev.bsddev;
-	res = pci_reserve_map(device_get_parent(dev), dev, type, &rid, 0, ~0,
+	res = pci_reserve_map(device_get_parent(dev), dev, type, rid, 0, ~0,
 	    1, 1, 0);
 	if (res == NULL)
 		return (NULL);
@@ -612,9 +614,6 @@ linux_pci_attach_device(device_t dev, struct pci_driver *pdrv,
 	error = linux_pdev_dma_init(pdev);
 	if (error)
 		goto out_dma_init;
-
-	TAILQ_INIT(&pdev->mmio);
-	spin_lock_init(&pdev->pcie_cap_lock);
 
 	spin_lock(&pci_lock);
 	list_add(&pdev->links, &pci_devices);
@@ -1223,13 +1222,6 @@ lkpi_pci_request_region(struct pci_dev *pdev, int bar, const char *res_name,
 	if (!lkpi_pci_bar_id_valid(bar))
 		return (-EINVAL);
 
-	/*
-	 * If the bar is not valid, return success without adding the BAR;
-	 * otherwise linuxkpi_pcim_request_all_regions() will error.
-	 */
-	if (pci_resource_len(pdev, bar) == 0)
-		return (0);
-	/* Likewise if it is neither IO nor MEM, nothing to do for us. */
 	type = pci_resource_type(pdev, bar);
 	if (type < 0)
 		return (0);
@@ -1241,7 +1233,7 @@ lkpi_pci_request_region(struct pci_dev *pdev, int bar, const char *res_name,
 		device_printf(pdev->dev.bsddev, "%s: failed to alloc "
 		    "bar %d type %d rid %d\n",
 		    __func__, bar, type, PCIR_BAR(bar));
-		return (-ENODEV);
+		return (-EBUSY);
 	}
 
 	/*
@@ -1285,7 +1277,7 @@ linuxkpi_pci_request_regions(struct pci_dev *pdev, const char *res_name)
 
 	for (i = 0; i <= PCIR_MAX_BAR_0; i++) {
 		error = pci_request_region(pdev, i, res_name);
-		if (error && error != -ENODEV) {
+		if (error && error != -EBUSY) {
 			pci_release_regions(pdev);
 			return (error);
 		}
@@ -1300,7 +1292,7 @@ linuxkpi_pcim_request_all_regions(struct pci_dev *pdev, const char *res_name)
 
 	for (bar = 0; bar <= PCIR_MAX_BAR_0; bar++) {
 		error = lkpi_pci_request_region(pdev, bar, res_name, true);
-		if (error != 0) {
+		if (error != 0 && error != -EBUSY) {
 			device_printf(pdev->dev.bsddev, "%s: bar %d res_name '%s': "
 			    "lkpi_pci_request_region returned %d\n", __func__,
 			    bar, res_name, error);
@@ -1727,9 +1719,26 @@ lkpi_dma_unmap(struct device *dev, dma_addr_t dma_addr, size_t len,
 	}
 	LINUX_DMA_PCTRIE_REMOVE(&priv->ptree, dma_addr);
 
-	if ((attrs & DMA_ATTR_SKIP_CPU_SYNC) == 0)
-		dma_sync_single_for_cpu(dev, dma_addr, len, direction);
+	if ((attrs & DMA_ATTR_SKIP_CPU_SYNC) != 0)
+		goto skip_sync;
 
+	/* dma_sync_single_for_cpu() unrolled to avoid lock recursicn. */
+	switch (direction) {
+	case DMA_BIDIRECTIONAL:
+		bus_dmamap_sync(obj->dmat, obj->dmamap, BUS_DMASYNC_POSTREAD);
+		bus_dmamap_sync(obj->dmat, obj->dmamap, BUS_DMASYNC_PREREAD);
+		break;
+	case DMA_TO_DEVICE:
+		bus_dmamap_sync(obj->dmat, obj->dmamap, BUS_DMASYNC_POSTWRITE);
+		break;
+	case DMA_FROM_DEVICE:
+		bus_dmamap_sync(obj->dmat, obj->dmamap, BUS_DMASYNC_POSTREAD);
+		break;
+	default:
+		break;
+	}
+
+skip_sync:
 	bus_dmamap_unload(obj->dmat, obj->dmamap);
 	bus_dmamap_destroy(obj->dmat, obj->dmamap);
 	DMA_PRIV_UNLOCK(priv);
@@ -1801,6 +1810,42 @@ lkpi_dmam_free_coherent(struct device *dev, void *p)
 
 	dr = p;
 	dma_free_coherent(dev, dr->size, dr->mem, *dr->handle);
+}
+
+static int
+lkpi_dmam_coherent_match(struct device *dev, void *dr, void *mp)
+{
+	struct lkpi_devres_dmam_coherent *a, *b;
+
+	a = dr;
+	b = mp;
+
+	if (a->mem != b->mem)
+		return (0);
+	if (a->size != b->size || a->handle != b->handle)
+		dev_WARN(dev, "for mem %p: size %zu != %zu || handle %#jx != %#jx\n",
+		    a->mem, a->size, b->size,
+		    (uintmax_t)a->handle, (uintmax_t)b->handle);
+	return (1);
+}
+
+void
+linuxkpi_dmam_free_coherent(struct device *dev, size_t size,
+    void *addr, dma_addr_t dma_handle)
+{
+	struct lkpi_devres_dmam_coherent match = {
+		.size		= size,
+		.handle		= &dma_handle,
+		.mem		= addr
+	};
+	int error;
+
+	error = devres_destroy(dev, lkpi_dmam_free_coherent,
+	    lkpi_dmam_coherent_match, &match);
+	if (error != 0)
+		dev_WARN(dev, "devres_destroy returned %d, size %zu addr %p "
+		    "dma_handle %#jx\n", error, size, addr, (uintmax_t)dma_handle);
+	dma_free_coherent(dev, size, addr, dma_handle);
 }
 
 void *

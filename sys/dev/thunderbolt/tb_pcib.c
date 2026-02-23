@@ -119,6 +119,10 @@ tb_pcib_find_ident(device_t dev)
 	for (n = tb_pcib_identifiers; n->vendor != 0; n++) {
 		if ((n->vendor != v) || (n->device != d))
 			continue;
+		/* Only match actual PCI-PCI bridges to avoid conflict with NHI */
+		if (pci_get_class(dev) != PCIC_BRIDGE ||
+		    pci_get_subclass(dev) != PCIS_BRIDGE_PCI)
+			continue;
 		if (((n->subvendor != 0xffff) && (n->subvendor != sv)) ||
 		    ((n->subdevice != 0xffff) && (n->subdevice != sd)))
 			continue;
@@ -550,8 +554,6 @@ DEFINE_CLASS_1(tbolt, tb_pcib_driver, tb_pcib_methods,
 DRIVER_MODULE_ORDERED(tb_pcib, pci, tb_pcib_driver,
     NULL, NULL, SI_ORDER_MIDDLE);
 MODULE_DEPEND(tb_pcib, pci, 1, 1, 1);
-MODULE_PNP_INFO("U16:vendor;U16:device;U16:subvendor;U16:subdevice;U32:#;D:#",
-    pci, tb_pcib, tb_pcib_identifiers, nitems(tb_pcib_identifiers) - 1);
 
 static int
 tb_pci_probe(device_t dev)

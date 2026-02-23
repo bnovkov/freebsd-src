@@ -1,5 +1,3 @@
-ZFSTOP=	${SRCTOP}/sys/contrib/openzfs
-
 .PATH: ${ZFSTOP}/lib/libzpool
 
 # ZFS_COMMON_SRCS
@@ -23,7 +21,7 @@ ACFLAGS+=	-Wa,--noexecstack
 ATOMIC_SRCS=	opensolaris_atomic.c
 .endif
 
-.if ${MACHINE_ARCH} == "powerpc" || ${MACHINE_ARCH} == "powerpcspe"
+.if ${MACHINE_ARCH} == "powerpc"
 # Don't waste GOT entries on small data.
 PICFLAG=	-fPIC
 .endif
@@ -263,7 +261,7 @@ CFLAGS+= \
 	-I${ZFSTOP}/include \
 	-I${ZFSTOP}/lib/libspl/include \
 	-I${ZFSTOP}/lib/libspl/include/os/freebsd \
-	-I${SRCTOP}/sys/contrib/openzfs/lib/libzpool/include \
+	-I${ZFSTOP}/lib/libzpool/include \
 	-I${SRCTOP}/sys \
 	-I${SRCTOP}/cddl/compat/opensolaris/include \
 	-I${ZFSTOP}/module/icp/include \
