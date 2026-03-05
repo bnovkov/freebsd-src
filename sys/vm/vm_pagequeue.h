@@ -239,6 +239,8 @@ struct vm_domain {
 	struct vm_pgcache {
 		int domain;
 		int pool;
+		int ma_offs;
+		vm_page_t ma;
 		uma_zone_t zone;
 	} vmd_pgcache[VM_NFREEPOOL];
 	struct vmem *vmd_kernel_arena;	/* (c) per-domain kva R/W arena. */

@@ -233,6 +233,8 @@ vm_page_init_cache_zones(void *dummy __unused)
 			pgcache = &vmd->vmd_pgcache[pool];
 			pgcache->domain = domain;
 			pgcache->pool = pool;
+			pgcache->ma = NULL;
+			pgcache->ma_offs = 0;
 			pgcache->zone = uma_zcache_create("vm pgcache",
 			    PAGE_SIZE, NULL, NULL, NULL, NULL,
 			    vm_page_zone_import, vm_page_zone_release, pgcache,
@@ -2725,9 +2727,18 @@ vm_page_alloc_check(vm_page_t m)
 	pmap_vm_page_alloc_check(m);
 }
 
+#if VM_NRESERVLEVEL > 1
+#define	VM_PGCACHE_IMPORT_ORDER	(VM_LEVEL_1_ORDER + VM_LEVEL_0_ORDER)
+#elif VM_NRESERVLEVEL > 0
+#define	VM_PGCACHE_IMPORT_ORDER	VM_LEVEL_0_ORDER
+#else
+#define	VM_PGCACHE_IMPORT_ORDER	8
+#endif
+
 static int
 vm_page_zone_import(void *arg, void **store, int cnt, int domain, int flags)
 {
+	vm_page_t *ma = (vm_page_t *)store;
 	struct vm_domain *vmd;
 	struct vm_pgcache *pgcache;
 	int i;
@@ -2742,13 +2753,36 @@ vm_page_zone_import(void *arg, void **store, int cnt, int domain, int flags)
 	if (vmd->vmd_severeset || curproc == pageproc ||
 	    !_vm_domain_allocate(vmd, VM_ALLOC_NORMAL, cnt))
 		return (0);
+	i = 0;
 	domain = vmd->vmd_domain;
+again:
 	vm_domain_free_lock(vmd);
-	i = vm_phys_alloc_npages(domain, pgcache->pool, cnt,
-	    (vm_page_t *)store);
+	if (pgcache->ma == NULL) {
+		pgcache->ma = vm_phys_alloc_pages(domain, VM_FREEPOOL_DEFAULT,
+		    VM_PGCACHE_IMPORT_ORDER);
+		if (pgcache->ma == NULL) {
+			i = vm_phys_alloc_npages(domain, pgcache->pool, cnt,
+			    &ma[i]);
+			vm_domain_free_unlock(vmd);
+			if (cnt != i)
+				vm_domain_freecnt_inc(vmd, cnt - i);
+			return (i);
+		}
+		pgcache->ma_offs = 0;
+	}
+
+	while (i < cnt && pgcache->ma_offs < (1 << VM_PGCACHE_IMPORT_ORDER))
+		ma[i++] = &pgcache->ma[pgcache->ma_offs++];
+
+	if (pgcache->ma_offs == (1 << VM_PGCACHE_IMPORT_ORDER))
+		pgcache->ma = NULL;
 	vm_domain_free_unlock(vmd);
-	if (cnt != i)
-		vm_domain_freecnt_inc(vmd, cnt - i);
+
+	if (cnt > i) {
+		cnt -= i;
+		goto again;
+	}
+
 
 	return (i);
 }
