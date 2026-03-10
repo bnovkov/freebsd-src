@@ -60,6 +60,7 @@
 #include <sys/tslog.h>
 #include <sys/unistd.h>
 #include <sys/vmmeter.h>
+#include <sys/bitstring.h>
 
 #include <ddb/ddb.h>
 
@@ -147,6 +148,22 @@ static int __read_mostly vm_freelist_to_flind[VM_NFREELIST];
 static int __read_mostly vm_default_freepool;
 
 CTASSERT(VM_FREELIST_DEFAULT == 0);
+
+#define VM_LEVEL_0_ORDER 9
+#define	VM_LEVEL_0_NPAGES	(1 << VM_LEVEL_0_ORDER)
+#define	VM_LEVEL_0_NPAGES_MAX	(1 << VM_LEVEL_0_ORDER)
+#define	VM_LEVEL_0_SHIFT	(VM_LEVEL_0_ORDER + PAGE_SHIFT)
+#define	VM_LEVEL_0_SIZE		(1 << VM_LEVEL_0_SHIFT)
+
+static struct vm_phys_stats {
+	TAILQ_ENTRY(vm_phys_stats) partpopq;
+	vm_page_t pages;
+	uint16_t popcnt;
+	uint8_t pool;
+	char inpartpopq;
+	bitstr_t bit_decl(popmap, VM_LEVEL_0_NPAGES);
+} *stats_array;
+static long stats_array_len;
 
 #ifdef VM_FREELIST_DMA32
 #define	VM_DMA32_BOUNDARY	((vm_paddr_t)1 << 32)
@@ -389,6 +406,80 @@ sysctl_vm_phys_locality(SYSCTL_HANDLER_ARGS)
 }
 #endif
 
+
+#define VM_PHYS_SPAGE_PARTPOPQ_THRESH_HI 511
+#define VM_PHYS_SPAGE_PARTPOPQ_THRESH_LOW 77
+
+[[clang::optnone]]
+static void __noinline
+vm_phys_update_stats(vm_page_t m, int order, int rem)
+{
+	size_t idx;
+	struct vm_phys_seg *seg = NULL;
+	struct vm_phys_stats *sp;
+	struct vm_freelist *fl;
+	const size_t npages = 1 << order;
+
+	MPASS(order < VM_NFREEORDER);
+#ifdef VM_PHYSSEG_SPARSE
+
+	seg = &vm_phys_segs[m->segind];
+	idx = seg->first_idx + (VM_PAGE_TO_PHYS(m) >> VM_LEVEL_0_SHIFT) -
+	    (seg->start >> VM_LEVEL_0_SHIFT);
+#else
+//	idx = VM_PAGE_TO_PHYS(m) >> VM_LEVEL_0_SHIFT;
+	return;
+#endif
+
+	sp = &stats_array[idx];
+	if (sp->pages == NULL || order > VM_LEVEL_0_ORDER)
+		return;
+
+	/* printf("%s: paddr: %p, idx: %d, order: %d, alloc: %d\n", */
+	/*     __func__, (void *)VM_PAGE_TO_PHYS(rv->pages), idx, order, alloc); */
+	idx = m - sp->pages;
+	if (rem) {
+		sp->popcnt -= npages;
+		bit_nclear(sp->popmap, idx, idx + npages - 1);
+	} else {
+		sp->popcnt += npages;
+		bit_nset(sp->popmap, idx, idx + npages - 1);
+	}
+	KASSERT(sp->popcnt <= VM_LEVEL_0_NPAGES,
+	    ("superpage popcnt overflow: %u, rv: %p", sp->popcnt, (void *)sp));
+	if (order == VM_LEVEL_0_ORDER && !rem) {
+		sp->pool = m->pool;
+		return;
+	}
+
+	MPASS(sp->pool < VM_NFREEPOOL);
+	fl = (*seg->free_queues)[sp->pool];
+
+	/* Allow the direct pool to steal superpages. */
+	if (m->pool > sp->pool) {
+		if (sp->inpartpopq) {
+			sp->inpartpopq = 0;
+			TAILQ_REMOVE(&fl->partpopq, sp, partpopq);
+		}
+		sp->pool = m->pool;
+		fl = (*seg->free_queues)[sp->pool];
+	}
+
+	if (VM_PHYS_SPAGE_PARTPOPQ_THRESH_LOW <= sp->popcnt &&
+	    sp->popcnt <= VM_PHYS_SPAGE_PARTPOPQ_THRESH_HI) {
+		if (!sp->inpartpopq) {
+			sp->inpartpopq = 1;
+			if (rem)
+				TAILQ_INSERT_HEAD(&fl->partpopq, sp, partpopq);
+			else
+				TAILQ_INSERT_TAIL(&fl->partpopq, sp, partpopq);
+		}
+	} else if (sp->inpartpopq) {
+		sp->inpartpopq = 0;
+		TAILQ_REMOVE(&fl->partpopq, sp, partpopq);
+	}
+}
+
 static void
 vm_freelist_add(struct vm_freelist *fl, vm_page_t m, int order, int pool,
     int tail)
@@ -411,6 +502,7 @@ vm_freelist_add(struct vm_freelist *fl, vm_page_t m, int order, int pool,
 	else
 		TAILQ_INSERT_HEAD(&fl[order].pl, m, plinks.q);
 	fl[order].lcnt++;
+	vm_phys_update_stats(m, order, 0);
 }
 
 static void
@@ -420,6 +512,7 @@ vm_freelist_rem(struct vm_freelist *fl, vm_page_t m, int order)
 	TAILQ_REMOVE(&fl[order].pl, m, plinks.q);
 	fl[order].lcnt--;
 	m->order = VM_NFREEORDER;
+	vm_phys_update_stats(m, order, 1);
 }
 
 /*
@@ -649,6 +742,42 @@ vm_phys_init(void)
 			seg++;
 		}
 	}
+	struct vm_phys_stats *sp;
+	vm_paddr_t paddr;
+	int i;
+
+	/*
+	 * Initialize the stats array.
+	 */
+	MPASS(stats_array != NULL);
+#ifdef VM_PHYSSEG_SPARSE
+	used = 0;
+#endif
+	for (segind = 0; segind < vm_phys_nsegs; segind++) {
+		seg = &vm_phys_segs[segind];
+#ifdef VM_PHYSSEG_SPARSE
+		seg->stat_idx = used;
+		used += howmany(seg->end, VM_LEVEL_0_SIZE) -
+		    seg->start / VM_LEVEL_0_SIZE;
+#else
+		seg->stat_idx = seg->start >> VM_LEVEL_0_SHIFT;
+#endif
+		printf("%s: segind: %d, stat_start: %zu\n", __func__,
+			   segind, seg->stat_idx);
+		paddr = roundup2(seg->start, VM_LEVEL_0_SIZE);
+		i = seg->stat_idx + (paddr >> VM_LEVEL_0_SHIFT) -
+		    (seg->start >> VM_LEVEL_0_SHIFT);
+		sp = &stats_array[i];
+		while (paddr + VM_LEVEL_0_SIZE > paddr && paddr +
+		    VM_LEVEL_0_SIZE <= seg->end) {
+			printf("%s: sp: %p, pages: %p\n", __func__,
+			   sp, (void *)paddr);
+			sp->pages = PHYS_TO_VM_PAGE(paddr);
+			sp->pool = VM_NFREEPOOL;
+			paddr += VM_LEVEL_0_SIZE;
+			sp++;
+		}
+	}
 
 	/*
 	 * Initialize the free queues.
@@ -657,8 +786,10 @@ vm_phys_init(void)
 		for (flind = 0; flind < vm_nfreelists; flind++) {
 			for (pind = 0; pind < VM_NFREEPOOL; pind++) {
 				fl = vm_phys_free_queues[dom][flind][pind];
-				for (oind = 0; oind < VM_NFREEORDER; oind++)
+				TAILQ_INIT(&fl->partpopq);
+				for (oind = 0; oind < VM_NFREEORDER; oind++) {
 					TAILQ_INIT(&fl[oind].pl);
+				}
 			}
 		}
 	}
@@ -865,10 +996,12 @@ vm_phys_finish_init(vm_page_t m, int order)
  *
  * The free page queues for the specified domain must be locked.
  */
+[[clang::optnone]]
 int
 vm_phys_alloc_npages(int domain, int pool, int npages, vm_page_t ma[])
 {
 	struct vm_freelist *alt, *fl;
+	struct vm_phys_stats *sp;
 	vm_page_t m;
 	int avail, end, flind, freelist, i, oind, pind;
 
@@ -885,6 +1018,51 @@ vm_phys_alloc_npages(int domain, int pool, int npages, vm_page_t ma[])
 		if (flind < 0)
 			continue;
 		fl = vm_phys_free_queues[domain][flind][pool];
+		sp = TAILQ_FIRST(&fl->partpopq);
+		while (sp != NULL) {
+			size_t start, end;
+
+			start = end = 0;
+			struct vm_phys_stats *next_sp = TAILQ_NEXT(sp, partpopq);
+			while (start < VM_LEVEL_0_NPAGES) {
+				bit_ffs_at(sp->popmap, start, VM_LEVEL_0_NPAGES, &start);
+				if (start == -1)
+					break;
+				bit_ffc_at(sp->popmap, start, VM_LEVEL_0_NPAGES, &end);
+				if (end == -1)
+					end = VM_LEVEL_0_NPAGES;
+
+				/* printf("%s: paddr: %p: got range: %zu - %zu, req: %d, got: %d\n", __func__, */
+				/*     (void *)VM_PAGE_TO_PHYS(sp->pages), start, end, npages, i); */
+				m = &sp->pages[start];
+				vm_page_t m_end = &sp->pages[end];
+				while (m < m_end) {
+					MPASS(m->order < VM_NFREEORDER);
+					/* printf("%s: m_paddr: %p, order: %d, got: %d\n", __func__, */
+					/* 	  (void *)VM_PAGE_TO_PHYS(m), m->order, i); */
+					oind = m->order;
+					if (m->pool != pool) {
+						m += (1 << oind);
+						continue;
+					}
+					vm_freelist_rem(fl, m, oind);
+					avail = i + (1 << oind);
+					int lim = imin(npages, avail);
+					while (i < lim && m < m_end)
+						ma[i++] = m++;
+					if (i == npages) {
+						/* printf("%s: m_paddr: %p, order: %d, excess: %d\n", __func__, */
+						/*     (void *)VM_PAGE_TO_PHYS(m), oind, avail - i); */
+						vm_phys_enq_range(m, avail - i, fl,
+										  pool, 1);
+						return (npages);
+					}
+				}
+				start = end;
+			}
+			sp = next_sp;
+		}
+		m = NULL;
 		for (oind = 0; oind < VM_NFREEORDER; oind++) {
 			while ((m = TAILQ_FIRST(&fl[oind].pl)) != NULL) {
 				vm_freelist_rem(fl, m, oind);
@@ -964,6 +1142,25 @@ vm_phys_alloc_freelist_pages(int domain, int freelist, int pool, int order)
 
 	vm_domain_free_assert_locked(VM_DOMAIN(domain));
 	fl = &vm_phys_free_queues[domain][flind][pool][0];
+#if VM_NRESERVLEVEL > 0
+	if (order == 0 && !TAILQ_EMPTY(&fl->partpopq)) {
+		size_t idx = -1;
+		struct vm_phys_stats *sp;
+
+		sp = TAILQ_FIRST(&fl->partpopq);
+		bit_ffs(sp->popmap, VM_LEVEL_0_NPAGES, &idx);
+		MPASS(idx != -1);
+		MPASS(idx < VM_LEVEL_0_NPAGES);
+		/* printf("%s: paddr: %p: got idx: %zu\n", __func__, (void *)VM_PAGE_TO_PHYS(sp->pages), idx); */
+		m = &sp->pages[idx];
+		MPASS(m->order < VM_NFREEORDER);
+		oind = m->order;
+		vm_freelist_rem(fl, m, m->order);
+		vm_phys_split_pages(m, oind, fl, order, pool, 1);
+		return (m);
+	}
+#endif
+
 	for (oind = order; oind < VM_NFREEORDER; oind++) {
 		m = TAILQ_FIRST(&fl[oind].pl);
 		if (m != NULL) {
@@ -2055,6 +2252,61 @@ vm_phys_early_startup(void)
 		}
 	}
 #endif
+}
+
+/*
+ * Allocates the virtual and physical memory required by the reservation
+ * management system's data structures, in particular, the reservation array.
+ */
+vm_paddr_t
+vm_phys_stats_startup(vm_offset_t *vaddr, vm_paddr_t end)
+{
+	vm_paddr_t new_end;
+	vm_pindex_t count;
+#ifdef VM_PHYSSEG_SPARSE
+	vm_pindex_t used;
+#endif
+	size_t size;
+	int i;
+
+	count = 0;
+	for (i = 0; i < vm_phys_nsegs; i++) {
+#ifdef VM_PHYSSEG_SPARSE
+		count += howmany(vm_phys_segs[i].end, VM_LEVEL_0_SIZE) -
+		    vm_phys_segs[i].start / VM_LEVEL_0_SIZE;
+#else
+		count = MAX(count,
+		    howmany(vm_phys_segs[i].end, VM_LEVEL_0_SIZE));
+#endif
+	}
+
+	for (i = 0; phys_avail[i + 1] != 0; i += 2) {
+#ifdef VM_PHYSSEG_SPARSE
+		count += howmany(phys_avail[i + 1], VM_LEVEL_0_SIZE) -
+		    phys_avail[i] / VM_LEVEL_0_SIZE;
+#else
+		count = MAX(count,
+		    howmany(phys_avail[i + 1], VM_LEVEL_0_SIZE));
+#endif
+	}
+
+	size = count * sizeof(struct vm_phys_stats);
+	new_end = end - round_page(size);
+	stats_array = (void *)(uintptr_t)pmap_map(vaddr, new_end, end,
+	    VM_PROT_READ | VM_PROT_WRITE);
+	bzero(stats_array, size);
+	stats_array_len = size;
+
+	/*
+	 * Return the next available physical address.
+	 */
+	return (new_end);
+}
+
+void
+vm_phys_stats_init(void)
+{
+
 }
 
 #ifdef DDB

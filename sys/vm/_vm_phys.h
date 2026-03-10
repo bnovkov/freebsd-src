@@ -36,18 +36,22 @@
 
 #include <machine/vmparam.h>
 
+
 #ifndef VM_NFREEORDER_MAX
 #define	VM_NFREEORDER_MAX	VM_NFREEORDER
 #endif
 
 struct vm_page;
+struct vm_phys_stats;
 #ifndef VM_PAGE_HAVE_PGLIST
 TAILQ_HEAD(pglist, vm_page);
 #define VM_PAGE_HAVE_PGLIST
 #endif
+TAILQ_HEAD(phys_partpopq, vm_phys_stats);
 
 struct vm_freelist {
 	struct pglist pl;
+	struct phys_partpopq partpopq;
 	int lcnt;
 };
 
@@ -57,6 +61,7 @@ struct vm_phys_seg {
 	vm_page_t	first_page;
 #if VM_NRESERVLEVEL > 0
 	vm_reserv_t	first_reserv;
+	size_t stat_idx;
 #endif
 #ifdef __aarch64__
 	void		*md_first;

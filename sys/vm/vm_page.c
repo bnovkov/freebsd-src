@@ -746,6 +746,7 @@ vm_page_startup(vm_offset_t vaddr)
 	 * data structures, and map it.
 	 */
 	new_end = vm_reserv_startup(&vaddr, new_end);
+	new_end = vm_phys_stats_startup(&vaddr, new_end);
 #endif
 #if MINIDUMP_PAGE_TRACKING && MINIDUMP_STARTUP_PAGE_TRACKING
 	/*
@@ -879,6 +880,7 @@ vm_page_startup(vm_offset_t vaddr)
 	 * Initialize the reservation management system.
 	 */
 	vm_reserv_init();
+	vm_phys_stats_init();
 #endif
 
 	return (vaddr);

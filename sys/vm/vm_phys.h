@@ -86,6 +86,8 @@ void vm_phys_early_startup(void);
 int vm_phys_avail_largest(void);
 vm_paddr_t vm_phys_avail_size(int i);
 bool vm_phys_is_dumpable(vm_paddr_t pa);
+vm_paddr_t vm_phys_stats_startup(vm_offset_t *vaddr, vm_paddr_t end);
+void vm_phys_stats_init(void);
 
 static inline int
 vm_phys_domain(vm_paddr_t pa __numa_used)
