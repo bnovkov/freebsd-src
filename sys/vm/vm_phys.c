@@ -408,7 +408,7 @@ sysctl_vm_phys_locality(SYSCTL_HANDLER_ARGS)
 
 
 #define VM_PHYS_SPAGE_PARTPOPQ_THRESH_HI 511
-#define VM_PHYS_SPAGE_PARTPOPQ_THRESH_LOW 77
+#define VM_PHYS_SPAGE_PARTPOPQ_THRESH_LOW 25
 
 [[clang::optnone]]
 static void __noinline
@@ -480,6 +480,26 @@ vm_phys_update_stats(vm_page_t m, int order, int rem)
 	}
 }
 
+static struct vm_phys_stats *
+vm_page_to_stats(vm_page_t m)
+{
+	size_t idx;
+	struct vm_phys_stats *sp;
+
+#ifdef VM_PHYSSEG_SPARSE
+
+	struct vm_phys_seg *seg = NULL;
+	seg = &vm_phys_segs[m->segind];
+	idx = seg->first_idx + (VM_PAGE_TO_PHYS(m) >> VM_LEVEL_0_SHIFT) -
+	    (seg->start >> VM_LEVEL_0_SHIFT);
+#else
+	idx = VM_PAGE_TO_PHYS(m) >> VM_LEVEL_0_SHIFT;
+#endif
+	sp = &stats_array[idx];
+
+	return (sp);
+}
+
 static void
 vm_freelist_add(struct vm_freelist *fl, vm_page_t m, int order, int pool,
     int tail)
@@ -495,8 +515,11 @@ vm_freelist_add(struct vm_freelist *fl, vm_page_t m, int order, int pool,
 	if (__predict_false(vm_page_astate_load(m).queue != PQ_NONE))
 		vm_page_dequeue(m);
 
+	MPASS(order < VM_NFREEORDER);
 	m->order = order;
 	m->pool = pool;
+	if (vm_page_to_stats(m)->inpartpopq)
+		tail = 0;
 	if (tail)
 		TAILQ_INSERT_TAIL(&fl[order].pl, m, plinks.q);
 	else
@@ -983,6 +1006,60 @@ vm_phys_finish_init(vm_page_t m, int order)
 #endif
 }
 
+static int
+vm_phys_alloc_npages_partpopq(struct vm_freelist dfl [VM_NFREEPOOL][VM_NFREEORDER_MAX], int pool, int npages, vm_page_t ma[])
+{
+	struct vm_freelist *alt, *fl;
+	struct vm_phys_stats *sp;
+	int avail, i, oind;
+	vm_page_t m;
+
+	i = 0;
+	fl = dfl[pool];
+	sp = TAILQ_FIRST(&fl->partpopq);
+	while (sp != NULL) {
+		size_t start, end;
+
+		start = end = 0;
+		struct vm_phys_stats *next_sp = TAILQ_NEXT(sp, partpopq);
+		while (start < VM_LEVEL_0_NPAGES) {
+			bit_ffs_at(sp->popmap, start, VM_LEVEL_0_NPAGES, &start);
+			if (start == -1)
+				break;
+			bit_ffc_at(sp->popmap, start, VM_LEVEL_0_NPAGES, &end);
+			if (end == -1)
+				end = VM_LEVEL_0_NPAGES;
+
+			/* printf("%s: paddr: %p: got range: %zu - %zu, req: %d, got: %d\n", __func__, */
+			/*     (void *)VM_PAGE_TO_PHYS(sp->pages), start, end, npages, i); */
+			m = &sp->pages[start];
+			vm_page_t m_end = &sp->pages[end];
+			while (m < m_end) {
+				MPASS(m->order < VM_NFREEORDER);
+				/* printf("%s: m_paddr: %p, order: %d, got: %d\n", __func__, */
+				/* 	  (void *)VM_PAGE_TO_PHYS(m), m->order, i); */
+				oind = m->order;
+				alt = dfl[m->pool];
+				vm_freelist_rem(alt, m, oind);
+				avail = i + (1 << oind);
+				int lim = imin(npages, avail);
+				while (i < lim && m < m_end)
+					ma[i++] = m++;
+				if (i == npages) {
+					/* printf("%s: m_paddr: %p, order: %d, excess: %d\n", __func__, */
+					/*     (void *)VM_PAGE_TO_PHYS(m), oind, avail - i); */
+					vm_phys_enq_range(m, avail - i, alt,
+									  pool, 1);
+					return (npages);
+				}
+			}
+			start = end;
+		}
+		sp = next_sp;
+	}
+	return (i);
+}
+
 /*
  * Tries to allocate the specified number of pages from the specified pool
  * within the specified domain.  Returns the actual number of allocated pages
@@ -1001,7 +1078,6 @@ int
 vm_phys_alloc_npages(int domain, int pool, int npages, vm_page_t ma[])
 {
 	struct vm_freelist *alt, *fl;
-	struct vm_phys_stats *sp;
 	vm_page_t m;
 	int avail, end, flind, freelist, i, oind, pind;
 
@@ -1018,51 +1094,10 @@ vm_phys_alloc_npages(int domain, int pool, int npages, vm_page_t ma[])
 		if (flind < 0)
 			continue;
 		fl = vm_phys_free_queues[domain][flind][pool];
-		sp = TAILQ_FIRST(&fl->partpopq);
-		while (sp != NULL) {
-			size_t start, end;
-
-			start = end = 0;
-			struct vm_phys_stats *next_sp = TAILQ_NEXT(sp, partpopq);
-			while (start < VM_LEVEL_0_NPAGES) {
-				bit_ffs_at(sp->popmap, start, VM_LEVEL_0_NPAGES, &start);
-				if (start == -1)
-					break;
-				bit_ffc_at(sp->popmap, start, VM_LEVEL_0_NPAGES, &end);
-				if (end == -1)
-					end = VM_LEVEL_0_NPAGES;
-
-				/* printf("%s: paddr: %p: got range: %zu - %zu, req: %d, got: %d\n", __func__, */
-				/*     (void *)VM_PAGE_TO_PHYS(sp->pages), start, end, npages, i); */
-				m = &sp->pages[start];
-				vm_page_t m_end = &sp->pages[end];
-				while (m < m_end) {
-					MPASS(m->order < VM_NFREEORDER);
-					/* printf("%s: m_paddr: %p, order: %d, got: %d\n", __func__, */
-					/* 	  (void *)VM_PAGE_TO_PHYS(m), m->order, i); */
-					oind = m->order;
-					if (m->pool != pool) {
-						m += (1 << oind);
-						continue;
-					}
-					vm_freelist_rem(fl, m, oind);
-					avail = i + (1 << oind);
-					int lim = imin(npages, avail);
-					while (i < lim && m < m_end)
-						ma[i++] = m++;
-					if (i == npages) {
-						/* printf("%s: m_paddr: %p, order: %d, excess: %d\n", __func__, */
-						/*     (void *)VM_PAGE_TO_PHYS(m), oind, avail - i); */
-						vm_phys_enq_range(m, avail - i, fl,
-										  pool, 1);
-						return (npages);
-					}
-				}
-				start = end;
-			}
-			sp = next_sp;
-		}
-		m = NULL;
+		i += vm_phys_alloc_npages_partpopq(vm_phys_free_queues[domain][flind],
+		    pool, npages - i, &ma[i]);
+		if (i == npages)
+			return (npages);
 		for (oind = 0; oind < VM_NFREEORDER; oind++) {
 			while ((m = TAILQ_FIRST(&fl[oind].pl)) != NULL) {
 				vm_freelist_rem(fl, m, oind);
@@ -1080,6 +1115,13 @@ vm_phys_alloc_npages(int domain, int pool, int npages, vm_page_t ma[])
 					return (npages);
 				}
 			}
+		}
+		for (pind = vm_default_freepool; pind < VM_NFREEPOOL;
+		    pind++) {
+			i += vm_phys_alloc_npages_partpopq(vm_phys_free_queues[domain][flind],
+			    pind, npages - i, &ma[i]);
+			if (i == npages)
+				return (npages);
 		}
 		for (oind = VM_NFREEORDER - 1; oind >= 0; oind--) {
 			for (pind = vm_default_freepool; pind < VM_NFREEPOOL;
@@ -1143,22 +1185,23 @@ vm_phys_alloc_freelist_pages(int domain, int freelist, int pool, int order)
 	vm_domain_free_assert_locked(VM_DOMAIN(domain));
 	fl = &vm_phys_free_queues[domain][flind][pool][0];
 #if VM_NRESERVLEVEL > 0
-	if (order == 0 && !TAILQ_EMPTY(&fl->partpopq)) {
-		size_t idx = -1;
-		struct vm_phys_stats *sp;
+	/* if (order == 0 && !TAILQ_EMPTY(&fl->partpopq)) { */
+	/* 	size_t idx = -1; */
+	/* 	struct vm_phys_stats *sp; */
 
-		sp = TAILQ_FIRST(&fl->partpopq);
-		bit_ffs(sp->popmap, VM_LEVEL_0_NPAGES, &idx);
-		MPASS(idx != -1);
-		MPASS(idx < VM_LEVEL_0_NPAGES);
-		/* printf("%s: paddr: %p: got idx: %zu\n", __func__, (void *)VM_PAGE_TO_PHYS(sp->pages), idx); */
-		m = &sp->pages[idx];
-		MPASS(m->order < VM_NFREEORDER);
-		oind = m->order;
-		vm_freelist_rem(fl, m, m->order);
-		vm_phys_split_pages(m, oind, fl, order, pool, 1);
-		return (m);
-	}
+	/* 	sp = TAILQ_FIRST(&fl->partpopq); */
+	/* 	bit_ffs(sp->popmap, VM_LEVEL_0_NPAGES, &idx); */
+	/* 	MPASS(idx != -1); */
+	/* 	MPASS(idx < VM_LEVEL_0_NPAGES); */
+	/* 	/\* printf("%s: paddr: %p: got idx: %zu\n", __func__, (void *)VM_PAGE_TO_PHYS(sp->pages), idx); *\/ */
+	/* 	m = &sp->pages[idx]; */
+	/* 	MPASS(m->order < VM_NFREEORDER); */
+	/* 	oind = m->order; */
+	/* 	alt = &vm_phys_free_queues[domain][flind][m->pool][0]; */
+	/* 	vm_freelist_rem(alt, m, m->order); */
+	/* 	vm_phys_split_pages(m, oind, alt, order, pool, 1); */
+	/* 	return (m); */
+	/* } */
 #endif
 
 	for (oind = order; oind < VM_NFREEORDER; oind++) {
