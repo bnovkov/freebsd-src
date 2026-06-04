@@ -11,6 +11,7 @@ typedef struct patch_set {
 	struct patch_func *funcs;
 
 	/* private fields */
+	bool enabled;
 	module_t mod;
 	TAILQ_ENTRY(patch_set) link;
 } patch_set_t;
@@ -25,7 +26,8 @@ typedef struct patch_func {
 
 	/* private fields */
 	void *old_addr;
-	module_t old_mod;
+	size_t old_size;
+//	linker_file_t lf;
 } patch_func_t;
 
 int patch_excluded(const char *name);

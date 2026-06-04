@@ -53,4 +53,4 @@ static moduledata_t mod_data = {
 	0
 };
 
-DECLARE_MODULE(patch, mod_data, SI_SUB_EXEC, SI_ORDER_ANY);
+DECLARE_MODULE(patch, mod_data, SI_SUB_KLD, SI_ORDER_ANY);
