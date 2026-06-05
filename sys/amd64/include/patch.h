@@ -1,12 +1,9 @@
 #ifndef _MACHINE_PATCH_H_
 #define _MACHINE_PATCH_H_
 
-#include <sys/patch.h>
+#define AMD64_JMP_LEN		5
+#define AMD64_JMP_OPCODE	0xe9
 
-int patch_validate_func(patch_func_t *func);
-
-int patch_apply_func(patch_func_t *func, void *arg);
-
-int patch_rollback_func(patch_func_t *func, void *arg);
+#define PATCH_TEXTLEN		AMD64_JMP_LEN
 
 #endif
