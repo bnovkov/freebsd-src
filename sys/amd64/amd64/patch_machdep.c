@@ -1,22 +1,26 @@
 #include <sys/param.h>
 #include <sys/cdefs.h>
 #include <sys/systm.h>
+#include <sys/patch.h>
 
 #include <machine/cpufunc.h>
 #include <machine/md_var.h>
-#include <machine/patch.h>
 
-#define AMD64_JMPLEN 5
+static inline intptr_t
+patch_target_offset(patch_func_t *func)
+{
+	return (intptr_t)func->new_addr - ((intptr_t)func->old_addr + AMD64_JMP_LEN);
+}
 
 int
 patch_validate_func(patch_func_t *func)
 {
 	intptr_t offset;
 
-	if (func->old_size <= AMD64_JMPLEN)
+	if (func->old_size <= AMD64_JMP_LEN)
 		return (ENOSPC);
 
-	offset = (intptr_t)func->new_addr - ((intptr_t)func->old_addr + AMD64_JMPLEN);
+	offset = patch_target_offset(func);
 	if (offset < INT32_MIN || offset > INT32_MAX)
 		return (ERANGE);
 
@@ -34,11 +38,30 @@ patch_write_text(void *addr, uint8_t *insn, size_t size)
 int
 patch_apply_func(patch_func_t *func, void *arg __unused)
 {
+	int32_t offset;
+	uint8_t insn[AMD64_JMP_LEN];
+
+	// Save previous function prologue
+	memcpy(func->old_text, func->old_addr, AMD64_JMP_LEN);
+
+	// Prepare jump to the new addr
+	insn[0] = AMD64_JMP_OPCODE;
+	offset = patch_target_offset(func);
+	memcpy(&insn[1], &offset, sizeof(offset));
+
+	// Overwrite the prologue with the trampoline
+	patch_write_text(func->old_addr, insn, AMD64_JMP_LEN);
+	func->patched = true;
+
 	return (0);
 }
 
 int
 patch_rollback_func(patch_func_t *func, void *arg __unused)
 {
+	if (func->patched) {
+		patch_write_text(func->old_addr, func->old_text, AMD64_JMP_LEN);
+		func->patched = false;
+	}
 	return (0);
 }

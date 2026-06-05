@@ -8,8 +8,6 @@
 #include <sys/linker.h>
 #include <sys/smp.h>
 
-#include <machine/patch.h>
-
 #include "linker_if.h"
 
 struct patch_param {
