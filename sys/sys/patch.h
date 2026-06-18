@@ -4,6 +4,7 @@
 #include <sys/module.h>
 #include <sys/queue.h>
 #include <sys/tree.h>
+#include <sys/sysctl.h>
 
 #include <machine/patch.h>
 
@@ -11,12 +12,16 @@
  * Represent a whole patch, and contains metadata and a list of funcs
  */
 typedef struct patch_set {
+	const char *name;
 	struct patch_func *funcs;
 
 	/* private fields */
 	bool enabled;
 	module_t mod;
 	TAILQ_ENTRY(patch_set) link;
+
+	struct sysctl_ctx_list ctx;
+	struct sysctl_oid *oidp;
 } patch_set_t;
 
 /*
