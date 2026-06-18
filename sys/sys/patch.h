@@ -39,6 +39,7 @@ typedef struct patch_func {
 //	linker_file_t lf;
 	uint8_t old_text[PATCH_TEXTLEN];
 	RB_ENTRY(patch_func) node;
+	struct patch_set *patch;
 } patch_func_t;
 
 #define PATCH_FOREACH(patch, var)		\

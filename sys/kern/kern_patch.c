@@ -87,7 +87,7 @@ patch_resolve_func(patch_func_t *func)
 	int error;
 
 	if (patch_excluded(func->old_sym)) {
-		printf("patch: %s is forbidden\n", func->old_sym);
+		printf("patch: symbol %s is protected\n", func->old_sym);
 		error = EPERM;
 		return (error);
 	}
@@ -241,28 +241,31 @@ patch_sysctl_enable(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
+static void
+patch_print_func(patch_func_t *func, struct sbuf *sb, bool patch)
+{
+	sbuf_printf(sb, " %p:\n", func->old_addr);
+	sbuf_printf(sb, "\tsymbol:\t%s\n", func->old_sym);
+
+	if (patch)
+		sbuf_printf(sb, "\tpatch:\t%s\n", func->patch->name);
+
+	sbuf_printf(sb, "\ttarget:\t%p\n", func->new_addr);
+}
+
 static int
 patch_sysctl_syms(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf sb;
-	patch_set_t *patch;
 	patch_func_t *func;
 	int error;
 
 	sbuf_new_for_sysctl(&sb, NULL, 512, req);
+	sbuf_putc(&sb, '\n');
 
 	mtx_lock(&patch_mutex);
-	TAILQ_FOREACH(patch, &patch_list, link) {
-		sbuf_putc(&sb, '\n');
-
-		PATCH_FOREACH(patch, func) {
-			sbuf_printf(&sb, " %p:\n", func->old_addr);
-			sbuf_printf(&sb, "\tsymbol:\t%s\n", func->old_sym);
-			sbuf_printf(&sb, "\tpatch:\t%s\n", patch->name);
-			sbuf_printf(&sb, "\ttarget:\t%p\n", func->new_addr);
-			sbuf_printf(&sb, "\tstatus:\t%s\n",
-					func->patched ? "active" : "inactive");
-		}
+	RB_FOREACH(func, patch_syms, &patch_syms) {
+		patch_print_func(func, &sb, true);
 	}
 	mtx_unlock(&patch_mutex);
 
@@ -275,19 +278,54 @@ SYSCTL_PROC(_kern_patch, OID_AUTO, syms,
 	CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
 	NULL, 0, patch_sysctl_syms, "A", "all patched symbols");
 
+static int
+patch_sysctl_set_syms(SYSCTL_HANDLER_ARGS)
+{
+	struct sbuf sb;
+	patch_set_t *patch;
+	patch_func_t *func;
+	int error;
+
+	sbuf_new_for_sysctl(&sb, NULL, 512, req);
+	sbuf_putc(&sb, '\n');
+
+	mtx_lock(&patch_mutex);
+	patch = arg1;
+	PATCH_FOREACH(patch, func) {
+		patch_print_func(func, &sb, false);
+	}
+	mtx_unlock(&patch_mutex);
+
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
+}
+
 int
 patch_register(patch_set_t *patch)
 {
 	patch_func_t *func;
+	patch_set_t *other;
 	int error;
 
 	PATCH_FOREACH(patch, func) {
+		func->patch = patch;
+
 		error = patch_resolve_func(func);
 		if (error != 0)
 			return (error);
 	}
 
 	mtx_lock(&patch_mutex);
+
+	TAILQ_FOREACH(other, &patch_list, link) {
+		if (!strcmp(other->name, patch->name)) {
+			printf("patch: already registered patch named '%s'\n", patch->name);
+			mtx_unlock(&patch_mutex);
+			return (EEXIST);
+		}
+	}
+
 	TAILQ_INSERT_TAIL(&patch_list, patch, link);
 	mtx_unlock(&patch_mutex);
 
@@ -302,6 +340,10 @@ patch_register(patch_set_t *patch)
 	SYSCTL_ADD_PROC(&patch->ctx, SYSCTL_CHILDREN(patch->oidp), OID_AUTO,
 			"enable", CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE,
 			patch, 0, patch_sysctl_enable, "CU", "toggle patch");
+
+	SYSCTL_ADD_PROC(&patch->ctx, SYSCTL_CHILDREN(patch->oidp), OID_AUTO,
+			"syms", CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			patch, 0, patch_sysctl_set_syms, "A", "targeted symbols");
 
 	return (error);
 }
