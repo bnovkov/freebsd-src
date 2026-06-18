@@ -30,3 +30,8 @@
 	max-frequency = <208000000>;
 	status = "okay";
 };
+
+&emmc {
+	max-frequency = <200000000>;
+	status = "okay";
+};
