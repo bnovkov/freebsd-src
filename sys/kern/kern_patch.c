@@ -13,12 +13,28 @@
 struct patch_param {
 	patch_set_t *patch;
 	int cpuid;
-	int (*op)(patch_func_t *, void *);
+	int (*action)(patch_func_t *, void *);
 	void *arg;
 };
 
-static TAILQ_HEAD(, patch_set)	patch_list;
-static struct mtx		patch_mutex;
+static TAILQ_HEAD(, patch_set)		patch_list;
+static struct mtx			patch_mutex;
+static RB_HEAD(patch_syms, patch_func)	patch_syms;
+
+static inline int
+patch_func_cmp(patch_func_t *a, patch_func_t *b)
+{
+	uintptr_t addr_a = (uintptr_t)a->old_addr;
+	uintptr_t addr_b = (uintptr_t)b->old_addr;
+
+	if (addr_a < addr_b)
+		return (-1);
+	if (addr_a > addr_b)
+		return (1);
+	return (0);
+}
+
+RB_GENERATE_STATIC(patch_syms, patch_func, node, patch_func_cmp);
 
 int
 patch_excluded(const char *name)
@@ -46,36 +62,24 @@ patch_excluded(const char *name)
 	return (0);
 }
 
-static int
-patch_iterate_set(patch_set_t *patch, int (*op)(patch_func_t *, void *),
-		  void *arg)
-{
-	patch_func_t *func;
-	int error;
-
-	for (func = patch->funcs; func->old_sym != NULL; func++) {
-		error = op(func, arg);
-		if (error != 0)
-			return (error);
-	}
-
-	return (0);
-}
-
 static void
 patch_rendezvous_action(void *arg)
 {
-	struct patch_param *param = (struct patch_param *)arg;
+	struct patch_param *param;
+	patch_func_t *func;
 
+	param = (struct patch_param *)arg;
 	if (curcpu == param->cpuid) {
-		patch_iterate_set(param->patch, param->op, param->arg);
+		PATCH_FOREACH(param->patch, func) {
+			param->action(func, param->arg);
+		}
 	}
 
 	// TODO: Flush icache here
 }
 
 static int
-patch_resolve_func(patch_func_t *func, void *arg)
+patch_resolve_func(patch_func_t *func)
 {
 	linker_symval_t symval;
 	c_linker_sym_t sym;
@@ -111,55 +115,138 @@ patch_resolve_func(patch_func_t *func, void *arg)
 	return (0);
 }
 
-int
-patch_load_set(patch_set_t *patch)
+static int
+patch_apply_func(patch_func_t *func, void *arg __unused)
 {
+	if (!func->patched) {
+		patch_install_trampoline(func);
+		func->patched = true;
+	}
+
+	return (0);
+}
+
+static int
+patch_rollback_func(patch_func_t *func, void *arg __unused)
+{
+	if (func->patched) {
+		patch_restore_trampoline(func);
+		func->patched = false;
+	}
+
+	return (0);
+}
+
+int
+patch_register(patch_set_t *patch)
+{
+	patch_func_t *func;
 	int error;
 
-	error = patch_iterate_set(patch, patch_resolve_func, NULL);
-	if (error == 0) {
-		mtx_lock(&patch_mutex);
-
-		// Debug only
-		//for (func = patch->funcs; func->old_sym != NULL; func++) {
-		//	printf("patch: %s <%p>  ==>  <%p>\n",
-		//		func->old_sym, func->old_addr, func->new_addr);
-		//}
-
-		struct patch_param param = {
-			.patch	= patch,
-			.cpuid	= curcpu,
-			.op	= patch_apply_func,
-			.arg	= NULL,
-		};
-
-		smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
-
-		TAILQ_INSERT_TAIL(&patch_list, patch, link);
-		patch->enabled = true;
-
-		mtx_unlock(&patch_mutex);
+	PATCH_FOREACH(patch, func) {
+		error = patch_resolve_func(func);
+		if (error != 0)
+			return (error);
 	}
+
+	mtx_lock(&patch_mutex);
+	TAILQ_INSERT_TAIL(&patch_list, patch, link);
+	mtx_unlock(&patch_mutex);
 
 	return (error);
 }
 
 int
-patch_unload_set(patch_set_t *patch)
+patch_unregister(patch_set_t *patch)
 {
+	int error;
+
+	mtx_lock(&patch_mutex);
+	if (patch->enabled) {
+		error = EBUSY;
+	} else {
+		error = 0;
+		TAILQ_REMOVE(&patch_list, patch, link);
+	}
+
+	mtx_unlock(&patch_mutex);
+	return (error);
+}
+
+int
+patch_enable(patch_set_t *patch)
+{
+	patch_func_t *func, *dup;
+	int error, count;
+
+	mtx_lock(&patch_mutex);
+
+	if (patch->enabled) {
+		mtx_unlock(&patch_mutex);
+		return (EALREADY);
+	}
+
+	count = 0;
+	error = 0;
+
+	PATCH_FOREACH(patch, func) {
+		dup = RB_INSERT(patch_syms, &patch_syms, func);
+		if (dup != NULL) {
+		    printf("patch: %s is already patched\n", func->old_sym);
+		    error = EBUSY;
+		    break;
+		}
+		count++;
+	}
+
+	if (error != 0) {
+		PATCH_FOREACH(patch, func) {
+			if (count-- == 0)
+				break;
+
+			RB_REMOVE(patch_syms, &patch_syms, func);
+		}
+
+		mtx_unlock(&patch_mutex);
+		return (error);
+	}
+
+	struct patch_param param = {
+		.patch	= patch,
+		.cpuid	= curcpu,
+		.action	= patch_apply_func,
+		.arg	= NULL,
+	};
+
+	smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
+
+	patch->enabled = true;
+
+	mtx_unlock(&patch_mutex);
+	return (error);
+}
+
+int
+patch_disable(patch_set_t *patch)
+{
+	patch_func_t *func;
+
 	mtx_lock(&patch_mutex);
 
 	if (patch->enabled) {
 		struct patch_param param = {
 			.patch	= patch,
 			.cpuid	= curcpu,
-			.op	= patch_rollback_func,
+			.action	= patch_rollback_func,
 			.arg	= NULL,
 		};
 
 		smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
 
-		TAILQ_REMOVE(&patch_list, patch, link);
+		PATCH_FOREACH(patch, func) {
+			RB_REMOVE(patch_syms, &patch_syms, func);
+		}
+
 		patch->enabled = false;
 	}
 
@@ -171,6 +258,7 @@ static void
 patch_init(void *dummy __unused)
 {
 	TAILQ_INIT(&patch_list);
+	RB_INIT(&patch_syms);
 	mtx_init(&patch_mutex, "patch", NULL, MTX_DEF);
 
 	printf("patch: kernel patching available\n");

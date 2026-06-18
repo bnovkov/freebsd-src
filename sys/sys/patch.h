@@ -3,6 +3,7 @@
 
 #include <sys/module.h>
 #include <sys/queue.h>
+#include <sys/tree.h>
 
 #include <machine/patch.h>
 
@@ -32,19 +33,29 @@ typedef struct patch_func {
 	size_t old_size;
 //	linker_file_t lf;
 	uint8_t old_text[PATCH_TEXTLEN];
+	RB_ENTRY(patch_func) node;
 } patch_func_t;
+
+#define PATCH_FOREACH(patch, var)		\
+	for ((var) = (patch)->funcs;		\
+	    (var)->old_sym != NULL;		\
+	    (var)++)
 
 int patch_excluded(const char *name);
 
-int patch_load_set(patch_set_t *patch);
+int patch_register(patch_set_t *patch);
 
-int patch_unload_set(patch_set_t *patch);
+int patch_unregister(patch_set_t *patch);
+
+int patch_enable(patch_set_t *patch);
+
+int patch_disable(patch_set_t *patch);
 
 // Machine dependant below
 int patch_validate_func(patch_func_t *func);
 
-int patch_apply_func(patch_func_t *func, void *arg);
+void patch_install_trampoline(patch_func_t *func);
 
-int patch_rollback_func(patch_func_t *func, void *arg);
+void patch_restore_trampoline(patch_func_t *func);
 
 #endif
