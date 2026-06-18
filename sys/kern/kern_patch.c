@@ -7,6 +7,7 @@
 #include <sys/mutex.h>
 #include <sys/linker.h>
 #include <sys/smp.h>
+#include <sys/sbuf.h>
 
 #include "linker_if.h"
 
@@ -138,42 +139,6 @@ patch_rollback_func(patch_func_t *func, void *arg __unused)
 }
 
 int
-patch_register(patch_set_t *patch)
-{
-	patch_func_t *func;
-	int error;
-
-	PATCH_FOREACH(patch, func) {
-		error = patch_resolve_func(func);
-		if (error != 0)
-			return (error);
-	}
-
-	mtx_lock(&patch_mutex);
-	TAILQ_INSERT_TAIL(&patch_list, patch, link);
-	mtx_unlock(&patch_mutex);
-
-	return (error);
-}
-
-int
-patch_unregister(patch_set_t *patch)
-{
-	int error;
-
-	mtx_lock(&patch_mutex);
-	if (patch->enabled) {
-		error = EBUSY;
-	} else {
-		error = 0;
-		TAILQ_REMOVE(&patch_list, patch, link);
-	}
-
-	mtx_unlock(&patch_mutex);
-	return (error);
-}
-
-int
 patch_enable(patch_set_t *patch)
 {
 	patch_func_t *func, *dup;
@@ -252,6 +217,114 @@ patch_disable(patch_set_t *patch)
 
 	mtx_unlock(&patch_mutex);
 	return (0);
+}
+
+SYSCTL_NODE(_kern, OID_AUTO, patch, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "Kernel live-patching");
+
+static int
+patch_sysctl_enable(SYSCTL_HANDLER_ARGS)
+{
+	patch_set_t *patch = arg1;
+	bool req_enabled = patch->enabled;
+	int error;
+
+	error = sysctl_handle_bool(oidp, &req_enabled, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	if (req_enabled && !patch->enabled)
+		error = patch_enable(patch);
+	else if (!req_enabled && patch->enabled)
+		error = patch_disable(patch);
+
+	return (error);
+}
+
+static int
+patch_sysctl_syms(SYSCTL_HANDLER_ARGS)
+{
+	struct sbuf sb;
+	patch_set_t *patch;
+	patch_func_t *func;
+	int error;
+
+	sbuf_new_for_sysctl(&sb, NULL, 512, req);
+
+	mtx_lock(&patch_mutex);
+	TAILQ_FOREACH(patch, &patch_list, link) {
+		sbuf_putc(&sb, '\n');
+
+		PATCH_FOREACH(patch, func) {
+			sbuf_printf(&sb, " %p:\n", func->old_addr);
+			sbuf_printf(&sb, "\tsymbol:\t%s\n", func->old_sym);
+			sbuf_printf(&sb, "\tpatch:\t%s\n", patch->name);
+			sbuf_printf(&sb, "\ttarget:\t%p\n", func->new_addr);
+			sbuf_printf(&sb, "\tstatus:\t%s\n",
+					func->patched ? "active" : "inactive");
+		}
+	}
+	mtx_unlock(&patch_mutex);
+
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
+}
+
+SYSCTL_PROC(_kern_patch, OID_AUTO, syms,
+	CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+	NULL, 0, patch_sysctl_syms, "A", "all patched symbols");
+
+int
+patch_register(patch_set_t *patch)
+{
+	patch_func_t *func;
+	int error;
+
+	PATCH_FOREACH(patch, func) {
+		error = patch_resolve_func(func);
+		if (error != 0)
+			return (error);
+	}
+
+	mtx_lock(&patch_mutex);
+	TAILQ_INSERT_TAIL(&patch_list, patch, link);
+	mtx_unlock(&patch_mutex);
+
+	// Add sysctl nodes
+	sysctl_ctx_init(&patch->ctx);
+
+	patch->oidp = SYSCTL_ADD_NODE(&patch->ctx,
+			SYSCTL_STATIC_CHILDREN(_kern_patch), OID_AUTO,
+			patch->name, CTLFLAG_RW | CTLFLAG_MPSAFE,
+			0, "patch module");
+
+	SYSCTL_ADD_PROC(&patch->ctx, SYSCTL_CHILDREN(patch->oidp), OID_AUTO,
+			"enable", CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE,
+			patch, 0, patch_sysctl_enable, "CU", "toggle patch");
+
+	return (error);
+}
+
+int
+patch_unregister(patch_set_t *patch)
+{
+	int error;
+
+	mtx_lock(&patch_mutex);
+	if (patch->enabled) {
+		error = EBUSY;
+	} else {
+		error = 0;
+		TAILQ_REMOVE(&patch_list, patch, link);
+	}
+
+	mtx_unlock(&patch_mutex);
+
+	if (error == 0) {
+		sysctl_ctx_free(&patch->ctx);
+	}
+	return (error);
 }
 
 static void

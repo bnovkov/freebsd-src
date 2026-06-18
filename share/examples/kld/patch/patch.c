@@ -31,6 +31,7 @@ static patch_func_t funcs[] = {
 };
 
 static patch_set_t patch = {
+	.name = "testpatch",
 	.funcs = funcs,
 };
 
@@ -39,6 +40,7 @@ patch_handler(module_t mod, int cmd, void *arg)
 {
 	switch (cmd) {
 	case MOD_LOAD:
+		patch.mod = mod;
 		return patch_register(&patch);
 	case MOD_UNLOAD:
 		return patch_unregister(&patch);
