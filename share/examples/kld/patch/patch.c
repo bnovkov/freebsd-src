@@ -39,9 +39,9 @@ patch_handler(module_t mod, int cmd, void *arg)
 {
 	switch (cmd) {
 	case MOD_LOAD:
-		return patch_load_set(&patch);
+		return patch_register(&patch);
 	case MOD_UNLOAD:
-		return patch_unload_set(&patch);
+		return patch_unregister(&patch);
 	default:
 		return (EOPNOTSUPP);
 	}

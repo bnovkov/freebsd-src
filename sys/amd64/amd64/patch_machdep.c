@@ -35,13 +35,13 @@ patch_write_text(void *addr, uint8_t *insn, size_t size)
 	restore_wp(wp);
 }
 
-int
-patch_apply_func(patch_func_t *func, void *arg __unused)
+void
+patch_install_trampoline(patch_func_t *func)
 {
 	int32_t offset;
 	uint8_t insn[AMD64_JMP_LEN];
 
-	// Save previous function prologue
+	// Save previous instruction
 	memcpy(func->old_text, func->old_addr, AMD64_JMP_LEN);
 
 	// Prepare jump to the new addr
@@ -51,17 +51,10 @@ patch_apply_func(patch_func_t *func, void *arg __unused)
 
 	// Overwrite the prologue with the trampoline
 	patch_write_text(func->old_addr, insn, AMD64_JMP_LEN);
-	func->patched = true;
-
-	return (0);
 }
 
-int
-patch_rollback_func(patch_func_t *func, void *arg __unused)
+void
+patch_restore_trampoline(patch_func_t *func)
 {
-	if (func->patched) {
-		patch_write_text(func->old_addr, func->old_text, AMD64_JMP_LEN);
-		func->patched = false;
-	}
-	return (0);
+	patch_write_text(func->old_addr, func->old_text, AMD64_JMP_LEN);
 }
