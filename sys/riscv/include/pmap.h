@@ -78,6 +78,8 @@ struct pmap {
 	struct pmap_statistics	pm_stats;	/* pmap statictics */
 	pd_entry_t		*pm_top;	/* top-level page table page */
 	u_long			pm_satp;	/* value for SATP register */
+	uint16_t        pm_asid;
+	uint32_t        pm_gen;
 	cpuset_t		pm_active;	/* active on cpus */
 	TAILQ_HEAD(,pv_chunk)	pm_pvchunk;	/* list of mappings in pmap */
 	LIST_ENTRY(pmap)	pm_list;	/* List of all pmaps */
