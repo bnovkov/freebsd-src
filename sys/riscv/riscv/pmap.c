@@ -299,6 +299,12 @@ static COUNTER_U64_DEFINE_EARLY(pmap_l1_demotions);
 SYSCTL_COUNTER_U64(_vm_pmap_l1, OID_AUTO, demotions, CTLFLAG_RD,
     &pmap_l1_demotions, "L1 (1GB) page demotions");
 
+static SYSCTL_NODE(_vm_pmap, OID_AUTO, asid, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+    "ASID allocator");
+int asid_bits;
+SYSCTL_INT(_vm_pmap_asid, OID_AUTO, bits, CTLFLAG_RD, &asid_bits, 0,
+    "The number of bits in an ASID");
+
 /*
  * Data for the pv entry allocation mechanism
  */
@@ -913,12 +919,17 @@ pmap_create_pagetables(vm_paddr_t kernstart, vm_size_t kernlen,
 	return (freemempos);
 }
 
+#define PMAP_ASID_SATP_OFFS  44
+#define PMAP_ASID_SATP_NBITS 16
+#define PMAP_ASID_MASK ((uint64_t)((1 << PMAP_ASID_SATP_NBITS) - 1) << PMAP_ASID_SATP_OFFS)
+
 /*
  *	Bootstrap the system enough to run with virtual memory.
  */
 void
 pmap_bootstrap(vm_paddr_t kernstart, vm_size_t kernlen)
 {
+	uint64_t probe_satp, old_satp;
 	vm_paddr_t freemempos, pa;
 	vm_paddr_t root_pt_phys;
 	vm_offset_t freeva;
@@ -927,6 +938,12 @@ pmap_bootstrap(vm_paddr_t kernstart, vm_size_t kernlen)
 	int i;
 
 	printf("pmap_bootstrap %lx %lx\n", kernstart, kernlen);
+
+	probe_satp = old_satp = csr_read(satp);
+	probe_satp |= PMAP_ASID_MASK;
+	csr_write(satp, probe_satp);
+	asid_bits = fls((csr_read64(satp) & PMAP_ASID_MASK) >> PMAP_ASID_SATP_OFFS);
+	csr_write(satp, old_satp);
 
 	mtx_init(&kernel_pmap->pm_mtx, "kernel pmap", NULL, MTX_DEF);
 	TAILQ_INIT(&kernel_pmap->pm_pvchunk);
