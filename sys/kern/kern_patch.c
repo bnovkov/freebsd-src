@@ -241,20 +241,8 @@ patch_sysctl_enable(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-static void
-patch_print_func(patch_func_t *func, struct sbuf *sb, bool patch)
-{
-	sbuf_printf(sb, " %p:\n", func->old_addr);
-	sbuf_printf(sb, "\tsymbol:\t%s\n", func->old_sym);
-
-	if (patch)
-		sbuf_printf(sb, "\tpatch:\t%s\n", func->patch->name);
-
-	sbuf_printf(sb, "\ttarget:\t%p\n", func->new_addr);
-}
-
 static int
-patch_sysctl_syms(SYSCTL_HANDLER_ARGS)
+patch_sysctl_trampolines(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf sb;
 	patch_func_t *func;
@@ -265,7 +253,10 @@ patch_sysctl_syms(SYSCTL_HANDLER_ARGS)
 
 	mtx_lock(&patch_mutex);
 	RB_FOREACH(func, patch_syms, &patch_syms) {
-		patch_print_func(func, &sb, true);
+		sbuf_printf(&sb, " %p:\n", func->old_addr);
+		sbuf_printf(&sb, "\tsymbol:\t%s\n", func->old_sym);
+		sbuf_printf(&sb, "\ttarget:\t%p\n", func->new_addr);
+		sbuf_printf(&sb, "\tpatch:\t%s\n", func->patch->name);
 	}
 	mtx_unlock(&patch_mutex);
 
@@ -274,12 +265,12 @@ patch_sysctl_syms(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-SYSCTL_PROC(_kern_patch, OID_AUTO, syms,
+SYSCTL_PROC(_kern_patch, OID_AUTO, trampolines,
 	CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
-	NULL, 0, patch_sysctl_syms, "A", "all patched symbols");
+	NULL, 0, patch_sysctl_trampolines, "A", "print the patched functions");
 
 static int
-patch_sysctl_set_syms(SYSCTL_HANDLER_ARGS)
+patch_sysctl_syms(SYSCTL_HANDLER_ARGS)
 {
 	struct sbuf sb;
 	patch_set_t *patch;
@@ -292,7 +283,12 @@ patch_sysctl_set_syms(SYSCTL_HANDLER_ARGS)
 	mtx_lock(&patch_mutex);
 	patch = arg1;
 	PATCH_FOREACH(patch, func) {
-		patch_print_func(func, &sb, false);
+		sbuf_printf(&sb, " %s\n", func->old_sym);
+		sbuf_printf(&sb, "\taddr:\t%p\n", func->old_addr);
+		sbuf_printf(&sb, "\ttarget:\t%p\n", func->new_addr);
+		sbuf_printf(&sb, "\tpatch:\t%s\n", func->patch->name);
+		sbuf_printf(&sb, "\tinstalled:\t%s\n",
+				func->patched ? "yes" : "no");
 	}
 	mtx_unlock(&patch_mutex);
 
@@ -343,7 +339,7 @@ patch_register(patch_set_t *patch)
 
 	SYSCTL_ADD_PROC(&patch->ctx, SYSCTL_CHILDREN(patch->oidp), OID_AUTO,
 			"syms", CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			patch, 0, patch_sysctl_set_syms, "A", "targeted symbols");
+			patch, 0, patch_sysctl_syms, "A", "targeted symbols");
 
 	return (error);
 }
