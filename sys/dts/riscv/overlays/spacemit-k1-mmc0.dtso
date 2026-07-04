@@ -15,7 +15,7 @@
 		clock-names = "core", "io";
 		resets = <&syscon_apmu RESET_SDH_AXI>,
 			 <&syscon_apmu RESET_SDH0>;
-		reset-names = "axi", "sdh";
+		reset-names = "axi", "sdh0";
 		interrupts = <99>;
 		status = "disabled";
 	};
@@ -33,5 +33,8 @@
 
 &emmc {
 	max-frequency = <200000000>;
+        resets = <&syscon_apmu RESET_SDH_AXI>,
+                             <&syscon_apmu RESET_SDH2>;
+	reset-names = "axi", "sdh2";
 	status = "okay";
 };

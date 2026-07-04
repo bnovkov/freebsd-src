@@ -403,7 +403,7 @@ sdhci_fdt_attach(device_t dev)
 		sc->wp_inverted = true;
 	if (OF_hasprop(node, "disable-wp"))
 		sc->wp_disabled = true;
-
+	sc->max_clk = 104000000;
 	/* Allocate IRQ. */
 	rid = 0;
 	sc->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid,

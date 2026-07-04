@@ -97,6 +97,7 @@
 #define	SDHCI_QUIRK_BROKEN_SDMA_BOUNDARY		(1 << 30)
 /* Slot type in SDHCI_CAPABILITIES reads as embedded, but slot is removable. */
 #define	SDHCI_QUIRK_SLOTTYPE_BROKEN			(1U << 31)
+#define	SDHCI_QUIRK_WAIT_SEND_CMD		(1 << 32)
 
 /*
  * Controller registers

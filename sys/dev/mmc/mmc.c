@@ -601,8 +601,9 @@ mmc_send_app_op_cond(struct mmc_softc *sc, uint32_t ocr, uint32_t *rocr)
 		if (err != MMC_ERR_NONE)
 			break;
 		if ((cmd.resp[0] & MMC_OCR_CARD_BUSY) ||
-		    (ocr & MMC_OCR_VOLTAGE) == 0)
+		    (ocr & MMC_OCR_VOLTAGE) == 0) {
 			break;
+		}
 		err = MMC_ERR_TIMEOUT;
 		mmc_ms_delay(10);
 	}

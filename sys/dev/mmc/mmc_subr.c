@@ -53,6 +53,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/kdb.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/time.h>
@@ -94,8 +95,9 @@ mmc_wait_for_cmd(device_t busdev, device_t dev, struct mmc_command *cmd,
 		sc = device_get_softc(busdev);
 		if (sc->squelched == 0 && ppsratecheck(&sc->log_time,
 		    &sc->log_count, LOG_PPS)) {
-			device_printf(sc->dev, "CMD%d failed, RESULT: %d\n",
-			    cmd->opcode, err);
+			device_printf(sc->dev, "CMD%d failed, RESP: 0x%x, RESULT: %d\n",
+			    cmd->opcode, cmd->resp[0], err);
+			kdb_backtrace();
 		}
 	}
 

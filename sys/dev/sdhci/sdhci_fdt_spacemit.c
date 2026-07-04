@@ -69,18 +69,61 @@ sdhci_fdt_spacemit_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
+static void
+sdhci_spacemit_fdt_reset(device_t dev, struct sdhci_slot *slot, uint8_t mask)
+{
+	struct sdhci_fdt_softc *sc;
+	struct resource *res;
+	uint32_t reg;
+
+	sdhci_generic_reset(dev, slot, mask);
+
+	if (!(mask & SDHCI_RESET_ALL))
+		return;
+
+	sc = device_get_softc(dev);
+	res = sc->mem_res[0];
+
+	if (!ofw_bus_has_prop(dev, "no-mmc")) {
+		reg = bus_read_4(res, PHY_CTRL_REG);
+		device_printf(dev, "%s: PHY_CTRL_REG: 0x%x\n", __func__, reg);
+		reg |= PHY_FUNC_EN | PHY_PLL_LOCK;
+		bus_write_4(res, PHY_CTRL_REG, reg);
+
+		reg = bus_read_4(res, PHY_PADCFG_REG);
+		device_printf(dev, "%s: PHY_PADCFG_REG: 0x%x\n", __func__, reg);
+		reg |= RX_BIAS_SEL | 0x7;
+		bus_write_4(res, PHY_PADCFG_REG, reg);
+		reg = bus_read_4(res, MMC_CTRL_REG);
+		device_printf(dev, "%s: MMC_CTRL_REG: 0x%x\n", __func__, reg);
+		reg |= MMC_MODE;
+		bus_write_4(res, MMC_CTRL_REG, reg);
+	} else {
+		reg = bus_read_4(res, TX_CFG_REG);
+		reg |= TX_INT_CLK_SEL;
+		bus_write_4(res, TX_CFG_REG, reg);
+	}
+	reg = bus_read_4(res, MMC_CTRL_REG);
+	device_printf(dev, "%s: MMC_CTRL_REG: 0x%x\n", __func__, reg);
+	reg &= ~ENHANCE_STROBE_EN;
+	bus_write_4(res, MMC_CTRL_REG, reg);
+}
+
 static int
 sdhci_fdt_spacemit_attach(device_t dev)
 {
 	struct sdhci_fdt_softc *sc;
-	struct resource *res;
 	clk_t clk_core;
 	hwreset_t rst;
 
 	sc = device_get_softc(dev);
 	sc->quirks = SDHCI_QUIRK_PRESET_VALUE_BROKEN |
 		SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
-		SDHCI_QUIRK_PRESET_VALUE_BROKEN;
+		SDHCI_QUIRK_PRESET_VALUE_BROKEN |
+		SDHCI_QUIRK_BROKEN_AUTO_STOP |
+		SDHCI_QUIRK_WAIT_WHILE_BUSY |
+		SDHCI_QUIRK_BROKEN_MMC_HS200 |
+		SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK;
 
 	if (clk_get_by_ofw_name(dev, 0, "core", &clk_core)) {
 		device_printf(dev, "cannot get core clock\n");
@@ -109,36 +152,9 @@ sdhci_fdt_spacemit_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	if (!ofw_bus_has_prop(dev, "no-mmc")) {
-		reg = bus_read_4(res, MMC_CTRL_REG);
-		device_printf(dev, "%s: MMC_CTRL_REG: 0x%x\n", __func__, reg);
-		reg &= ~ENHANCE_STROBE_EN;
-		reg |= MMC_MODE;
-		bus_write_4(res, MMC_CTRL_REG, reg);
-
-		reg = bus_read_4(res, PHY_CTRL_REG);
-		device_printf(dev, "%s: PHY_CTRL_REG: 0x%x\n", __func__, reg);
-		reg |= PHY_FUNC_EN | PHY_PLL_LOCK;
-		bus_write_4(res, PHY_CTRL_REG, reg);
-
-		reg = bus_read_4(res, PHY_PADCFG_REG);
-		device_printf(dev, "%s: PHY_PADCFG_REG: 0x%x\n", __func__, reg);
-		reg |= RX_BIAS_SEL;
-		bus_write_4(res, PHY_PADCFG_REG, reg);
-	} else {
-		reg = bus_read_4(res, MMC_CTRL_REG);
-		device_printf(dev, "%s: MMC_CTRL_REG: 0x%x\n", __func__, reg);
-		reg &= ~ENHANCE_STROBE_EN;
-		bus_write_4(res, MMC_CTRL_REG, reg);
-
-		bus_write_4(res, MMC_CTRL_REG, reg);
-		reg = bus_read_4(res, TX_CFG_REG);
-		reg |= TX_INT_CLK_SEL;
-		bus_write_4(res, TX_CFG_REG, reg);
-	}
-	bus_release_resource(dev, res);
-
-	return (sdhci_fdt_attach(dev));
+	int err = sdhci_fdt_attach(dev);
+	sc->slots[0].host.caps &= ~(MMC_CAP_MMC_HS400 | MMC_CAP_MMC_ENH_STROBE);
+	return (err);
 }
 
 static int
@@ -161,6 +177,7 @@ static device_method_t sdhci_fdt_spacemit_methods[] = {
 	DEVMETHOD(device_attach,	sdhci_fdt_spacemit_attach),
 
 	DEVMETHOD(sdhci_set_clock,	sdhci_fdt_spacemit_set_clock),
+	DEVMETHOD(sdhci_reset,			sdhci_spacemit_fdt_reset),
 	DEVMETHOD_END
 };
 extern driver_t sdhci_fdt_driver;

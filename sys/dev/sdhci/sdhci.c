@@ -1861,6 +1861,8 @@ sdhci_start_command(struct sdhci_slot *slot, struct mmc_command *cmd)
 
 	/* Start command. */
 	WR2(slot, SDHCI_COMMAND_FLAGS, (cmd->opcode << 8) | (flags & 0xff));
+	if ((slot->quirks & SDHCI_QUIRK_WAIT_SEND_CMD) != 0)
+		DELAY(1000);
 	/* Start timeout callout. */
 	callout_reset(&slot->timeout_callout, slot->timeout * hz,
 	    sdhci_timeout, slot);
