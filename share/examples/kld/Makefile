@@ -68,6 +68,6 @@
 
 PACKAGE=examples
 FILESDIR=${SHAREDIR}/examples/kld
-SUBDIR=	cdev dyn_sysctl firmware khelp random_adaptor syscall patch
+SUBDIR=	cdev dyn_sysctl firmware khelp random_adaptor syscall kpatch
 
 .include <bsd.subdir.mk>
