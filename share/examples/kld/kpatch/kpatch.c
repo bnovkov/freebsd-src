@@ -1,0 +1,37 @@
+#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/kpatch.h>
+#include <sys/kernel.h>
+#include <sys/sysctl.h>
+
+#define HELPER(str) \
+	do { \
+		char tmpname[MAXHOSTNAMELEN]; \
+		int error, len; \
+		len = arg2; \
+		KASSERT(len <= sizeof(tmpname), \
+		    ("length %d too long for %s", len, __func__)); \
+		strlcpy(tmpname, str, len); \
+		error = sysctl_handle_string(oidp, tmpname, len, req); \
+		return (error); \
+	} while (0)
+
+static int
+patch_sysctl_hostname1(SYSCTL_HANDLER_ARGS)
+{
+	HELPER("PATCHED");
+}
+PATCH_FUNC(test1, patch_sysctl_hostname1,
+	   "sysctl_hostname", "kernel", "kern_mib.c");
+
+static int
+patch_sysctl_hostname2(SYSCTL_HANDLER_ARGS)
+{
+	HELPER("HELLO");
+}
+PATCH_FUNC(test2, patch_sysctl_hostname2,
+	   "sysctl_hostname", "kernel", "kern_mib.c");
+
+PATCH_DECLARE(test1, "A test patch", 0);
+PATCH_DECLARE(test2, "Another test patch", 0);

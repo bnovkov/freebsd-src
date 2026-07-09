@@ -61,6 +61,11 @@
 #include <ddb/ddb.h>
 #endif
 
+//#ifdef KPATCH
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+//#endif
+
 #include <net/vnet.h>
 
 #include <security/mac/mac_framework.h>
@@ -449,6 +454,35 @@ SYSINIT(linker_kernel, SI_SUB_KLD, SI_ORDER_ANY, linker_init_kernel_modules,
     NULL);
 
 static int
+linker_file_register_patches(linker_file_t lf)
+{
+	struct kpatch_metadata **patches;
+	struct kpatch_func_metadata **funcs;
+	int pcount, fcount, error;
+
+	sx_assert(&kld_sx, SA_XLOCKED);
+
+	error = linker_file_lookup_set(lf, PATCH_SETNAME, &patches, NULL, &pcount);
+	if (error != 0)
+		patches = NULL;
+
+	error = linker_file_lookup_set(lf, PATCH_FUNC_SETNAME, &funcs, NULL, &fcount);
+	if (error != 0)
+		funcs = NULL;
+
+	if (!patches && !funcs)
+		return (0);
+
+	if (!patches && funcs) {
+		printf("Malformed patch file\n");
+		return (ENOEXEC);
+	}
+
+	error = patch_register_file(lf, patches, pcount, funcs, fcount);
+	return (error);
+}
+
+static int
 linker_load_file(const char *filename, linker_file_t *result)
 {
 	linker_class_t lc;
@@ -495,6 +529,13 @@ linker_load_file(const char *filename, linker_file_t *result)
 				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 				return (error);
 			}
+
+			error = linker_file_register_patches(lf);
+			if (error) {
+				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
+				return (error);
+			}
+
 			modules = !TAILQ_EMPTY(&lf->modules);
 			linker_file_register_sysctls(lf, false);
 #ifdef VIMAGE
@@ -710,6 +751,11 @@ linker_file_unload(linker_file_t file, int flags)
 		if (error != 0)
 			return (EBUSY);
 	}
+
+	/* Check if there are patches that would prevent the unload. */
+	error = patch_unregister_file(file, flags);
+	if (error != 0)
+		return (error);
 
 	KLD_DPF(FILE, ("linker_file_unload: file is unloading,"
 	    " informing modules\n"));

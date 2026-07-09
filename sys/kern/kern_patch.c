@@ -3,13 +3,16 @@
 #include <sys/conf.h>
 #include <sys/cdefs.h>
 #include <sys/kernel.h>
-#include <sys/patch.h>
 #include <sys/mutex.h>
 #include <sys/linker.h>
 #include <sys/smp.h>
 #include <sys/sbuf.h>
+#include <sys/malloc.h>
 
 #include "linker_if.h"
+
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
 
 struct patch_param {
 	patch_set_t *patch;
@@ -21,6 +24,8 @@ struct patch_param {
 static TAILQ_HEAD(, patch_set)		patch_list;
 static struct mtx			patch_mutex;
 static RB_HEAD(patch_syms, patch_func)	patch_syms;
+
+static MALLOC_DEFINE(M_KPATCH, "kpatch", "Kernel live-patching memory");
 
 static inline int
 patch_func_cmp(patch_func_t *a, patch_func_t *b)
@@ -157,9 +162,9 @@ patch_enable(patch_set_t *patch)
 	PATCH_FOREACH(patch, func) {
 		dup = RB_INSERT(patch_syms, &patch_syms, func);
 		if (dup != NULL) {
-		    printf("patch: %s is already patched\n", func->old_sym);
-		    error = EBUSY;
-		    break;
+			printf("patch: %s is already patched\n", func->old_sym);
+			error = EBUSY;
+			break;
 		}
 		count++;
 	}
@@ -191,12 +196,10 @@ patch_enable(patch_set_t *patch)
 	return (error);
 }
 
-int
-patch_disable(patch_set_t *patch)
+static int
+patch_disable_unlocked(patch_set_t *patch)
 {
 	patch_func_t *func;
-
-	mtx_lock(&patch_mutex);
 
 	if (patch->enabled) {
 		struct patch_param param = {
@@ -215,8 +218,19 @@ patch_disable(patch_set_t *patch)
 		patch->enabled = false;
 	}
 
-	mtx_unlock(&patch_mutex);
 	return (0);
+}
+
+int
+patch_disable(patch_set_t *patch)
+{
+	int error;
+
+	mtx_lock(&patch_mutex);
+	error = patch_disable_unlocked(patch);
+	mtx_unlock(&patch_mutex);
+
+	return (error);
 }
 
 SYSCTL_NODE(_kern, OID_AUTO, patch, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
@@ -316,7 +330,7 @@ patch_register(patch_set_t *patch)
 
 	TAILQ_FOREACH(other, &patch_list, link) {
 		if (!strcmp(other->name, patch->name)) {
-			printf("patch: already registered patch named '%s'\n", patch->name);
+			printf("patch: Already registered patch named '%s'\n", patch->name);
 			mtx_unlock(&patch_mutex);
 			return (EEXIST);
 		}
@@ -345,6 +359,77 @@ patch_register(patch_set_t *patch)
 }
 
 int
+patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcount,
+                       struct kpatch_func_metadata **funcs, int fcount)
+{
+	patch_set_t **sets;
+	patch_func_t *func;
+	int *func_counts;
+	int error;
+
+	sets = malloc(pcount * sizeof(patch_set_t *), M_KPATCH, M_WAITOK | M_ZERO);
+	func_counts = malloc(pcount * sizeof(int), M_KPATCH, M_WAITOK | M_ZERO);
+
+	// Init patch sets
+	for (int i = 0; i < pcount; i++) {
+		sets[i] = malloc(sizeof(patch_set_t), M_KPATCH, M_WAITOK | M_ZERO);
+		sets[i]->name = patches[i]->name;
+		sets[i]->lf = lf;
+		sets[i]->funcs = malloc(sizeof(patch_func_t), M_KPATCH, M_WAITOK | M_ZERO);
+	}
+
+	// Appending the functions
+	error = 0;
+	for (int i, j = 0; j < fcount; j++) {
+		for (i = 0; i < pcount; i++) {
+			if (!strcmp(funcs[j]->patch, sets[i]->name))
+				break;
+		}
+
+		if (i < pcount) {
+			sets[i]->funcs = realloc(sets[i]->funcs ,
+						sizeof(patch_func_t) * (func_counts[i] + 2),
+						M_KPATCH, M_WAITOK);
+
+			func = &sets[i]->funcs[func_counts[i]++];
+			func->patch = sets[i];
+			func->old_sym = funcs[j]->old_sym;
+			func->new_addr = funcs[j]->new_addr;
+
+			if (funcs[j]->flags & PATCH_FUNC_SYMPOS)
+				func->old_sympos = funcs[j]->uniquifier.sympos;
+			else
+				func->old_sympos = 0;
+
+			bzero(&sets[i]->funcs[func_counts[i]], sizeof(patch_func_t));
+		} else {
+			printf("patch: Function '%s' references unknown patch set '%s'\n",
+					funcs[j]->old_sym, funcs[j]->patch);
+			error = ENOEXEC;
+			goto cleanup;
+		}
+	}
+
+	// Register the new funcs
+	for (int i = 0; i < pcount; i++) {
+		error = patch_register(sets[i]);
+		if (error != 0) {
+			for (int j = 0; j < i; j++) {
+				patch_unregister(sets[j]);
+				free(sets[i]->funcs, M_KPATCH);
+				free(sets[i], M_KPATCH);
+			}
+			goto cleanup;
+		}
+	}
+
+cleanup:
+	free(func_counts, M_KPATCH);
+	free(sets, M_KPATCH);
+	return (error);
+}
+
+int
 patch_unregister(patch_set_t *patch)
 {
 	int error;
@@ -365,6 +450,42 @@ patch_unregister(patch_set_t *patch)
 	return (error);
 }
 
+int
+patch_unregister_file(linker_file_t lf, int flags)
+{
+	patch_set_t *patch, *tmp;
+
+	mtx_lock(&patch_mutex);
+	TAILQ_FOREACH(patch, &patch_list, link) {
+		if (patch->lf == lf && patch->enabled) {
+			if (flags != LINKER_UNLOAD_FORCE) {
+				printf("patch: Cannot unload %s because patch '%s' is enabled\n",
+						patch->name, lf->filename);
+				mtx_unlock(&patch_mutex);
+				return (EBUSY);
+			}
+
+			// XXX: Could this fail?
+			patch_disable_unlocked(patch);
+			printf("patch: Disabled patch '%s' because %s is being unloaded\n",
+					lf->filename, patch->name);
+		}
+	}
+	mtx_unlock(&patch_mutex);
+
+	// Actually clean up the memory
+	TAILQ_FOREACH_SAFE(patch, &patch_list, link, tmp) {
+		if (patch->lf != lf)
+			continue;
+
+		patch_unregister(patch);
+		free(patch->funcs, M_KPATCH);
+		free(patch, M_KPATCH);
+	}
+
+	return (0);
+}
+
 static void
 patch_init(void *dummy __unused)
 {
@@ -372,7 +493,7 @@ patch_init(void *dummy __unused)
 	RB_INIT(&patch_syms);
 	mtx_init(&patch_mutex, "patch", NULL, MTX_DEF);
 
-	printf("patch: kernel patching available\n");
+	printf("patch: Kernel patching available\n");
 }
 
 SYSINIT(patch, SI_SUB_KLD, SI_ORDER_ANY, patch_init, NULL);
