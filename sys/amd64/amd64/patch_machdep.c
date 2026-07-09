@@ -1,10 +1,12 @@
 #include <sys/param.h>
 #include <sys/cdefs.h>
 #include <sys/systm.h>
-#include <sys/patch.h>
 
 #include <machine/cpufunc.h>
 #include <machine/md_var.h>
+
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
 
 static inline intptr_t
 patch_target_offset(patch_func_t *func)
