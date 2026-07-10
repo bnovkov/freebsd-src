@@ -311,6 +311,25 @@ patch_sysctl_syms(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
+static int
+patch_sysctl_file(SYSCTL_HANDLER_ARGS)
+{
+	struct sbuf sb;
+	patch_set_t *patch;
+	int error;
+
+	sbuf_new_for_sysctl(&sb, NULL, 512, req);
+
+	mtx_lock(&patch_mutex);
+	patch = arg1;
+	sbuf_cat(&sb, patch->lf->filename);
+	mtx_unlock(&patch_mutex);
+
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
+	return (error);
+}
+
 int
 patch_register(patch_set_t *patch)
 {
@@ -354,6 +373,10 @@ patch_register(patch_set_t *patch)
 	SYSCTL_ADD_PROC(&patch->ctx, SYSCTL_CHILDREN(patch->oidp), OID_AUTO,
 			"syms", CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
 			patch, 0, patch_sysctl_syms, "A", "targeted symbols");
+
+	SYSCTL_ADD_PROC(&patch->ctx, SYSCTL_CHILDREN(patch->oidp), OID_AUTO,
+			"file", CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			patch, 0, patch_sysctl_file, "A", "linker file");
 
 	return (error);
 }
