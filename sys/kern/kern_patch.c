@@ -9,6 +9,9 @@
 #include <sys/sbuf.h>
 #include <sys/malloc.h>
 
+#include <vm/vm.h>
+#include <vm/pmap.h>
+
 #include "linker_if.h"
 
 #define KPATCH_INTERNAL
@@ -427,6 +430,27 @@ patch_register(patch_set_t *patch)
 	return (error);
 }
 
+static int
+patch_unregister(patch_set_t *patch)
+{
+	int error;
+
+	mtx_lock(&patch_mutex);
+	if (patch->enabled) {
+		error = EBUSY;
+	} else {
+		error = 0;
+		TAILQ_REMOVE(&patch_list, patch, link);
+	}
+
+	mtx_unlock(&patch_mutex);
+
+	if (error == 0) {
+		sysctl_ctx_free(&patch->ctx);
+	}
+	return (error);
+}
+
 int
 patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcount,
                        struct kpatch_func_metadata **funcs, int fcount)
@@ -449,7 +473,7 @@ patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcou
 
 	// Appending the functions
 	error = 0;
-	for (i, j = 0; j < fcount; j++) {
+	for (j = 0; j < fcount; j++) {
 		for (i = 0; i < pcount; i++) {
 			if (!strcmp(funcs[j]->patch, sets[i]->name))
 				break;
@@ -495,37 +519,21 @@ patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcou
 			// Unregister everything else
 			for (j = 0; j < i; j++) {
 				patch_unregister(sets[j]);
-				free(sets[i]->funcs, M_KPATCH);
-				free(sets[i], M_KPATCH);
 			}
 			goto cleanup;
 		}
 	}
 
 cleanup:
+	if (error != 0) {
+		for (i = 0; i < pcount; i++) {
+			free(sets[i]->funcs, M_KPATCH);
+			free(sets[i], M_KPATCH);
+		}
+	}
+
 	free(func_counts, M_KPATCH);
 	free(sets, M_KPATCH);
-	return (error);
-}
-
-static int
-patch_unregister(patch_set_t *patch)
-{
-	int error;
-
-	mtx_lock(&patch_mutex);
-	if (patch->enabled) {
-		error = EBUSY;
-	} else {
-		error = 0;
-		TAILQ_REMOVE(&patch_list, patch, link);
-	}
-
-	mtx_unlock(&patch_mutex);
-
-	if (error == 0) {
-		sysctl_ctx_free(&patch->ctx);
-	}
 	return (error);
 }
 
@@ -537,17 +545,17 @@ patch_unregister_file(linker_file_t lf, int flags)
 	mtx_lock(&patch_mutex);
 	TAILQ_FOREACH(patch, &patch_list, link) {
 		if (patch->lf == lf && patch->enabled) {
-			if (flags != LINKER_UNLOAD_FORCE) {
+//			if (flags != LINKER_UNLOAD_FORCE) {
 				printf("patch: Cannot unload %s because patch '%s' is enabled\n",
 						patch->name, lf->filename);
 				mtx_unlock(&patch_mutex);
 				return (EBUSY);
-			}
+//			}
 
-			// XXX: Could this fail?
-			patch_disable_unlocked(patch);
-			printf("patch: Disabled patch '%s' because %s is being unloaded\n",
-					lf->filename, patch->name);
+//			// XXX: Should a force unload disable the patch?
+//			patch_disable_unlocked(patch);
+//			printf("patch: Disabled patch '%s' because %s is being unloaded\n",
+//					lf->filename, patch->name);
 		}
 	}
 	mtx_unlock(&patch_mutex);
