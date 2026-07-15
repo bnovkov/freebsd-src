@@ -80,8 +80,12 @@ patch_rendezvous_action(void *arg)
 			param->action(func, param->arg);
 		}
 	}
+}
 
-	// TODO: Flush icache here
+static void
+patch_rendezvous_teardown(void *arg __unused)
+{
+	pmap_invalidate_cache();
 }
 
 static int
@@ -188,7 +192,7 @@ patch_enable(patch_set_t *patch)
 		.arg	= NULL,
 	};
 
-	smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
+	smp_rendezvous(NULL, patch_rendezvous_action, patch_rendezvous_teardown, &param);
 
 	patch->enabled = true;
 
@@ -201,23 +205,23 @@ patch_disable_unlocked(patch_set_t *patch)
 {
 	patch_func_t *func;
 
-	if (patch->enabled) {
-		struct patch_param param = {
-			.patch	= patch,
-			.cpuid	= curcpu,
-			.action	= patch_rollback_func,
-			.arg	= NULL,
-		};
+	if (!patch->enabled)
+		return (0);
 
-		smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
+	struct patch_param param = {
+		.patch	= patch,
+		.cpuid	= curcpu,
+		.action	= patch_rollback_func,
+		.arg	= NULL,
+	};
 
-		PATCH_FOREACH(patch, func) {
-			RB_REMOVE(patch_syms, &patch_syms, func);
-		}
+	smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
 
-		patch->enabled = false;
+	PATCH_FOREACH(patch, func) {
+		RB_REMOVE(patch_syms, &patch_syms, func);
 	}
 
+	patch->enabled = false;
 	return (0);
 }
 
@@ -330,7 +334,7 @@ patch_sysctl_file(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-int
+static int
 patch_register(patch_set_t *patch)
 {
 	patch_func_t *func;
@@ -388,13 +392,13 @@ patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcou
 	patch_set_t **sets;
 	patch_func_t *func;
 	int *func_counts;
-	int error;
+	int error, i, j;
 
 	sets = malloc(pcount * sizeof(patch_set_t *), M_KPATCH, M_WAITOK | M_ZERO);
 	func_counts = malloc(pcount * sizeof(int), M_KPATCH, M_WAITOK | M_ZERO);
 
 	// Init patch sets
-	for (int i = 0; i < pcount; i++) {
+	for (i = 0; i < pcount; i++) {
 		sets[i] = malloc(sizeof(patch_set_t), M_KPATCH, M_WAITOK | M_ZERO);
 		sets[i]->name = patches[i]->name;
 		sets[i]->lf = lf;
@@ -403,7 +407,7 @@ patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcou
 
 	// Appending the functions
 	error = 0;
-	for (int i, j = 0; j < fcount; j++) {
+	for (i, j = 0; j < fcount; j++) {
 		for (i = 0; i < pcount; i++) {
 			if (!strcmp(funcs[j]->patch, sets[i]->name))
 				break;
@@ -428,16 +432,17 @@ patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcou
 		} else {
 			printf("patch: Function '%s' references unknown patch set '%s'\n",
 					funcs[j]->old_sym, funcs[j]->patch);
-			error = ENOEXEC;
+			error = ENOENT;
 			goto cleanup;
 		}
 	}
 
 	// Register the new funcs
-	for (int i = 0; i < pcount; i++) {
+	for (i = 0; i < pcount; i++) {
 		error = patch_register(sets[i]);
 		if (error != 0) {
-			for (int j = 0; j < i; j++) {
+			// Unregister everything else
+			for (j = 0; j < i; j++) {
 				patch_unregister(sets[j]);
 				free(sets[i]->funcs, M_KPATCH);
 				free(sets[i], M_KPATCH);
@@ -452,7 +457,7 @@ cleanup:
 	return (error);
 }
 
-int
+static int
 patch_unregister(patch_set_t *patch)
 {
 	int error;

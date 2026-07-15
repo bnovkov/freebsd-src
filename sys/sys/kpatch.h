@@ -148,10 +148,6 @@ int patch_unregister_file(linker_file_t lf, int flags);
 
 int patch_excluded(const char *name);
 
-int patch_register(patch_set_t *patch);
-
-int patch_unregister(patch_set_t *patch);
-
 int patch_enable(patch_set_t *patch);
 
 int patch_disable(patch_set_t *patch);
