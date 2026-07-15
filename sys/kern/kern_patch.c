@@ -21,6 +21,13 @@ struct patch_param {
 	void *arg;
 };
 
+struct patch_resolve {
+	const char *sym;
+	long sympos;
+	long count;
+	linker_symval_t symval;
+};
+
 static TAILQ_HEAD(, patch_set)		patch_list;
 static struct mtx			patch_mutex;
 static RB_HEAD(patch_syms, patch_func)	patch_syms;
@@ -89,32 +96,67 @@ patch_rendezvous_teardown(void *arg __unused)
 }
 
 static int
+patch_resolve_sym(linker_file_t lf, int symnum, linker_symval_t *symval, void *arg)
+{
+	struct patch_resolve *ctx;
+
+	ctx = arg;
+	if (strcmp(symval->name, ctx->sym))
+		return (0);
+
+	ctx->count++;
+
+	if (ctx->sympos > 0 && ctx->sympos == ctx->count) {
+		ctx->symval = *symval;
+		return (1);
+	}
+
+	/*
+	 * The idea here is that if we have sympos 0 we do not want
+	 * actually the first occurrence but want the 'automatic' symbol.
+	 * Meaning that if we have even two symbol with the same name we bail.
+	 * The same could be accomplished by incrementing match count later and
+	 * using maybe a negative number as sentinel.
+	 */
+	if (ctx->sympos == 0) {
+		if (ctx->count == 1)
+			ctx->symval = *symval;
+		else
+			return (1);
+	}
+
+	return (0);
+}
+
+static int
 patch_resolve_func(patch_func_t *func)
 {
-	linker_symval_t symval;
-	c_linker_sym_t sym;
+	struct patch_resolve ctx;
 	int error;
 
 	if (patch_excluded(func->old_sym)) {
 		printf("patch: symbol %s is protected\n", func->old_sym);
-		error = EPERM;
-		return (error);
+		return (EPERM);
 	}
 
-	error = LINKER_LOOKUP_DEBUG_SYMBOL(linker_kernel_file, func->old_sym, &sym);
-	if (error != 0) {
-		printf("patch: unable to find symbol %s\n", func->old_sym);
-		return (error);
+	ctx.sym = func->old_sym;
+	ctx.sympos = func->old_sympos;
+	ctx.count = 0;
+
+	LINKER_EACH_FUNCTION_NAMEVAL(func->old_lf, patch_resolve_sym, &ctx);
+
+	if (func->old_sympos == 0 && ctx.count > 1) {
+		printf("patch: symbol %s is ambiguous (more than 1 occurrences)\n", func->old_sym);
+		return (EINVAL);
 	}
 
-	error = LINKER_DEBUG_SYMBOL_VALUES(linker_kernel_file, sym, &symval);
-	if (error != 0) {
+	if (ctx.count == 0 || (func->old_sympos > 0 && ctx.count < func->old_sympos)) {
 		printf("patch: unable to resolve symbol %s\n", func->old_sym);
-		return (error);
+		return (ENOENT);
 	}
 
-	func->old_addr = symval.value;
-	func->old_size = symval.size;
+	func->old_addr = ctx.symval.value;
+	func->old_size = ctx.symval.size;
 
 	error = patch_validate_func(func);
 	if (error != 0) {
@@ -427,6 +469,15 @@ patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcou
 				func->old_sympos = funcs[j]->uniquifier.sympos;
 			else
 				func->old_sympos = 0;
+
+			if (funcs[j]->old_obj == NULL || !strcmp(funcs[j]->old_obj, "kernel")) {
+				func->old_lf = linker_kernel_file;
+			} else {
+				// TODO: When dealing with modules we need to handle refcount and locking
+				printf("patch: Cannot patch object other than 'kernel'\n");
+				error = EINVAL;
+				goto cleanup;
+			}
 
 			bzero(&sets[i]->funcs[func_counts[i]], sizeof(patch_func_t));
 		} else {

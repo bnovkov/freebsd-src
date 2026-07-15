@@ -129,7 +129,7 @@ typedef struct patch_func {
 	bool patched;
 	void *old_addr;
 	size_t old_size;
-//	linker_file_t lf;
+	linker_file_t old_lf;
 	uint8_t old_text[PATCH_TEXTLEN];
 	RB_ENTRY(patch_func) node;
 	struct patch_set *patch;
