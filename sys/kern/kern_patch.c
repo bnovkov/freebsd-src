@@ -8,6 +8,9 @@
 #include <sys/smp.h>
 #include <sys/sbuf.h>
 #include <sys/malloc.h>
+#include <sys/sx.h>
+#include <sys/proc.h>
+#include <sys/stack.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -22,6 +25,7 @@ struct patch_param {
 	int cpuid;
 	int (*action)(patch_func_t *, void *);
 	void *arg;
+	int error;
 };
 
 struct patch_resolve {
@@ -34,6 +38,9 @@ struct patch_resolve {
 static TAILQ_HEAD(, patch_set)		patch_list;
 static struct mtx			patch_mutex;
 static RB_HEAD(patch_syms, patch_func)	patch_syms;
+
+static volatile int	patch_checked_cpus;
+static volatile int	patch_failed_cpus;
 
 static MALLOC_DEFINE(M_KPATCH, "kpatch", "Kernel live-patching memory");
 
@@ -78,24 +85,120 @@ patch_excluded(const char *name)
 	return (0);
 }
 
+static int
+patch_check_stack(struct stack *st, patch_set_t *patch)
+{
+	patch_func_t *func;
+	int i;
+
+	for (i = 0; i < st->depth; i++) {
+		PATCH_FOREACH(patch, func) {
+			if (st->pcs[i] < (vm_offset_t)func->old_addr + func->old_size
+				&& st->pcs[i] >= (vm_offset_t)func->old_addr) {
+				return (1);
+			}
+
+		}
+	}
+
+	return (0);
+}
+
+static int
+patch_check_allproc(patch_set_t *patch)
+{
+	struct proc *p;
+	struct thread *td;
+	struct stack st;
+	bool sched;
+
+	/* Fake this variable to bust lock checks */
+	sched = scheduler_stopped;
+	scheduler_stopped = true;
+
+	FOREACH_PROC_IN_SYSTEM(p) {
+		FOREACH_THREAD_IN_PROC(p, td) {
+			/* Already checked in the rendezvous action */
+			if (TD_IS_RUNNING(td))
+				continue;
+
+			stack_save_td(&st, td);
+			if (patch_check_stack(&st, patch)) {
+				scheduler_stopped = sched;
+				return (1);
+			}
+		}
+	}
+
+	scheduler_stopped = sched;
+	return (0);
+}
+
 static void
 patch_rendezvous_action(void *arg)
 {
+	struct stack st;
 	struct patch_param *param;
 	patch_func_t *func;
 
 	param = (struct patch_param *)arg;
-	if (curcpu == param->cpuid) {
-		PATCH_FOREACH(param->patch, func) {
-			param->action(func, param->arg);
-		}
+
+	/* First, each cpu analyzes their current stack */
+	stack_zero(&st);
+	stack_save(&st);
+
+	if (patch_check_stack(&st, param->patch))
+		atomic_add_int(&patch_failed_cpus, 1);
+
+	atomic_add_int(&patch_checked_cpus, 1);
+
+	/* The master cpu checks all the stacks in allproc */
+	if (curcpu != param->cpuid)
+		return;
+
+	if (patch_check_allproc(param->patch))
+		atomic_add_int(&patch_failed_cpus, 1);
+
+	/* Wait for all other cpus to finish */
+	while (atomic_load_acq_int(&patch_checked_cpus) < mp_ncpus) {
+		cpu_spinwait();
+	}
+
+	/* If any one of the checks failed, bail */
+	if (patch_failed_cpus > 0) {
+		param->error = EBUSY;
+		return;
+	}
+
+	PATCH_FOREACH(param->patch, func) {
+		param->action(func, param->arg);
 	}
 }
 
-static void
-patch_rendezvous_teardown(void *arg __unused)
+static int
+patch_rendezvous(patch_set_t *patch, int (*action)(patch_func_t *, void *))
 {
-	pmap_invalidate_cache();
+	struct patch_param param = {
+		.patch	= patch,
+		.cpuid	= curcpu,
+		.action	= action,
+		.error	= 0,
+	};
+
+	/* Reset rendezvous action counters */
+	patch_checked_cpus = 0;
+	patch_failed_cpus = 0;
+
+	smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
+
+	/* Invalidate the cache after touching kernel text */
+	if (param.error == 0) {
+		/* TODO: Move this inside the action step so each cpu flushes
+		 * its own icache after the patching. Right now there is a race */
+		pmap_invalidate_cache();
+	}
+
+	return param.error;
 }
 
 static int
@@ -198,10 +301,12 @@ patch_enable(patch_set_t *patch)
 	patch_func_t *func, *dup;
 	int error, count;
 
+	sx_slock(&allproc_lock);
 	mtx_lock(&patch_mutex);
 
 	if (patch->enabled) {
 		mtx_unlock(&patch_mutex);
+		sx_sunlock(&allproc_lock);
 		return (EALREADY);
 	}
 
@@ -227,58 +332,50 @@ patch_enable(patch_set_t *patch)
 		}
 
 		mtx_unlock(&patch_mutex);
+		sx_sunlock(&allproc_lock);
 		return (error);
 	}
 
-	struct patch_param param = {
-		.patch	= patch,
-		.cpuid	= curcpu,
-		.action	= patch_apply_func,
-		.arg	= NULL,
-	};
-
-	smp_rendezvous(NULL, patch_rendezvous_action, patch_rendezvous_teardown, &param);
-
-	patch->enabled = true;
-
-	mtx_unlock(&patch_mutex);
-	return (error);
-}
-
-static int
-patch_disable_unlocked(patch_set_t *patch)
-{
-	patch_func_t *func;
-
-	if (!patch->enabled)
-		return (0);
-
-	struct patch_param param = {
-		.patch	= patch,
-		.cpuid	= curcpu,
-		.action	= patch_rollback_func,
-		.arg	= NULL,
-	};
-
-	smp_rendezvous(NULL, patch_rendezvous_action, NULL, &param);
-
-	PATCH_FOREACH(patch, func) {
-		RB_REMOVE(patch_syms, &patch_syms, func);
+	error = patch_rendezvous(patch, patch_apply_func);
+	if (error == 0) {
+		patch->enabled = true;
+	} else {
+		PATCH_FOREACH(patch, func) {
+			RB_REMOVE(patch_syms, &patch_syms, func);
+		}
 	}
 
-	patch->enabled = false;
-	return (0);
+	mtx_unlock(&patch_mutex);
+	sx_sunlock(&allproc_lock);
+	return (error);
 }
 
 int
 patch_disable(patch_set_t *patch)
 {
+	patch_func_t *func;
 	int error;
 
+	sx_slock(&allproc_lock);
 	mtx_lock(&patch_mutex);
-	error = patch_disable_unlocked(patch);
-	mtx_unlock(&patch_mutex);
 
+	if (!patch->enabled) {
+		mtx_unlock(&patch_mutex);
+		sx_sunlock(&allproc_lock);
+		return (0);
+	}
+
+	error = patch_rendezvous(patch, patch_rollback_func);
+	if (error == 0) {
+		patch->enabled = false;
+
+		PATCH_FOREACH(patch, func) {
+			RB_REMOVE(patch_syms, &patch_syms, func);
+		}
+	}
+
+	mtx_unlock(&patch_mutex);
+	sx_sunlock(&allproc_lock);
 	return (error);
 }
 
