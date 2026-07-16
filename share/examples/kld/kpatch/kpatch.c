@@ -33,5 +33,14 @@ patch_sysctl_hostname2(SYSCTL_HANDLER_ARGS)
 PATCH_FUNC(test2, patch_sysctl_hostname2,
 	   "sysctl_hostname", "kernel", "kern_mib.c");
 
+static void
+patch_test3(void)
+{
+	panic("Not supposed to work\n");
+}
+PATCH_FUNC(test3, patch_test3,
+	   "sys___sysctl", "kernel", "kern_sysctl.c");
+
 PATCH_DECLARE(test1, "A test patch", 0);
 PATCH_DECLARE(test2, "Another test patch", 0);
+PATCH_DECLARE(test3, "A failing patch", 0);
