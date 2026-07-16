@@ -479,37 +479,38 @@ patch_register_file(linker_file_t lf, struct kpatch_metadata **patches, int pcou
 				break;
 		}
 
-		if (i < pcount) {
-			sets[i]->funcs = realloc(sets[i]->funcs ,
-						sizeof(patch_func_t) * (func_counts[i] + 2),
-						M_KPATCH, M_WAITOK);
 
-			func = &sets[i]->funcs[func_counts[i]++];
-			func->patch = sets[i];
-			func->old_sym = funcs[j]->old_sym;
-			func->new_addr = funcs[j]->new_addr;
-
-			if (funcs[j]->flags & PATCH_FUNC_SYMPOS)
-				func->old_sympos = funcs[j]->uniquifier.sympos;
-			else
-				func->old_sympos = 0;
-
-			if (funcs[j]->old_obj == NULL || !strcmp(funcs[j]->old_obj, "kernel")) {
-				func->old_lf = linker_kernel_file;
-			} else {
-				// TODO: When dealing with modules we need to handle refcount and locking
-				printf("patch: Cannot patch object other than 'kernel'\n");
-				error = EINVAL;
-				goto cleanup;
-			}
-
-			bzero(&sets[i]->funcs[func_counts[i]], sizeof(patch_func_t));
-		} else {
+		if (i >= pcount) {
 			printf("patch: Function '%s' references unknown patch set '%s'\n",
 					funcs[j]->old_sym, funcs[j]->patch);
 			error = ENOENT;
 			goto cleanup;
 		}
+
+		sets[i]->funcs = realloc(sets[i]->funcs ,
+					sizeof(patch_func_t) * (func_counts[i] + 2),
+					M_KPATCH, M_WAITOK);
+
+		func = &sets[i]->funcs[func_counts[i]++];
+		func->patch = sets[i];
+		func->old_sym = funcs[j]->old_sym;
+		func->new_addr = funcs[j]->new_addr;
+
+		if (funcs[j]->flags & PATCH_FUNC_SYMPOS)
+			func->old_sympos = funcs[j]->uniquifier.sympos;
+		else
+			func->old_sympos = 0;
+
+		if (funcs[j]->old_obj == NULL || !strcmp(funcs[j]->old_obj, "kernel")) {
+			func->old_lf = linker_kernel_file;
+		} else {
+			// TODO: When dealing with modules we need to handle refcount and locking
+			printf("patch: Cannot patch object other than 'kernel'\n");
+			error = EINVAL;
+			goto cleanup;
+		}
+
+		bzero(&sets[i]->funcs[func_counts[i]], sizeof(patch_func_t));
 	}
 
 	// Register the new funcs
@@ -545,17 +546,10 @@ patch_unregister_file(linker_file_t lf, int flags)
 	mtx_lock(&patch_mutex);
 	TAILQ_FOREACH(patch, &patch_list, link) {
 		if (patch->lf == lf && patch->enabled) {
-//			if (flags != LINKER_UNLOAD_FORCE) {
-				printf("patch: Cannot unload %s because patch '%s' is enabled\n",
-						patch->name, lf->filename);
-				mtx_unlock(&patch_mutex);
-				return (EBUSY);
-//			}
-
-//			// XXX: Should a force unload disable the patch?
-//			patch_disable_unlocked(patch);
-//			printf("patch: Disabled patch '%s' because %s is being unloaded\n",
-//					lf->filename, patch->name);
+			printf("patch: Cannot unload %s because patch '%s' is enabled\n",
+					patch->name, lf->filename);
+			mtx_unlock(&patch_mutex);
+			return (EBUSY);
 		}
 	}
 	mtx_unlock(&patch_mutex);
