@@ -3,11 +3,11 @@
 
 #include <sys/types.h>
 
-struct kpatch_metadata {
+struct kpatch_set_metadata {
 	const char *name;
 	int flags;
 	int funcs_count;
-	struct kpatch_func *funcs[];
+	struct kpatch_func_metadata *funcs;
 };
 
 struct kpatch_func_metadata {
