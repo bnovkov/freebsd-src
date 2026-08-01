@@ -43,6 +43,6 @@ patch_test3(void)
 PATCH_FUNC(test3, patch_test3,
 	   "sys___sysctl", "kernel", "kern_sysctl.c");
 
-PATCH_DECLARE(test1, "A test patch", 0);
-PATCH_DECLARE(test2, "Another test patch", 0);
-PATCH_DECLARE(test3, "A failing patch", 0);
+PATCH_DECLARE(test1, 0);
+PATCH_DECLARE(test2, 0);
+PATCH_DECLARE(test3, 0);
