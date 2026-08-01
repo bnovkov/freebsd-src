@@ -7,6 +7,7 @@
 #include <gelf.h>
 #include <libelf.h>
 #include <string.h>
+#include <stddef.h>
 
 #include "buildpatch.h"
 
@@ -46,6 +47,7 @@ static struct {
 	Elf *elf;
 	unsigned *idx_map; 
 	size_t idx_size;
+	unsigned last_ndx;
 } out_patch;
 
 static void
@@ -92,7 +94,7 @@ close_kernel(void)
 }
 
 static int
-find_kernel_symbol(const char *srcfile, const char *func)
+find_kernel_symbol(const char *func, const char *srcfile)
 {
 	int i, n;
 	GElf_Sym sym;
@@ -116,11 +118,13 @@ find_kernel_symbol(const char *srcfile, const char *func)
 			if (strcmp(name, func) != 0)
 				continue;
 
-			if (strcmp(curfile, srcfile) == 0)
+			if (GELF_ST_BIND(sym.st_info) == STB_GLOBAL ||
+				srcfile[0] == '\0' || !strcmp(curfile, srcfile)) {
 				return (n);
+			}
 
 			n++;
-			printf("Homonym found at index %d\n", n);
+			printf("Homonym of %s found at index %d\n", func, n);
 		}
 	}
 
@@ -133,6 +137,7 @@ open_patch(const char *in_path, const char *out_path)
 	GElf_Ehdr ehdr;
 
 	memset(&in_patch, 0, sizeof(in_patch));
+	memset(&out_patch, 0, sizeof(out_patch));
 
 	in_patch.fd = open(in_path, O_RDONLY);
 	if (in_patch.fd < 0)
@@ -279,8 +284,10 @@ copy_patch_sections(void)
 		scn_out = elf_newscn(out_patch.elf);
 		ndx_out = elf_ndxscn(scn_out);
 		index_map_set(ndx_in, ndx_out);
-
 		printf("Copying section %s\n", name);
+
+		if (ndx_out > out_patch.last_ndx)
+			out_patch.last_ndx = ndx_out;
 
 		data_in = NULL;
 		while ((data_in = elf_getdata(scn_in, data_in)) != NULL) {
@@ -469,6 +476,9 @@ fix_patch_relocations(void)
 
 	scn_out = NULL;
 	while ((scn_out = elf_nextscn(out_patch.elf, scn_out)) != NULL) {
+		if (elf_ndxscn(scn_out) > out_patch.last_ndx)
+			continue;
+
 		gelf_getshdr(scn_out, &shdr);
 		dirty = 0;
 
@@ -522,8 +532,6 @@ main(int argc, const char **argv)
 	open_kernel(argv[3]);
 	open_patch(argv[1], argv[2]);
 
-	find_kernel_symbol("", "");
-	
 	copy_patch_sections();
 
 	parse_patch_metadata();
