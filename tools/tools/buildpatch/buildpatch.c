@@ -9,6 +9,8 @@
 #include <string.h>
 #include <stddef.h>
 
+#include "../../../sys/sys/kpatch2.h"
+
 #include "buildpatch.h"
 
 static struct {
@@ -225,7 +227,7 @@ index_map_get(unsigned ndx_in)
 	return out_patch.idx_map[ndx_in];
 }
 
-static size_t __unused
+static size_t
 add_shstrtab_string(const char *str)
 {
 	Elf_Scn *scn_out;
@@ -304,14 +306,23 @@ copy_patch_sections(void)
 	}
 }
 
+struct reloc_string {
+	const char *str;
+	GElf_Rela rela;
+};
+
+#define RELSTR_STR(rstr)	(((const struct reloc_string *)(const void *)rstr)->str)
+#define RELSTR_RELA(rstr)	(((const struct reloc_string *)(const void *)rstr)->rela)
+
 static const char * 
-resolve_reloc_string(GElf_Rela *rela)
+resolve_reloc_string(GElf_Rela rela)
 {
 	GElf_Sym sym;
 	Elf_Scn *scn;
 	Elf_Data *data;
+	struct reloc_string *rstr;
 
-	if (gelf_getsym(in_patch.symtab_data, GELF_R_SYM(rela->r_info), &sym) == NULL)
+	if (gelf_getsym(in_patch.symtab_data, GELF_R_SYM(rela.r_info), &sym) == NULL)
 		errx(1, "gelf_getsym failed: %s", elf_errmsg(-1));
 
 	scn = elf_getscn(in_patch.elf, sym.st_shndx);
@@ -322,7 +333,11 @@ resolve_reloc_string(GElf_Rela *rela)
 	if (data == NULL)
 		return (NULL);
 
-	return ((const char *)data->d_buf + sym.st_value + rela->r_addend);
+	rstr = malloc(sizeof(struct reloc_string));
+	rstr->rela = rela;
+	rstr->str = (const char *)data->d_buf + sym.st_value + rela.r_addend;
+
+	return (const char *)rstr;
 }
 
 static void
@@ -345,7 +360,7 @@ parse_patch_sets(void)
         nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
         for (i = 0; i < nrelas; i++) {
 		gelf_getrela(rela_data, i, &rela);
-		str = resolve_reloc_string(&rela);
+		str = resolve_reloc_string(rela);
 		if (str == NULL)
 			continue;
 
@@ -354,7 +369,7 @@ parse_patch_sets(void)
 
 	for (i = 0; i < in_patch.sets_count; i++) {
 		printf("Parsed patch set:\n");
-		printf("\tName: %s\n", in_patch.sets_md[i].name);
+		printf("\tName: %s\n", RELSTR_STR(in_patch.sets_md[i].name));
 		printf("\tFlags: %lx\n", in_patch.sets_md[i].flags);
 	}
 }
@@ -379,7 +394,7 @@ parse_patch_funcs(void)
 	nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
 	for (i = 0; i < nrelas; i++) {
 		gelf_getrela(rela_data, i, &rela);
-		str = resolve_reloc_string(&rela);
+		str = resolve_reloc_string(rela);
 		if (str == NULL)
 			continue;
 
@@ -388,14 +403,14 @@ parse_patch_funcs(void)
 
 	for (i = 0; i < in_patch.funcs_count; i++) {
 		printf("Parsed patch func:\n");
-		printf("\tPatch: %s\n", in_patch.funcs_md[i].patch);
-		printf("\tNew: %s\n", in_patch.funcs_md[i].new_sym);
-		printf("\tOld: %s\n", in_patch.funcs_md[i].old_sym);
-		printf("\tObj: %s\n", in_patch.funcs_md[i].old_obj);
+		printf("\tPatch: %s\n", RELSTR_STR(in_patch.funcs_md[i].patch));
+		printf("\tNew: %s\n", RELSTR_STR(in_patch.funcs_md[i].new_sym));
+		printf("\tOld: %s\n", RELSTR_STR(in_patch.funcs_md[i].old_sym));
+		printf("\tObj: %s\n", RELSTR_STR(in_patch.funcs_md[i].old_obj));
 		if (in_patch.funcs_md[i].flags & PATCH_USING_SYMPOS) {
 			printf("\tSympos: %ld\n", in_patch.funcs_md[i].uniquifier.sympos);
 		} else {
-			printf("\tFile: %s\n", in_patch.funcs_md[i].uniquifier.old_file);
+			printf("\tFile: %s\n", RELSTR_STR(in_patch.funcs_md[i].uniquifier.old_file));
 		}
 		printf("\tFlags: %lx\n", in_patch.funcs_md[i].flags);
 	}
@@ -421,7 +436,7 @@ parse_patch_relocs(void)
 	nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
 	for (i = 0; i < nrelas; i++) {
 		gelf_getrela(rela_data, i, &rela);
-		str = resolve_reloc_string(&rela);
+		str = resolve_reloc_string(rela);
 		if (str == NULL)
 			continue;
 
@@ -430,13 +445,13 @@ parse_patch_relocs(void)
 
 	for (i = 0; i < in_patch.relocs_count; i++) {
 		printf("Parsed patch reloc:\n");
-		printf("\tLocal: %s\n", in_patch.relocs_md[i].local_sym);
-		printf("\tReal: %s\n", in_patch.relocs_md[i].real_sym);
-		printf("\tObj: %s\n", in_patch.relocs_md[i].real_obj);
+		printf("\tLocal: %s\n", RELSTR_STR(in_patch.relocs_md[i].local_sym));
+		printf("\tReal: %s\n", RELSTR_STR(in_patch.relocs_md[i].real_sym));
+		printf("\tObj: %s\n", RELSTR_STR(in_patch.relocs_md[i].real_obj));
 		if (in_patch.relocs_md[i].flags & PATCH_USING_SYMPOS) {
 			printf("\tSympos: %ld\n", in_patch.relocs_md[i].uniquifier.sympos);
 		} else {
-			printf("\tFile: %s\n", in_patch.relocs_md[i].uniquifier.real_file);
+			printf("\tFile: %s\n", RELSTR_STR(in_patch.relocs_md[i].uniquifier.real_file));
 		}
 		printf("\tFlags: %lx\n", in_patch.relocs_md[i].flags);
 	}
@@ -462,9 +477,141 @@ parse_patch_metadata(void)
 		parse_patch_relocs();
 }
 
+static Elf_Scn *
+create_section(const char *name, uint32_t type, uint64_t flags,
+    uint64_t addralign, uint64_t entsize, void *buf, size_t size)
+{
+	Elf_Scn *scn;
+	GElf_Shdr shdr;
+	Elf_Data *data;
+
+	size_t name_idx = add_shstrtab_string(name);
+	scn = elf_newscn(out_patch.elf);
+	if (scn == NULL)
+		errx(1, "elf_newscn failed: %s", elf_errmsg(-1));
+
+	if (gelf_getshdr(scn, &shdr) == NULL)
+		errx(1, "gelf_getshdr failed: %s", elf_errmsg(-1));
+
+	shdr.sh_name = name_idx;
+	shdr.sh_type = type;
+	shdr.sh_flags = flags;
+	shdr.sh_addralign = addralign;
+	shdr.sh_entsize = entsize;
+	shdr.sh_size = size;
+	gelf_update_shdr(scn, &shdr);
+
+	data = elf_newdata(scn);
+	if (data == NULL)
+		errx(1, "elf_newdata failed: %s", elf_errmsg(-1));
+
+	data->d_buf = buf;
+	data->d_size = size;
+	data->d_align = addralign;
+	data->d_type = (type == SHT_RELA) ? ELF_T_RELA : ELF_T_BYTE;
+	data->d_version = EV_CURRENT;
+
+	return (scn);
+}
+
+static Elf_Scn *
+create_rela_section(const char *name, Elf_Scn *target_scn, GElf_Rela *relas, int count)
+{
+	Elf_Scn *rela_scn, *symtab_scn;
+	GElf_Shdr shdr;
+
+	symtab_scn = elf_getscn(out_patch.elf, index_map_get(elf_ndxscn(in_patch.symtab_scn)));
+
+	rela_scn = create_section(name, SHT_RELA, SHF_INFO_LINK, 8,
+				sizeof(GElf_Rela), relas, count * sizeof(GElf_Rela));
+
+	gelf_getshdr(rela_scn, &shdr);
+	shdr.sh_link = elf_ndxscn(symtab_scn);
+	shdr.sh_info = elf_ndxscn(target_scn);
+	gelf_update_shdr(rela_scn, &shdr);
+
+	return (rela_scn);
+}
+
+static Elf_Scn *
+create_kpatch_funcs(void)
+{
+	struct kpatch_func_metadata *funcs_buf;
+	GElf_Rela *relas;
+	Elf_Scn *scn;
+	size_t total_size, f_off;
+	const char *old_file;
+	int i, relocs_count;
+
+	total_size = in_patch.funcs_count * sizeof(struct kpatch_func_metadata);
+	funcs_buf = calloc(in_patch.funcs_count, sizeof(struct kpatch_func_metadata));
+
+	// Current number of relas for each func is 3
+	relas = calloc(in_patch.funcs_count * 3, sizeof(GElf_Rela));
+
+	for (i = 0; i < in_patch.funcs_count; i++) {
+		f_off = i * sizeof(struct kpatch_func_metadata);
+
+		if (in_patch.funcs_md[i].flags & PATCH_USING_SYMPOS) {
+			funcs_buf[i].sympos = in_patch.funcs_md[i].uniquifier.sympos;
+		} else {
+			old_file = in_patch.funcs_md[i].uniquifier.old_file ? 
+				RELSTR_STR(in_patch.funcs_md[i].uniquifier.old_file) : "";
+
+			funcs_buf[i].sympos = find_kernel_symbol(
+					RELSTR_STR(in_patch.funcs_md[i].old_sym), old_file);
+		}
+
+		funcs_buf[i].flags = in_patch.funcs_md[i].flags;
+
+		/* Reuse old relocations from RELSTR_RELA */
+		relocs_count = 0;
+		if (in_patch.funcs_md[i].new_addr) {
+			relas[relocs_count] = RELSTR_RELA(in_patch.funcs_md[i].new_addr);
+			relas[relocs_count].r_offset = f_off + offsetof(struct kpatch_func_metadata, new_addr);
+			relocs_count++;
+		}
+		if (in_patch.funcs_md[i].old_sym) {
+			relas[relocs_count] = RELSTR_RELA(in_patch.funcs_md[i].old_sym);
+			relas[relocs_count].r_offset = f_off + offsetof(struct kpatch_func_metadata, old_sym);
+			relocs_count++;
+		}
+		if (in_patch.funcs_md[i].old_obj) {
+			relas[relocs_count] = RELSTR_RELA(in_patch.funcs_md[i].old_obj);
+			relas[relocs_count].r_offset = f_off + offsetof(struct kpatch_func_metadata, old_obj);
+			relocs_count++;
+		}
+	}
+
+	scn = create_section(".kpatch.funcs", SHT_PROGBITS, SHF_ALLOC, 8,
+			sizeof(struct kpatch_func_metadata), funcs_buf, total_size);
+
+	if (relocs_count > 0)
+		create_rela_section(".rela.kpatch.funcs", scn, relas, relocs_count);
+
+	printf("Created .kpatch.funcs (%zu bytes, %d relocations)\n", total_size, relocs_count);
+	return (scn);
+}
+
+static Elf_Scn *
+create_kpatch_sets(Elf_Scn *funcs __unused)
+{
+	return (NULL);
+}
+
+static void
+create_linker_set(Elf_Scn *sets_scn __unused)
+{
+}
+
 static void
 new_patch_sections(void)
 {
+	Elf_Scn *funcs_scn, *sets_scn;
+
+	funcs_scn = create_kpatch_funcs();
+	sets_scn = create_kpatch_sets(funcs_scn);
+	create_linker_set(sets_scn);
 }
 
 static void
