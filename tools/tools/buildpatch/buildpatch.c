@@ -22,15 +22,30 @@ static struct {
 static struct {
 	int fd;
 	Elf *elf;
+	Elf_Scn *symtab_scn;
+	Elf_Data *symtab_data;
 	long shstrndx;
 	Elf_Scn *shstr_scn;
 	Elf_Data *shstr_data;
+	Elf_Scn *relocs_scn;
+	Elf_Scn *relocs_rela;
+	Elf_Scn *funcs_scn;
+	Elf_Scn *funcs_rela;
+	Elf_Scn *sets_scn;
+	Elf_Scn *sets_rela;
+	struct set_metadata *sets_md;
+	int sets_count;
+	struct func_metadata *funcs_md;
+	int funcs_count;
+	struct reloc_metadata *relocs_md;
+	int relocs_count;
 } in_patch;
 
 static struct {
 	int fd;
 	Elf *elf;
 	unsigned *idx_map; 
+	size_t idx_size;
 } out_patch;
 
 static void
@@ -117,6 +132,8 @@ open_patch(const char *in_path, const char *out_path)
 {
 	GElf_Ehdr ehdr;
 
+	memset(&in_patch, 0, sizeof(in_patch));
+
 	in_patch.fd = open(in_path, O_RDONLY);
 	if (in_patch.fd < 0)
 		errx(1, "Failed to open %s", in_path);
@@ -143,18 +160,98 @@ open_patch(const char *in_path, const char *out_path)
 	in_patch.shstr_scn = elf_getscn(in_patch.elf, in_patch.shstrndx);
 	in_patch.shstr_data = elf_getdata(in_patch.shstr_scn, NULL);
 
-	out_patch.idx_map = calloc(2048, sizeof(unsigned));
+	out_patch.idx_size = 1024;
+	out_patch.idx_map = calloc(out_patch.idx_size, sizeof(unsigned));
 }
 
 static int
-process_section(const char *name, Elf_Scn *scn __unused)
+check_special_section(const char *name, Elf_Scn *scn)
 {
-	// Strip these sections from the final ELF
-	if (!strcmp(name, ".buildpatch.relocs") || !strcmp(name, ".rela.buildpatch.relocs")) 
-		return (0);
+	if (!strcmp(name, PATCH_RELOC_SECTION)) {
+		in_patch.relocs_scn = scn;
+		return (1);
+	}
 
-	// Copy normally all other sections
-	return (1);
+	if (!strcmp(name, ".rela" PATCH_RELOC_SECTION)) {
+		in_patch.relocs_rela = scn;
+		return (1);
+	}
+
+	if (!strcmp(name, PATCH_FUNC_SECTION)) {
+		in_patch.funcs_scn = scn;
+		return (1);
+	}
+
+	if (!strcmp(name, ".rela" PATCH_FUNC_SECTION)) {
+		in_patch.funcs_rela = scn;
+		return (1);
+	}
+
+	if (!strcmp(name, PATCH_SET_SECTION)) {
+		in_patch.sets_scn = scn;
+		return (1);
+	}
+
+	if (!strcmp(name, ".rela" PATCH_SET_SECTION)) {
+		in_patch.sets_rela = scn;
+		return (1);
+	}
+
+	return (0);
+}
+
+static inline void
+index_map_set(unsigned ndx_in, unsigned ndx_out)
+{
+	if (ndx_in > out_patch.idx_size) {
+		out_patch.idx_size++;
+		out_patch.idx_map = realloc(out_patch.idx_map, sizeof(unsigned) * out_patch.idx_size);
+	}
+
+	out_patch.idx_map[ndx_in] = ndx_out;
+}
+
+static inline unsigned
+index_map_get(unsigned ndx_in)
+{
+	if (ndx_in >= out_patch.idx_size)
+		return 0;
+
+	return out_patch.idx_map[ndx_in];
+}
+
+static size_t __unused
+add_shstrtab_string(const char *str)
+{
+	Elf_Scn *scn_out;
+	GElf_Shdr shdr;
+	Elf_Data *data_out;
+	size_t str_len, offset;
+	char *new_str;
+
+	scn_out = elf_getscn(out_patch.elf, out_patch.idx_map[in_patch.shstrndx]);
+	if (gelf_getshdr(scn_out, &shdr) == NULL)
+		errx(1, "gelf_getshdr failed: %s", elf_errmsg(-1));
+
+	offset = shdr.sh_size;
+	str_len = strlen(str) + 1;
+	new_str = strdup(str);
+
+	data_out = elf_newdata(scn_out);
+	if (data_out == NULL)
+		errx(1, "elf_newdata failed: %s", elf_errmsg(-1));
+
+	data_out->d_align = 1;
+	data_out->d_buf = new_str;
+	data_out->d_size = str_len;
+	data_out->d_type = ELF_T_BYTE;
+	data_out->d_version = EV_CURRENT;
+
+	shdr.sh_size += str_len;
+	if (gelf_update_shdr(scn_out, &shdr) == 0)
+		errx(1, "gelf_update_shdr failed: %s", elf_errmsg(-1));
+
+	return (offset);
 }
 
 static void
@@ -173,32 +270,194 @@ copy_patch_sections(void)
 		gelf_getshdr(scn_in, &shdr);
 		name = elf_strptr(in_patch.elf, in_patch.shstrndx, shdr.sh_name);
 
-		if (!process_section(name, scn_in)) {
+		if (check_special_section(name, scn_in)) {
 			printf("Dropping section %s\n", name);
-			out_patch.idx_map[ndx_in] = 0;
+			index_map_set(ndx_in, 0);
 			continue;
 		}
 
-		// TODO: Rename sections here
-
 		scn_out = elf_newscn(out_patch.elf);
 		ndx_out = elf_ndxscn(scn_out);
-		out_patch.idx_map[ndx_in] = ndx_out;
+		index_map_set(ndx_in, ndx_out);
 
-		//if (ndx_in == in_patch.shstrndx)
-		// else
-		{
-			printf("Copying section %s\n", name);
+		printf("Copying section %s\n", name);
 
-			data_in = NULL;
-			while ((data_in = elf_getdata(scn_in, data_in)) != NULL) {
-				data_out = elf_newdata(scn_out);
-				*data_out = *data_in;
-			}
+		data_in = NULL;
+		while ((data_in = elf_getdata(scn_in, data_in)) != NULL) {
+			data_out = elf_newdata(scn_out);
+			*data_out = *data_in;
+		}
+
+		if (shdr.sh_type == SHT_SYMTAB) {
+			in_patch.symtab_scn = scn_in;
+			in_patch.symtab_data = elf_getdata(scn_in, NULL);
 		}
 
 		gelf_update_shdr(scn_out, &shdr);
 	}
+}
+
+static const char * 
+resolve_reloc_string(GElf_Rela *rela)
+{
+	GElf_Sym sym;
+	Elf_Scn *scn;
+	Elf_Data *data;
+
+	if (gelf_getsym(in_patch.symtab_data, GELF_R_SYM(rela->r_info), &sym) == NULL)
+		errx(1, "gelf_getsym failed: %s", elf_errmsg(-1));
+
+	scn = elf_getscn(in_patch.elf, sym.st_shndx);
+	if (scn == NULL)
+		return (NULL);
+
+	data = elf_getdata(scn, NULL);
+	if (data == NULL)
+		return (NULL);
+
+	return ((const char *)data->d_buf + sym.st_value + rela->r_addend);
+}
+
+static void
+parse_patch_sets(void)
+{
+	Elf_Data *data, *rela_data;
+	GElf_Shdr rela_shdr;
+	GElf_Rela rela;
+	int i, nrelas;
+	const char *str;
+
+	data = elf_getdata(in_patch.sets_scn, NULL);
+        rela_data = elf_getdata(in_patch.sets_rela, NULL);
+        gelf_getshdr(in_patch.sets_rela, &rela_shdr);
+
+        in_patch.sets_count = data->d_size / sizeof(struct set_metadata);
+        in_patch.sets_md = malloc(data->d_size);
+        memcpy(in_patch.sets_md, data->d_buf, data->d_size);
+
+        nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
+        for (i = 0; i < nrelas; i++) {
+		gelf_getrela(rela_data, i, &rela);
+		str = resolve_reloc_string(&rela);
+		if (str == NULL)
+			continue;
+
+		memcpy((char *)in_patch.sets_md + rela.r_offset, &str, sizeof(const char *));
+	}
+
+	for (i = 0; i < in_patch.sets_count; i++) {
+		printf("Parsed patch set:\n");
+		printf("\tName: %s\n", in_patch.sets_md[i].name);
+		printf("\tFlags: %lx\n", in_patch.sets_md[i].flags);
+	}
+}
+
+static void
+parse_patch_funcs(void)
+{
+	Elf_Data *data, *rela_data;
+	GElf_Shdr rela_shdr;
+	GElf_Rela rela;
+	int i, nrelas;
+	const char *str;
+
+	data = elf_getdata(in_patch.funcs_scn, NULL);
+	rela_data = elf_getdata(in_patch.funcs_rela, NULL);
+	gelf_getshdr(in_patch.funcs_rela, &rela_shdr);
+
+	in_patch.funcs_count = data->d_size / sizeof(struct func_metadata);
+	in_patch.funcs_md = malloc(data->d_size);
+	memcpy(in_patch.funcs_md, data->d_buf, data->d_size);
+
+	nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
+	for (i = 0; i < nrelas; i++) {
+		gelf_getrela(rela_data, i, &rela);
+		str = resolve_reloc_string(&rela);
+		if (str == NULL)
+			continue;
+
+		memcpy((char *)in_patch.funcs_md + rela.r_offset, &str, sizeof(const char *));
+	}
+
+	for (i = 0; i < in_patch.funcs_count; i++) {
+		printf("Parsed patch func:\n");
+		printf("\tPatch: %s\n", in_patch.funcs_md[i].patch);
+		printf("\tNew: %s\n", in_patch.funcs_md[i].new_sym);
+		printf("\tOld: %s\n", in_patch.funcs_md[i].old_sym);
+		printf("\tObj: %s\n", in_patch.funcs_md[i].old_obj);
+		if (in_patch.funcs_md[i].flags & PATCH_USING_SYMPOS) {
+			printf("\tSympos: %ld\n", in_patch.funcs_md[i].uniquifier.sympos);
+		} else {
+			printf("\tFile: %s\n", in_patch.funcs_md[i].uniquifier.old_file);
+		}
+		printf("\tFlags: %lx\n", in_patch.funcs_md[i].flags);
+	}
+}
+
+static void
+parse_patch_relocs(void)
+{
+	Elf_Data *data, *rela_data;
+	GElf_Shdr rela_shdr;
+	GElf_Rela rela;
+	int i, nrelas;
+	const char *str;
+
+	data = elf_getdata(in_patch.relocs_scn, NULL);
+	rela_data = elf_getdata(in_patch.relocs_rela, NULL);
+	gelf_getshdr(in_patch.relocs_rela, &rela_shdr);
+
+	in_patch.relocs_count = data->d_size / sizeof(struct reloc_metadata);
+	in_patch.relocs_md = malloc(data->d_size);
+	memcpy(in_patch.relocs_md, data->d_buf, data->d_size);
+
+	nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
+	for (i = 0; i < nrelas; i++) {
+		gelf_getrela(rela_data, i, &rela);
+		str = resolve_reloc_string(&rela);
+		if (str == NULL)
+			continue;
+
+		memcpy((char *)in_patch.relocs_md + rela.r_offset, &str, sizeof(const char *));
+	}
+
+	for (i = 0; i < in_patch.relocs_count; i++) {
+		printf("Parsed patch reloc:\n");
+		printf("\tLocal: %s\n", in_patch.relocs_md[i].local_sym);
+		printf("\tReal: %s\n", in_patch.relocs_md[i].real_sym);
+		printf("\tObj: %s\n", in_patch.relocs_md[i].real_obj);
+		if (in_patch.relocs_md[i].flags & PATCH_USING_SYMPOS) {
+			printf("\tSympos: %ld\n", in_patch.relocs_md[i].uniquifier.sympos);
+		} else {
+			printf("\tFile: %s\n", in_patch.relocs_md[i].uniquifier.real_file);
+		}
+		printf("\tFlags: %lx\n", in_patch.relocs_md[i].flags);
+	}
+}
+
+static void
+parse_patch_metadata(void)
+{
+	if (!in_patch.sets_scn || !in_patch.sets_rela) 
+		errx(1, "Invalid patch sets metadata section");
+
+	parse_patch_sets();
+
+	if (in_patch.funcs_scn && !in_patch.funcs_rela) 
+		errx(1, "Invalid patch funcs metadata section");
+
+	parse_patch_funcs();
+
+	if (in_patch.relocs_scn && !in_patch.relocs_rela) 
+		errx(1, "Invalid patch relocs metadata section");
+
+	if (in_patch.relocs_scn && in_patch.relocs_rela) 
+		parse_patch_relocs();
+}
+
+static void
+new_patch_sections(void)
+{
 }
 
 static void
@@ -214,12 +473,12 @@ fix_patch_relocations(void)
 		dirty = 0;
 
 		if (shdr.sh_link != 0) {
-			shdr.sh_link = out_patch.idx_map[shdr.sh_link];
+			shdr.sh_link = index_map_get(shdr.sh_link);
 			dirty = 1;
 		}
 
 		if (shdr.sh_info != 0 && (shdr.sh_type == SHT_REL || shdr.sh_type == SHT_RELA)) {
-			shdr.sh_info = out_patch.idx_map[shdr.sh_info];
+			shdr.sh_info = index_map_get(shdr.sh_info);
 			dirty = 1;
 		}
 
@@ -228,7 +487,7 @@ fix_patch_relocations(void)
 	}
 
 	// Update the string table
-	elf_setshstrndx(out_patch.elf, out_patch.idx_map[in_patch.shstrndx]);
+	elf_setshstrndx(out_patch.elf, index_map_get(in_patch.shstrndx));
 }
 
 static int
@@ -240,11 +499,14 @@ close_patch(void)
 	if (ret < 0) 
 		printf("elf_update failed: %s", elf_errmsg(-1));
 
+	// TODO: Free shstrab data
+
 	elf_end(out_patch.elf);
 	elf_end(in_patch.elf);
 	close(out_patch.fd);
 	close(in_patch.fd);
 
+	free(out_patch.idx_map);
 	return (ret);
 }
 
@@ -263,6 +525,11 @@ main(int argc, const char **argv)
 	find_kernel_symbol("", "");
 	
 	copy_patch_sections();
+
+	parse_patch_metadata();
+
+	new_patch_sections();
+
 	fix_patch_relocations();
 
 	close_kernel();
