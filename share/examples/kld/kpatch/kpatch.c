@@ -1,9 +1,11 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kpatch.h>
 #include <sys/kernel.h>
 #include <sys/sysctl.h>
+
+// TODO: How to cleanly include the header from tools?
+#include "../../../../tools/tools/buildpatch/buildpatch.h"
 
 #define HELPER(str) \
 	do { \
