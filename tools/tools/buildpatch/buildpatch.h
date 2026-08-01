@@ -3,11 +3,10 @@
 
 #include <sys/types.h>
 
-#define PATCH_FUNC_SYMPOS 0x1
+#define PATCH_USING_SYMPOS 0x1
 
-struct patch_metadata {
+struct set_metadata {
 	const char *name;
-	const char *desc;
 	long flags;
 };
 
@@ -28,20 +27,23 @@ struct reloc_metadata {
 	const char *local_sym;
 	const char *real_sym;
 	const char *real_obj;
-	const char *real_file;
+	union {
+		const char *real_file;
+		long sympos;
+	} uniquifier;
 	long flags;
 };
 
-#define PATCH_SET_SECTION	".patch.sets"
-#define PATCH_FUNC_SECTION	".patch.funcs"
-#define PATCH_RELOC_SECTION	".patch.relocs"
+#define PATCH_SET_SECTION	".buildpatch.sets"
+#define PATCH_FUNC_SECTION	".buildpatch.funcs"
+#define PATCH_RELOC_SECTION	".buildpatch.relocs"
 
 #define PATCH_CONCAT(name, uniquifier)	__patch_##name##_##uniquifier
 
-#define PATCH_DECLARE(name, desc, flags) \
+#define PATCH_DECLARE(name, flags) \
 	 __used __section(PATCH_SET_SECTION) \
-	static struct patch_metadata PATCH_CONCAT(name, info) = { \
-		#name, desc, flags \
+	static struct set_metadata PATCH_CONCAT(name, info) = { \
+		#name, flags \
 	};
 
 #define PATCH_FUNC_FULL(patch, new_sym, old_sym, old_obj, uniquifier, flags) \
@@ -53,10 +55,13 @@ struct reloc_metadata {
 #define PATCH_FUNC(patch, new_sym, old_sym, old_obj, old_file) \
 	PATCH_FUNC_FULL(patch, new_sym, old_sym, old_obj, old_file, 0)
 
-#define PATCH_RELOC(local, sym, obj, file) \
+#define PATCH_RELOC_FULL(local, sym, obj, uniquifier, flags) \
 	__used __section(PATCH_RELOC_SECTION) \
 	static struct reloc_metadata PATCH_CONCAT(, reloc__##local) = { \
-		#local, sym, obj, file, 0 \
+		#local, sym, obj, { uniquifier }, flags \
 	};
+
+#define PATCH_RELOC(local, sym, obj, file) \
+	PATCH_RELOC_FULL(local, sym, obj, file, 0)
 
 #endif
