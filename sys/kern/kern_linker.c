@@ -61,10 +61,8 @@
 #include <ddb/ddb.h>
 #endif
 
-//#ifdef KPATCH
 #define KPATCH_INTERNAL
 #include <sys/kpatch.h>
-//#endif
 
 #include <net/vnet.h>
 
@@ -456,29 +454,16 @@ SYSINIT(linker_kernel, SI_SUB_KLD, SI_ORDER_ANY, linker_init_kernel_modules,
 static int
 linker_file_register_patches(linker_file_t lf)
 {
-	struct kpatch_metadata **patches;
-	struct kpatch_func_metadata **funcs;
-	int pcount, fcount, error;
+	struct kpatch_set_metadata **patches;
+	int count, error;
 
 	sx_assert(&kld_sx, SA_XLOCKED);
 
-	error = linker_file_lookup_set(lf, PATCH_SETNAME, &patches, NULL, &pcount);
+	error = linker_file_lookup_set(lf, KPATCH_SETNAME, &patches, NULL, &count);
 	if (error != 0)
-		patches = NULL;
-
-	error = linker_file_lookup_set(lf, PATCH_FUNC_SETNAME, &funcs, NULL, &fcount);
-	if (error != 0)
-		funcs = NULL;
-
-	if (!patches && !funcs)
 		return (0);
 
-	if (!patches && funcs) {
-		printf("Malformed patch file\n");
-		return (ENOEXEC);
-	}
-
-	error = patch_register_file(lf, patches, pcount, funcs, fcount);
+	error = kpatch_register(lf, patches, count);
 	return (error);
 }
 
@@ -753,7 +738,7 @@ linker_file_unload(linker_file_t file, int flags)
 	}
 
 	/* Check if there are patches that would prevent the unload. */
-	error = patch_unregister_file(file, flags);
+	error = kpatch_unregister(file, flags);
 	if (error != 0)
 		return (error);
 

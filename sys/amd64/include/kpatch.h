@@ -4,6 +4,6 @@
 #define AMD64_JMP_LEN		5
 #define AMD64_JMP_OPCODE	0xE9
 
-#define PATCH_TEXTLEN		AMD64_JMP_LEN
+#define KPATCH_TEXTLEN		AMD64_JMP_LEN
 
 #endif
