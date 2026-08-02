@@ -55,9 +55,10 @@ struct kpatch_func {
 	struct kpatch_set *patch;
 	void *new_addr;
 	const char *old_sym;
-	linker_file_t old_lf;
 	unsigned old_sympos;
 	void *old_addr;
+	const char *old_obj;
+	linker_file_t old_lf;
 	bool patched;
 	int old_size;
 	uint8_t old_text[KPATCH_TEXTLEN];
@@ -68,6 +69,9 @@ struct kpatch_func {
 int kpatch_register(linker_file_t lf, struct kpatch_set_metadata **patches, int count);
 
 int kpatch_unregister(linker_file_t lf, int flags);
+
+// TODO: Should these be here or in machine/kpatch.h ?
+int kpatch_func_validate(struct kpatch_func *func);
 
 #endif /* KPATCH_INTERNAL */
 

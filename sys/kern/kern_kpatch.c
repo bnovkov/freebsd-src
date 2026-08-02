@@ -26,6 +26,13 @@ static RB_HEAD(kpatch_syms, kpatch_func)	kpatch_syms;
 
 static MALLOC_DEFINE(M_KPATCH, "kpatch", "Kernel live-patching memory");
 
+struct resolve_ctx {
+	const char *sym;
+	long sympos;
+	long count;
+	linker_symval_t symval;
+};
+
 static inline int
 kpatch_func_cmp(struct kpatch_func *a, struct kpatch_func *b)
 {
@@ -38,6 +45,7 @@ kpatch_func_cmp(struct kpatch_func *a, struct kpatch_func *b)
 		return (1);
 	return (0);
 }
+
 RB_GENERATE_STATIC(kpatch_syms, kpatch_func, node, kpatch_func_cmp);
 
 static int kpatch_set_enable(struct kpatch_set *set);
@@ -152,8 +160,86 @@ kpatch_sysctl_file(SYSCTL_HANDLER_ARGS)
 }
 
 static int
+kpatch_func_protected(const struct kpatch_func *func)
+{
+	if (!strncmp(func->old_sym, "kpatch_", 7))
+		return (1);
+
+	return (0);
+}
+
+static int
+kpatch_resolve_cb(linker_file_t lf, int symnum, linker_symval_t *symval, void *arg)
+{
+	struct resolve_ctx *ctx;
+
+	ctx = arg;
+	if (strcmp(symval->name, ctx->sym))
+		return (0);
+
+	if (ctx->sympos == ctx->count++ && ctx->sympos >= 0) {
+		ctx->symval = *symval;
+		return (1);
+	}
+
+	/*
+	 * The idea here is that if we have a negative sympos we want the
+	 * 'automatic' symbol. Meaning that if we have even two symbol with
+	 * the same name we bail.
+	 */
+	if (ctx->sympos < 0) {
+		if (ctx->count == 1)
+			ctx->symval = *symval;
+		else
+			return (1);
+	}
+
+	return (0);
+}
+
+static int
 kpatch_func_resolve(struct kpatch_func *func)
 {
+	struct resolve_ctx ctx;
+	int error;
+
+	if (kpatch_func_protected(func)) {
+		printf("kpatch: Function %s is protected\n", func->old_sym);
+		return (EPERM);
+	}
+
+	if (func->old_obj == NULL || !strcmp(func->old_obj, "kernel")) {
+		func->old_lf = linker_kernel_file;
+	} else {
+		printf("kpatch: Unsupported target object %s\n", func->old_obj);
+		return (ENOTSUP);
+	}
+
+	ctx.sym = func->old_sym;
+	ctx.sympos = func->old_sympos;
+	ctx.count = 0;
+
+	LINKER_EACH_FUNCTION_NAMEVAL(func->old_lf, kpatch_resolve_cb, &ctx);
+
+	if (func->old_sympos < 0 && ctx.count > 1) {
+		printf("kpatch: Symbol %s is ambiguous (multiple occurrences)\n", func->old_sym);
+		return (EINVAL);
+	}
+
+	if (ctx.count == 0 || (func->old_sympos >= 0 && ctx.count <= func->old_sympos)) {
+		printf("kpatch: Unable to resolve symbol %s\n", func->old_sym);
+		return (ENOENT);
+	}
+
+	func->old_addr = ctx.symval.value;
+	func->old_size = ctx.symval.size;
+
+	error = kpatch_func_validate(func);
+	if (error != 0) {
+		printf("kpatch: Function %s cannot be patched\n", func->old_sym);
+		return (error);
+	}
+
 	return (0);
 }
 
@@ -264,11 +350,7 @@ kpatch_set_parse(struct kpatch_set_metadata *metadata, linker_file_t lf)
 		func->new_addr = metadata->funcs[i].new_addr;
 		func->old_sym = metadata->funcs[i].old_sym;
 		func->old_sympos = metadata->funcs[i].sympos;
-
-		if (metadata->funcs[i].old_obj != NULL) {
-			// TODO: Find func->old_lf
-		}
-
+		func->old_obj = metadata->funcs[i].old_obj;
 		TAILQ_INSERT_TAIL(&set->funcs, func, link);
 	}
 
