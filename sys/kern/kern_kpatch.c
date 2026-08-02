@@ -3,11 +3,11 @@
 #include <sys/conf.h>
 #include <sys/cdefs.h>
 #include <sys/kernel.h>
-#include <sys/mutex.h>
 #include <sys/linker.h>
 #include <sys/smp.h>
 #include <sys/sbuf.h>
 #include <sys/malloc.h>
+#include <sys/lock.h>
 #include <sys/sx.h>
 #include <sys/proc.h>
 #include <sys/stack.h>
@@ -21,7 +21,7 @@
 #include <sys/kpatch.h>
 
 static TAILQ_HEAD(, kpatch_set)			kpatch_list;
-static struct mtx				kpatch_mtx;
+static struct sx				kpatch_sx;
 static RB_HEAD(kpatch_syms, kpatch_func)	kpatch_syms;
 
 static MALLOC_DEFINE(M_KPATCH, "kpatch", "Kernel live-patching memory");
@@ -60,11 +60,19 @@ kpatch_sysctl_enable(SYSCTL_HANDLER_ARGS)
 	if (error != 0 || req->newptr == NULL)
 		return (error);
 
-	if (req_enabled && !set->enabled)
-		error = kpatch_set_enable(set);
-	else if (!req_enabled && set->enabled)
-		error = kpatch_set_disable(set);
+	sx_xlock(&kpatch_sx);
+	if (!set->attached) {
+		sx_xunlock(&kpatch_sx);
+		return (EBUSY);
+	}
 
+	if (req_enabled && !set->enabled) {
+		error = kpatch_set_enable(set);
+	} else if (!req_enabled && set->enabled) {
+		error = kpatch_set_disable(set);
+	}
+
+	sx_xunlock(&kpatch_sx);
 	return (error);
 }
 
@@ -78,14 +86,14 @@ kpatch_sysctl_trampolines(SYSCTL_HANDLER_ARGS)
 	sbuf_new_for_sysctl(&sb, NULL, 512, req);
 	sbuf_putc(&sb, '\n');
 
-	mtx_lock(&kpatch_mtx);
+	sx_slock(&kpatch_sx);
 	RB_FOREACH(func, kpatch_syms, &kpatch_syms) {
 		sbuf_printf(&sb, " %p:\n", func->old_addr);
 		sbuf_printf(&sb, "\tsymbol:\t%s\n", func->old_sym);
 		sbuf_printf(&sb, "\ttarget:\t%p\n", func->new_addr);
 		sbuf_printf(&sb, "\tpatch:\t%s\n", func->patch->name);
 	}
-	mtx_unlock(&kpatch_mtx);
+	sx_sunlock(&kpatch_sx);
 
 	error = sbuf_finish(&sb);
 	sbuf_delete(&sb);
@@ -107,7 +115,7 @@ kpatch_sysctl_syms(SYSCTL_HANDLER_ARGS)
 	sbuf_new_for_sysctl(&sb, NULL, 512, req);
 	sbuf_putc(&sb, '\n');
 
-	mtx_lock(&kpatch_mtx);
+	sx_slock(&kpatch_sx);
 	set = arg1;
 	TAILQ_FOREACH(func, &set->funcs, link) {
 		sbuf_printf(&sb, " %s\n", func->old_sym);
@@ -117,7 +125,7 @@ kpatch_sysctl_syms(SYSCTL_HANDLER_ARGS)
 		sbuf_printf(&sb, "\tinstalled:\t%s\n",
 				func->patched ? "yes" : "no");
 	}
-	mtx_unlock(&kpatch_mtx);
+	sx_sunlock(&kpatch_sx);
 
 	error = sbuf_finish(&sb);
 	sbuf_delete(&sb);
@@ -133,10 +141,10 @@ kpatch_sysctl_file(SYSCTL_HANDLER_ARGS)
 
 	sbuf_new_for_sysctl(&sb, NULL, 512, req);
 
-	mtx_lock(&kpatch_mtx);
+	sx_slock(&kpatch_sx);
 	set = arg1;
 	sbuf_cat(&sb, set->lf->filename);
-	mtx_unlock(&kpatch_mtx);
+	sx_sunlock(&kpatch_sx);
 
 	error = sbuf_finish(&sb);
 	sbuf_delete(&sb);
@@ -152,12 +160,14 @@ kpatch_func_resolve(struct kpatch_func *func)
 static int
 kpatch_set_enable(struct kpatch_set *set)
 {
+	sx_assert(&kpatch_sx, SA_XLOCKED);
 	return (0);
 }
 
 static int
 kpatch_set_disable(struct kpatch_set *set)
 {
+	sx_assert(&kpatch_sx, SA_XLOCKED);
 	return (0);
 }
 
@@ -165,6 +175,9 @@ static void
 kpatch_set_free(struct kpatch_set *set)
 {
 	struct kpatch_func *func, *tmp;
+
+	sx_assert(&kpatch_sx, SA_UNLOCKED);
+	sysctl_ctx_free(&set->ctx);
 
 	TAILQ_FOREACH_SAFE(func, &set->funcs, link, tmp) {
 		TAILQ_REMOVE(&set->funcs, func, link);
@@ -188,22 +201,19 @@ kpatch_set_attach(struct kpatch_set *set)
 			return (error);
 	}
 
-	mtx_lock(&kpatch_mtx);
-
+	sx_xlock(&kpatch_sx);
 	TAILQ_FOREACH(set2, &kpatch_list, link) {
 		if (!strcmp(set2->name, set->name)) {
 			printf("kpatch: Duplicate patch name '%s'\n", set->name);
-			mtx_unlock(&kpatch_mtx);
+			sx_xunlock(&kpatch_sx);
 			return (EEXIST);
 		}
 	}
 
 	TAILQ_INSERT_TAIL(&kpatch_list, set, link);
-	mtx_unlock(&kpatch_mtx);
+	sx_xunlock(&kpatch_sx);
 
 	// Add sysctl nodes
-	sysctl_ctx_init(&set->ctx);
-
 	set->oidp = SYSCTL_ADD_NODE(&set->ctx,
 			SYSCTL_STATIC_CHILDREN(_kern_patch), OID_AUTO,
 			set->name, CTLFLAG_RW | CTLFLAG_MPSAFE,
@@ -225,57 +235,40 @@ kpatch_set_attach(struct kpatch_set *set)
 	return (error);
 }
 
-static int
+static void
 kpatch_set_detach(struct kpatch_set *set)
 {
-	int error;
+	sx_assert(&kpatch_sx, SA_XLOCKED);
 
-	mtx_lock(&kpatch_mtx);
-	if (set->enabled) {
-		mtx_unlock(&kpatch_mtx);
-		return (EBUSY);
-	}
-
-
-	// Mark as detached in advance to avoid races
-	set->attached = false;
-	mtx_unlock(&kpatch_mtx);
-	
-
-	error = sysctl_ctx_free(&set->ctx);
-	if (error != 0) {
-		mtx_lock(&kpatch_mtx);
-		set->attached = true;
-		mtx_unlock(&kpatch_mtx);
-		return (error);
-	}
-
-	mtx_lock(&kpatch_mtx);
 	TAILQ_REMOVE(&kpatch_list, set, link);
-	mtx_unlock(&kpatch_mtx);
-
-	return (0);
+	set->attached = false;
 }
 
 static struct kpatch_set *
-kpatch_set_parse(struct kpatch_set_metadata *patch)
+kpatch_set_parse(struct kpatch_set_metadata *metadata, linker_file_t lf)
 {
 	struct kpatch_set *set;
 	struct kpatch_func *func;
 	int i;
 
 	set = malloc(sizeof(struct kpatch_set), M_KPATCH, M_WAITOK | M_ZERO);
-	set->name = patch->name;
+	set->name = metadata->name;
+	set->lf = lf;
+
+	sysctl_ctx_init(&set->ctx);
 	TAILQ_INIT(&set->funcs);
 
-	for (i = 0; i < patch->count; i++) {
+	for (i = 0; i < metadata->count; i++) {
 		func = malloc(sizeof(struct kpatch_func), M_KPATCH, M_WAITOK | M_ZERO);
 		func->patch = set;
-		func->new_addr = patch->funcs[i].new_addr;
-		func->old_sym = patch->funcs[i].old_sym;
-		// TODO: Resolve linker file from objname
-		// func->old_lf = patch->old_obj;
-		func->old_sympos = patch->funcs[i].sympos;
+		func->new_addr = metadata->funcs[i].new_addr;
+		func->old_sym = metadata->funcs[i].old_sym;
+		func->old_sympos = metadata->funcs[i].sympos;
+
+		if (metadata->funcs[i].old_obj != NULL) {
+			// TODO: Find func->old_lf
+		}
+
 		TAILQ_INSERT_TAIL(&set->funcs, func, link);
 	}
 
@@ -291,19 +284,21 @@ kpatch_register(linker_file_t lf, struct kpatch_set_metadata **patches, int coun
 	sets = malloc(count * sizeof(struct kpatch_set *), M_KPATCH, M_WAITOK | M_ZERO);
 
 	for (i = 0; i < count; i++) {
-		sets[i] = kpatch_set_parse(patches[i]);
-		sets[i]->lf = lf;
+		sets[i] = kpatch_set_parse(patches[i], lf);
 		error = kpatch_set_attach(sets[i]);
 		if (error == 0)
 			continue;
 
 		// Rollback all the sets and cleanup
+		sx_xlock(&kpatch_sx);
 		for (j = 0; j < i; j++) {
 			kpatch_set_detach(sets[j]);
+		}
+		sx_xunlock(&kpatch_sx);
+
+		for (j = 0; j <= i; j++) {
 			kpatch_set_free(sets[j]);
 		}
-
-		kpatch_set_free(sets[i]);
 		break;
 	}
 
@@ -314,30 +309,35 @@ kpatch_register(linker_file_t lf, struct kpatch_set_metadata **patches, int coun
 int
 kpatch_unregister(linker_file_t lf, int flags)
 {
-	struct kpatch_set *patch, *tmp;
-	int error;
+	struct kpatch_set *set, *tmp;
+	TAILQ_HEAD(, kpatch_set) dead_list;
 
-	mtx_lock(&kpatch_mtx);
-	TAILQ_FOREACH(patch, &kpatch_list, link) {
-		if (patch->lf == lf && patch->enabled) {
+	sx_xlock(&kpatch_sx);
+
+	TAILQ_FOREACH(set, &kpatch_list, link) {
+		if (set->lf == lf && set->enabled) {
 			printf("kpatch: Cannot unload %s because patch '%s' is enabled\n",
-					patch->name, lf->filename);
-			mtx_unlock(&kpatch_mtx);
+					set->name, lf->filename);
+			sx_xunlock(&kpatch_sx);
 			return (EBUSY);
 		}
 	}
-	mtx_unlock(&kpatch_mtx);
 
-	// Actually clean up the memory
-	TAILQ_FOREACH_SAFE(patch, &kpatch_list, link, tmp) {
-		if (patch->lf != lf)
+	TAILQ_INIT(&dead_list);
+
+	TAILQ_FOREACH_SAFE(set, &kpatch_list, link, tmp) {
+		if (set->lf != lf)
 			continue;
 
-		error = kpatch_set_detach(patch);
-		if (error != 0)
-			return (error);
+		kpatch_set_detach(set);
+		TAILQ_INSERT_TAIL(&dead_list, set, link);
+	}
 
-		kpatch_set_free(patch);
+	sx_xunlock(&kpatch_sx);
+
+	TAILQ_FOREACH_SAFE(set, &dead_list, link, tmp) {
+		// Actually clean up the memory
+		kpatch_set_free(set);
 	}
 
 	return (0);
@@ -348,7 +348,7 @@ kpatch_init(void *dummy __unused)
 {
 	TAILQ_INIT(&kpatch_list);
 	RB_INIT(&kpatch_syms);
-	mtx_init(&kpatch_mtx, "kpatch", NULL, MTX_DEF);
+	sx_init(&kpatch_sx, "kpatch");
 
 	printf("kpatch: Kernel patching available\n");
 }
