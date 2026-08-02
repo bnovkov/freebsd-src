@@ -1,33 +1,34 @@
-//#include <sys/param.h>
-//#include <sys/cdefs.h>
-//#include <sys/systm.h>
-//
-//#include <machine/cpufunc.h>
-//#include <machine/md_var.h>
-//
-//#define KPATCH_INTERNAL
-//#include <sys/kpatch.h>
-//
-//static inline intptr_t
-//patch_target_offset(patch_func_t *func)
-//{
-//	return (intptr_t)func->new_addr - ((intptr_t)func->old_addr + AMD64_JMP_LEN);
-//}
-//
-//int
-//patch_validate_func(patch_func_t *func)
-//{
-//	intptr_t offset;
-//
-//	if (func->old_size <= AMD64_JMP_LEN)
-//		return (ENOSPC);
-//
-//	offset = patch_target_offset(func);
-//	if (offset < INT32_MIN || offset > INT32_MAX)
-//		return (ERANGE);
-//
-//	return (0);
-//}
+#include <sys/param.h>
+#include <sys/cdefs.h>
+#include <sys/systm.h>
+
+#include <machine/cpufunc.h>
+#include <machine/md_var.h>
+
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+
+static inline intptr_t
+kpatch_target_offset(struct kpatch_func *func)
+{
+	return (intptr_t)func->new_addr - ((intptr_t)func->old_addr + AMD64_JMP_LEN);
+}
+
+int
+kpatch_func_validate(struct kpatch_func *func)
+{
+	intptr_t offset;
+
+	if (func->old_size <= AMD64_JMP_LEN)
+		return (ENOSPC);
+
+	offset = kpatch_target_offset(func);
+	if (offset < INT32_MIN || offset > INT32_MAX)
+		return (ERANGE);
+
+	return (0);
+}
+
 //
 //static void
 //patch_write_text(void *addr, uint8_t *insn, size_t size)
