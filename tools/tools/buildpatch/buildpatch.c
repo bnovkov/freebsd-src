@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stddef.h>
 
-#include "../../../sys/sys/kpatch2.h"
+#include "../../../sys/sys/kpatch.h"
 
 #include "buildpatch.h"
 
@@ -554,7 +554,7 @@ add_section_symbol(Elf_Scn *symtab_scn, unsigned shndx)
 
 	/* Symbol not found: append STT_SECTION to symtab */
 	memset(&sym, 0, sizeof(sym));
-	sym.st_info = GELF_ST_INFO(STB_LOCAL, STT_SECTION);
+	sym.st_info = GELF_ST_INFO(STB_GLOBAL, STT_SECTION);
 	sym.st_shndx = shndx;
 
 	Elf_Data *new_data = elf_newdata(symtab_scn);
@@ -568,7 +568,6 @@ add_section_symbol(Elf_Scn *symtab_scn, unsigned shndx)
 	new_data->d_version = EV_CURRENT;
 
 	shdr.sh_size += sizeof(GElf_Sym);
-	shdr.sh_info++;
 	gelf_update_shdr(symtab_scn, &shdr);
 
 	return (count);
@@ -667,7 +666,7 @@ create_kpatch_sets(Elf_Scn *funcs_scn)
 				fcount++;
 			}
 		}
-		sets_buf[i].funcs_count = fcount;
+		sets_buf[i].count = fcount;
 
 		/* Steal name relocation */
 		if (in_patch.sets_md[i].name) {

@@ -3915,6 +3915,7 @@ kern/kern_jailmeta.c		standard
 kern/kern_kcov.c		optional kcov			\
 	compile-with "${NOSAN_C} ${MSAN_CFLAGS}"
 kern/kern_kexec.c		standard
+kern/kern_kpatch.c		standard
 kern/kern_khelp.c		standard
 kern/kern_kthread.c		standard
 kern/kern_ktr.c			optional ktr
@@ -3933,7 +3934,6 @@ kern/kern_mtxpool.c		standard
 kern/kern_mutex.c		standard
 kern/kern_ntptime.c		standard
 kern/kern_osd.c			standard
-kern/kern_patch.c		standard
 kern/kern_physio.c		standard
 kern/kern_pmc.c			standard
 kern/kern_poll.c		optional device_polling
