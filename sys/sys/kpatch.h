@@ -73,6 +73,12 @@ int kpatch_unregister(linker_file_t lf, int flags);
 // TODO: Should these be here or in machine/kpatch.h ?
 int kpatch_func_validate(struct kpatch_func *func);
 
+void kpatch_install_trampoline(struct kpatch_func *func);
+
+void kpatch_restore_trampoline(struct kpatch_func *func);
+
+void kpatch_flush_icache(void);
+
 #endif /* KPATCH_INTERNAL */
 
 #endif
