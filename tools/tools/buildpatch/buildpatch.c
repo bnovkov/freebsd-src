@@ -350,15 +350,15 @@ parse_patch_sets(void)
 	const char *str;
 
 	data = elf_getdata(in_patch.sets_scn, NULL);
-        rela_data = elf_getdata(in_patch.sets_rela, NULL);
-        gelf_getshdr(in_patch.sets_rela, &rela_shdr);
+	rela_data = elf_getdata(in_patch.sets_rela, NULL);
+	gelf_getshdr(in_patch.sets_rela, &rela_shdr);
 
-        in_patch.sets_count = data->d_size / sizeof(struct set_metadata);
-        in_patch.sets_md = malloc(data->d_size);
-        memcpy(in_patch.sets_md, data->d_buf, data->d_size);
+	in_patch.sets_count = data->d_size / sizeof(struct set_metadata);
+	in_patch.sets_md = malloc(data->d_size);
+	memcpy(in_patch.sets_md, data->d_buf, data->d_size);
 
-        nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
-        for (i = 0; i < nrelas; i++) {
+	nrelas = rela_shdr.sh_size / rela_shdr.sh_entsize;
+	for (i = 0; i < nrelas; i++) {
 		gelf_getrela(rela_data, i, &rela);
 		str = resolve_reloc_string(rela);
 		if (str == NULL)
