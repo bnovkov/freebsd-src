@@ -452,22 +452,6 @@ SYSINIT(linker_kernel, SI_SUB_KLD, SI_ORDER_ANY, linker_init_kernel_modules,
     NULL);
 
 static int
-linker_file_register_patches(linker_file_t lf)
-{
-	struct kpatch_set_metadata **patches;
-	int count, error;
-
-	sx_assert(&kld_sx, SA_XLOCKED);
-
-	error = linker_file_lookup_set(lf, KPATCH_SETNAME, &patches, NULL, &count);
-	if (error != 0)
-		return (0);
-
-	error = kpatch_register(lf, patches, count);
-	return (error);
-}
-
-static int
 linker_load_file(const char *filename, linker_file_t *result)
 {
 	linker_class_t lc;
@@ -515,7 +499,7 @@ linker_load_file(const char *filename, linker_file_t *result)
 				return (error);
 			}
 
-			error = linker_file_register_patches(lf);
+			error = kpatch_register(lf, lf->kpatch_info);
 			if (error) {
 				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 				return (error);
@@ -529,6 +513,7 @@ linker_load_file(const char *filename, linker_file_t *result)
 			linker_file_sysinit(lf);
 			lf->flags |= LINKER_FILE_LINKED;
 
+			// TODO: What if kpatch successfully loaded but the modules did not?
 			/*
 			 * If all of the modules in this file failed
 			 * to load, unload the file and return an
@@ -1867,6 +1852,14 @@ restart:
 		linker_file_register_modules(lf);
 		if (!TAILQ_EMPTY(&lf->modules))
 			lf->flags |= LINKER_FILE_MODULES;
+
+		error = kpatch_register(lf, lf->kpatch_info);
+		if (error) {
+			printf("KLD file %s - could not register patches\n",
+				lf->filename);
+			goto fail;
+		}
+
 		if (linker_file_lookup_set(lf, "sysinit_set", &si_start,
 		    &si_stop, NULL) == 0)
 			sysinit_add(si_start, si_stop);

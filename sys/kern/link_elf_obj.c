@@ -66,6 +66,9 @@
 #include <contrib/zlib/zlib.h>
 #endif
 
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+
 #include "linker_if.h"
 
 typedef struct {
@@ -687,6 +690,11 @@ link_elf_link_preload_finish(linker_file_t lf)
 	elf_file_t ef;
 	int error;
 
+	/* Look for kpatch metadata */
+	error = kpatch_detect(lf);
+	if (error != 0)
+		return (error);
+
 	ef = (elf_file_t)lf;
 	error = relocate_file(ef);
 	if (error)
@@ -1238,6 +1246,11 @@ link_elf_load_file(linker_class_t cls, const char *filename,
 
 	/* Local intra-module relocations */
 	error = link_elf_reloc_local(lf, false);
+	if (error != 0)
+		goto out;
+
+	/* Look for kpatch metadata */
+	error = kpatch_detect(lf);
 	if (error != 0)
 		goto out;
 

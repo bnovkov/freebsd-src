@@ -208,10 +208,43 @@ kpatch_resolve_cb(linker_file_t lf, int symnum, linker_symval_t *symval, void *a
 	return (0);
 }
 
+int
+kpatch_resolve(const char *sym, const char *obj, int sympos,
+		linker_file_t *lf, linker_symval_t *symval)
+{
+	struct resolve_ctx ctx;
+
+	if (obj == NULL || obj[0] == 0 || !strcmp(obj, "kernel")) {
+		*lf = linker_kernel_file;
+	} else {
+		printf("kpatch: Unsupported target object %s\n", obj);
+		return (ENOTSUP);
+	}
+
+	ctx.sym = sym;
+	ctx.sympos = sympos;
+	ctx.count = 0;
+
+	LINKER_EACH_FUNCTION_NAMEVAL(*lf, kpatch_resolve_cb, &ctx);
+
+	if (sympos < 0 && ctx.count > 1) {
+		printf("kpatch: Symbol %s is ambiguous (multiple occurrences)\n", sym);
+		return (EINVAL);
+	}
+
+	if (ctx.count == 0 || (sympos >= 0 && ctx.count <= sympos)) {
+		printf("kpatch: Unable to resolve symbol %s\n", sym);
+		return (ENOENT);
+	}
+
+	*symval = ctx.symval;
+	return (0);
+}
+
 static int
 kpatch_func_resolve(struct kpatch_func *func)
 {
-	struct resolve_ctx ctx;
+	linker_symval_t symval;
 	int error;
 
 	if (kpatch_func_protected(func)) {
@@ -219,31 +252,13 @@ kpatch_func_resolve(struct kpatch_func *func)
 		return (EPERM);
 	}
 
-	if (func->old_obj == NULL || !strcmp(func->old_obj, "kernel")) {
-		func->old_lf = linker_kernel_file;
-	} else {
-		printf("kpatch: Unsupported target object %s\n", func->old_obj);
-		return (ENOTSUP);
-	}
+	error = kpatch_resolve(func->old_sym, func->old_obj, func->old_sympos,
+			&func->old_lf, &symval);
+	if (error != 0)
+		return (error);
 
-	ctx.sym = func->old_sym;
-	ctx.sympos = func->old_sympos;
-	ctx.count = 0;
-
-	LINKER_EACH_FUNCTION_NAMEVAL(func->old_lf, kpatch_resolve_cb, &ctx);
-
-	if (func->old_sympos < 0 && ctx.count > 1) {
-		printf("kpatch: Symbol %s is ambiguous (multiple occurrences)\n", func->old_sym);
-		return (EINVAL);
-	}
-
-	if (ctx.count == 0 || (func->old_sympos >= 0 && ctx.count <= func->old_sympos)) {
-		printf("kpatch: Unable to resolve symbol %s\n", func->old_sym);
-		return (ENOENT);
-	}
-
-	func->old_addr = ctx.symval.value;
-	func->old_size = ctx.symval.size;
+	func->old_addr = symval.value;
+	func->old_size = symval.size;
 
 	error = kpatch_func_validate(func);
 	if (error != 0) {
@@ -550,7 +565,7 @@ kpatch_set_detach(struct kpatch_set *set)
 }
 
 static struct kpatch_set *
-kpatch_set_parse(struct kpatch_set_metadata *metadata, linker_file_t lf)
+kpatch_set_parse(struct kpatch_set_metadata *metadata)
 {
 	struct kpatch_set *set;
 	struct kpatch_func *func;
@@ -558,12 +573,11 @@ kpatch_set_parse(struct kpatch_set_metadata *metadata, linker_file_t lf)
 
 	set = malloc(sizeof(struct kpatch_set), M_KPATCH, M_WAITOK | M_ZERO);
 	set->name = metadata->name;
-	set->lf = lf;
 
 	sysctl_ctx_init(&set->ctx);
 	TAILQ_INIT(&set->funcs);
 
-	for (i = 0; i < metadata->count; i++) {
+	for (i = 0; i < metadata->funcs_count; i++) {
 		func = malloc(sizeof(struct kpatch_func), M_KPATCH, M_WAITOK | M_ZERO);
 		func->patch = set;
 		func->new_addr = metadata->funcs[i].new_addr;
@@ -577,15 +591,18 @@ kpatch_set_parse(struct kpatch_set_metadata *metadata, linker_file_t lf)
 }
 
 int
-kpatch_register(linker_file_t lf, struct kpatch_set_metadata **patches, int count)
+kpatch_register(linker_file_t lf, struct kpatch_metadata *info)
 {
 	struct kpatch_set **sets;
 	int i, j, error;
 
-	sets = malloc(count * sizeof(struct kpatch_set *), M_KPATCH, M_WAITOK | M_ZERO);
+	sets = malloc(info->sets_count * sizeof(struct kpatch_set *),
+			M_KPATCH, M_WAITOK | M_ZERO);
 
-	for (i = 0; i < count; i++) {
-		sets[i] = kpatch_set_parse(patches[i], lf);
+	for (i = 0; i < info->sets_count; i++) {
+		sets[i] = kpatch_set_parse(&info->sets[i]);
+		sets[i]->lf = lf;
+
 		error = kpatch_set_attach(sets[i]);
 		if (error == 0)
 			continue;
@@ -612,6 +629,8 @@ kpatch_unregister(linker_file_t lf, int flags)
 {
 	struct kpatch_set *set, *tmp;
 	TAILQ_HEAD(, kpatch_set) dead_list;
+
+	// TODO: Maybe keep in lf the list of patchsets associated with it?
 
 	sx_xlock(&kpatch_sx);
 
@@ -644,6 +663,25 @@ kpatch_unregister(linker_file_t lf, int flags)
 	return (0);
 }
 
+/*
+ * This function should be called before the load process is
+ * completed so that our custom relocation logic can use the
+ * metadata contained in kpatch_info->relocs
+ */
+int
+kpatch_detect(linker_file_t lf)
+{
+	caddr_t info;
+
+	info = linker_file_lookup_symbol(lf, KPATCH_METADATA, 0);
+	if (info == 0)
+		return (0);
+
+	// TODO: Validate here the build-id
+	lf->kpatch_info = info;
+	return (0);
+}
+
 static void
 kpatch_init(void *dummy __unused)
 {
@@ -651,7 +689,7 @@ kpatch_init(void *dummy __unused)
 	RB_INIT(&kpatch_syms);
 	sx_init(&kpatch_sx, "kpatch");
 
-	printf("kpatch: Kernel patching available\n");
+	printf("kpatch: Kernel live-patching available\n");
 }
 
 SYSINIT(kpatch, SI_SUB_KLD, SI_ORDER_ANY, kpatch_init, NULL);

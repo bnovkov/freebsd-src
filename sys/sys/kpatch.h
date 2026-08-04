@@ -3,12 +3,25 @@
 
 #include <sys/types.h>
 
+struct kpatch_metadata {
+	struct kpatch_set_metadata *sets;
+	int sets_count;
+	struct kpatch_reloc_metadata *relocs;
+	int relocs_count;
+};
+
+// TODO: Maybe add a register-on-load flag for sets. Mainly for preloading
 struct kpatch_set_metadata {
 	const char *name;
 	struct kpatch_func_metadata *funcs;
-	int count;
+	int funcs_count;
 	int flags;
 };
+
+// TODO: Does it make sense to add a separate entity for objects?
+//struct kpatch_obj_metdata {
+//	const char *name;
+//};
 
 struct kpatch_func_metadata {
 	void *new_addr;
@@ -18,7 +31,14 @@ struct kpatch_func_metadata {
 	int flags;
 };
 
-#define KPATCH_SETNAME		"kpatch_set"
+struct kpatch_reloc_metadata {
+	const char *old_sym;
+	const char *old_obj;
+	int sympos;
+	int flags;
+};
+
+#define KPATCH_METADATA		"kpatch_info"
 
 /*
  * Internal API of the subsystem below
@@ -66,9 +86,14 @@ struct kpatch_func {
 	TAILQ_ENTRY(kpatch_func) link;
 };
 
-int kpatch_register(linker_file_t lf, struct kpatch_set_metadata **patches, int count);
+int kpatch_detect(linker_file_t lf);
+
+int kpatch_register(linker_file_t lf, struct kpatch_metadata *info);
 
 int kpatch_unregister(linker_file_t lf, int flags);
+
+int kpatch_resolve(const char *sym, const char *obj, int sympos,
+		linker_file_t *lf, linker_symval_t *symval);
 
 // TODO: Should these be here or in machine/kpatch.h ?
 int kpatch_func_validate(struct kpatch_func *func);
