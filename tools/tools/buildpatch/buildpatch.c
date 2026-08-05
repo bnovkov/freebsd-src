@@ -21,6 +21,8 @@ static struct {
 	GElf_Shdr symtab_shdr;
 	Elf_Data *symtab_data;
 	int symtab_count;
+	size_t build_id_len;
+	uint8_t build_id[32];
 } kern;
 
 static struct {
@@ -53,6 +55,60 @@ static struct {
 	size_t idx_size;
 	unsigned last_ndx;
 } out_patch;
+
+static void
+extract_build_id(void)
+{
+	Elf_Scn *scn;
+	GElf_Shdr shdr;
+	Elf_Data *data;
+	uint32_t *note_hdr;
+	size_t offset;
+	const char *name;
+	const uint8_t *desc;
+	uint32_t namesz, descsz, type;
+
+	scn = NULL;
+	while ((scn = elf_nextscn(kern.elf, scn)) != NULL) {
+		if (gelf_getshdr(scn, &shdr) == NULL)
+			continue;
+
+		if (shdr.sh_type != SHT_NOTE)
+			continue;
+
+		data = elf_getdata(scn, NULL);
+		if (data == NULL)
+			continue;
+
+		offset = 0;
+		while (offset + 12 <= data->d_size) {
+			note_hdr = (void *)((char *)data->d_buf + offset);
+			namesz = note_hdr[0];
+			descsz = note_hdr[1];
+			type = note_hdr[2];
+			name = (const char *)&note_hdr[3];
+			desc = (const uint8_t *)name + ((namesz + 3) & ~3);
+
+			if (offset + 12 + ((namesz + 3) & ~3) + ((descsz + 3) & ~3) > data->d_size)
+				break;
+
+			/* NT_GNU_BUILD_ID is 3, and the vendor string is "GNU\0" */
+			if (type == 3 && namesz == 4 && memcmp(name, "GNU", 4) == 0) {
+				kern.build_id_len = descsz;
+				if (kern.build_id_len > sizeof(kern.build_id))
+					kern.build_id_len = sizeof(kern.build_id);
+
+				memcpy(kern.build_id, desc, kern.build_id_len);
+				printf("Extracted kernel build-id (%zu bytes)\n", kern.build_id_len);
+				return;
+			}
+
+			offset += 12 + ((namesz + 3) & ~3) + ((descsz + 3) & ~3);
+		}
+	}
+
+	errx(1, "No build-id found in kernel");
+}
 
 static void
 open_kernel(const char *path)
@@ -88,6 +144,8 @@ open_kernel(const char *path)
 	kern.symtab_scn = scn;
 	kern.symtab_shdr = shdr;
 	kern.symtab_count = shdr.sh_size / shdr.sh_entsize;
+
+	extract_build_id();
 }
 
 static void
@@ -873,6 +931,9 @@ create_kpatch_info(Elf_Scn *sets_scn, Elf_Scn *relocs_scn)
 		relas[relocs_count].r_addend = 0;
 		relocs_count++;
 	}
+
+	memcpy(info_buf->build_id, kern.build_id, kern.build_id_len);
+	info_buf->build_id_len = kern.build_id_len;
 
 	scn = create_section(".kpatch.info", SHT_PROGBITS, SHF_ALLOC, 8,
 		sizeof(struct kpatch_metadata), info_buf, sizeof(struct kpatch_metadata));

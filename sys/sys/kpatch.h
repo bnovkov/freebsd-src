@@ -4,6 +4,10 @@
 #include <sys/types.h>
 
 struct kpatch_metadata {
+	int version;
+	int build_id_len;
+	uint8_t build_id[32];
+
 	struct kpatch_set_metadata *sets;
 	int sets_count;
 	struct kpatch_reloc_metadata *relocs;

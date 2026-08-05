@@ -733,6 +733,12 @@ kpatch_unregister(linker_file_t lf, int flags)
 	return (0);
 }
 
+extern char __build_id_start[];
+extern char __build_id_end[];
+
+#define	BUILD_ID_HEADER_LEN	0x10
+#define	BUILD_ID_HASH_MAXLEN	0x14
+
 /*
  * This function should be called before the load process is
  * completed so that our custom relocation logic can use the
@@ -741,13 +747,41 @@ kpatch_unregister(linker_file_t lf, int flags)
 int
 kpatch_detect(linker_file_t lf)
 {
-	caddr_t info;
+	const uint8_t *hash;
+	int hashlen, sectionlen;
+	caddr_t sym_addr;
+	struct kpatch_metadata *info;
 
-	info = linker_file_lookup_symbol(lf, KPATCH_METADATA, 0);
-	if (info == 0)
+	sym_addr = linker_file_lookup_symbol(lf, KPATCH_METADATA, 0);
+	if (sym_addr == 0)
 		return (0);
 
-	// TODO: Validate here the build-id
+	info = (struct kpatch_metadata *)sym_addr;
+	if (info->version != 0) {
+		printf("kpatch: Unsupported metadata version %d\n", info->version);
+		return (ENOTSUP);
+	}
+
+	if (info->build_id_len == 0) {
+		printf("kpatch: Patch %s does not contain a valid build-id\n", lf->filename);
+		return (ENOEXEC);
+	}
+
+	sectionlen = (int)(__build_id_end - __build_id_start);
+	if (sectionlen <= BUILD_ID_HEADER_LEN ||
+			sectionlen > (BUILD_ID_HEADER_LEN + BUILD_ID_HASH_MAXLEN)) {
+		printf("kpatch: Running kernel has no valid build-id\n");
+		return (ENOEXEC);
+	}
+
+	hashlen = sectionlen - BUILD_ID_HEADER_LEN;
+	hash = (const uint8_t *)(__build_id_start + BUILD_ID_HEADER_LEN);
+
+	if (info->build_id_len != hashlen || memcmp(info->build_id, hash, hashlen)) {
+		printf("kpatch: Patch build-id does not match the running kernel\n");
+		return (ENOEXEC);
+	}
+
 	lf->kpatch_info = info;
 	return (0);
 }
