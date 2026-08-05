@@ -53,8 +53,8 @@ PATCH_DECLARE(test3, 0);
 extern void vga_suspend(void *);
 PATCH_RELOC(vga_suspend, "vga_suspend", "kernel", "vga_isa.c");
 
-//extern int loadcnt;
-//PATCH_RELOC(loadcnt, "loadcnt", "kernel", "kern_linker.c");
+extern int loadcnt;
+PATCH_RELOC(loadcnt, "loadcnt", "kernel", "kern_linker.c");
 
 extern void linker_init(void *arg);
 PATCH_RELOC(linker_init, "linker_init", "kernel", "kern_linker.c");
@@ -65,7 +65,7 @@ static void
 kpatch_sysinit(void *dummy __unused)
 {
 	printf("vga_suspend was relocated to %p\n", rel);
-	//printf("loadcnt was relocated to %p\n", &loadcnt);
+	printf("loadcnt was relocated to %p\n", &loadcnt);
 	printf("linker_init was relocated to %p\n", linker_init);
 }
 

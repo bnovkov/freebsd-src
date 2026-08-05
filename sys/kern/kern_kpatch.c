@@ -208,6 +208,30 @@ kpatch_resolve_cb(linker_file_t lf, int symnum, linker_symval_t *symval, void *a
 	return (0);
 }
 
+// TODO: Ideally create a linker abstract method for this
+static int
+kpatch_each_symbol_nameval(linker_file_t file,
+    linker_function_nameval_callback_t callback, void *opaque)
+{
+       linker_symval_t symval;
+       const Elf_Sym *symtab;
+       int i, count, error;
+
+       count = LINKER_SYMTAB_GET(file, &symtab);
+
+       for (i = 0; i < count; i++) {
+               if (symtab[i].st_value != 0) {
+                       error = LINKER_DEBUG_SYMBOL_VALUES(file,
+                                       (c_linker_sym_t)&symtab[i], &symval);
+                       if (error == 0)
+                               error = callback(file, i, &symval, opaque);
+                       if (error != 0)
+                               return (error);
+               }
+       }
+       return (0);
+}
+
 static int
 kpatch_resolve(const char *sym, const char *obj, int sympos,
 		linker_file_t *lf, linker_symval_t *symval)
@@ -226,7 +250,7 @@ kpatch_resolve(const char *sym, const char *obj, int sympos,
 	ctx.sympos = sympos;
 	ctx.count = 0;
 
-	LINKER_EACH_FUNCTION_NAMEVAL(target_lf, kpatch_resolve_cb, &ctx);
+	kpatch_each_symbol_nameval(target_lf, kpatch_resolve_cb, &ctx);
 
 	if (sympos < 0 && ctx.count > 1) {
 		printf("kpatch: Symbol %s is ambiguous (multiple occurrences)\n", sym);
