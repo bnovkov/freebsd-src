@@ -32,8 +32,8 @@ struct kpatch_func_metadata {
 };
 
 struct kpatch_reloc_metadata {
-	const char *old_sym;
-	const char *old_obj;
+	const char *sym;
+	const char *obj;
 	int sympos;
 	int flags;
 };
@@ -88,12 +88,11 @@ struct kpatch_func {
 
 int kpatch_detect(linker_file_t lf);
 
-int kpatch_register(linker_file_t lf, struct kpatch_metadata *info);
+int kpatch_register(linker_file_t lf);
 
 int kpatch_unregister(linker_file_t lf, int flags);
 
-int kpatch_resolve(const char *sym, const char *obj, int sympos,
-		linker_file_t *lf, linker_symval_t *symval);
+int kpatch_lookup_elf(linker_file_t lf, Elf_Sym *sym, Elf_Addr *res);
 
 // TODO: Should these be here or in machine/kpatch.h ?
 int kpatch_func_validate(struct kpatch_func *func);

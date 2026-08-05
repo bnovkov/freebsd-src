@@ -1759,6 +1759,11 @@ elf_obj_lookup(linker_file_t lf, Elf_Size symidx, int deps, Elf_Addr *res)
 
 	sym = ef->ddbsymtab + symidx;
 
+	/* Special case for patch relocations */
+	if (sym->st_shndx == SHN_FREEBSD_KPATCH) {
+		return (kpatch_lookup_elf(lf, sym, res));
+	}
+
 	/* Quick answer if there is a definition included. */
 	if (sym->st_shndx != SHN_UNDEF) {
 		res1 = (Elf_Addr)sym->st_value;

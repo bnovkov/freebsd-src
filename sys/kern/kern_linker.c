@@ -499,7 +499,7 @@ linker_load_file(const char *filename, linker_file_t *result)
 				return (error);
 			}
 
-			error = kpatch_register(lf, lf->kpatch_info);
+			error = kpatch_register(lf);
 			if (error) {
 				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 				return (error);
@@ -1853,7 +1853,7 @@ restart:
 		if (!TAILQ_EMPTY(&lf->modules))
 			lf->flags |= LINKER_FILE_MODULES;
 
-		error = kpatch_register(lf, lf->kpatch_info);
+		error = kpatch_register(lf);
 		if (error) {
 			printf("KLD file %s - could not register patches\n",
 				lf->filename);
