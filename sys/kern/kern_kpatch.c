@@ -208,14 +208,15 @@ kpatch_resolve_cb(linker_file_t lf, int symnum, linker_symval_t *symval, void *a
 	return (0);
 }
 
-int
+static int
 kpatch_resolve(const char *sym, const char *obj, int sympos,
 		linker_file_t *lf, linker_symval_t *symval)
 {
 	struct resolve_ctx ctx;
+	linker_file_t target_lf;
 
 	if (obj == NULL || obj[0] == 0 || !strcmp(obj, "kernel")) {
-		*lf = linker_kernel_file;
+		target_lf = linker_kernel_file;
 	} else {
 		printf("kpatch: Unsupported target object %s\n", obj);
 		return (ENOTSUP);
@@ -225,7 +226,7 @@ kpatch_resolve(const char *sym, const char *obj, int sympos,
 	ctx.sympos = sympos;
 	ctx.count = 0;
 
-	LINKER_EACH_FUNCTION_NAMEVAL(*lf, kpatch_resolve_cb, &ctx);
+	LINKER_EACH_FUNCTION_NAMEVAL(target_lf, kpatch_resolve_cb, &ctx);
 
 	if (sympos < 0 && ctx.count > 1) {
 		printf("kpatch: Symbol %s is ambiguous (multiple occurrences)\n", sym);
@@ -237,7 +238,44 @@ kpatch_resolve(const char *sym, const char *obj, int sympos,
 		return (ENOENT);
 	}
 
+	if (lf)
+		*lf = target_lf;
+
 	*symval = ctx.symval;
+	return (0);
+}
+
+int
+kpatch_lookup_elf(linker_file_t lf, Elf_Sym *sym, Elf_Addr *res)
+{
+	struct kpatch_metadata *info;
+	struct kpatch_reloc_metadata *reloc;
+	linker_symval_t symval;
+	int error;
+
+	info = lf->kpatch_info;
+	if (info == NULL || sym->st_value >= info->relocs_count)
+		return (EINVAL);
+
+	reloc = &info->relocs[sym->st_value];
+	error = kpatch_resolve(reloc->sym, reloc->obj, reloc->sympos, NULL, &symval);
+	if (error != 0) {
+		if (error == ENOENT && ELF_ST_BIND(sym->st_info) == STB_WEAK) {
+			// Treat weak symbols as 'optional'
+			symval.value = NULL;
+		} else {
+			return (error);
+		}
+	}
+
+	/*
+	 * Update the symtab to cache our custom lookup
+	 * which is fairly expensive
+	 */
+	sym->st_value = (Elf_Addr)symval.value;
+	sym->st_shndx = SHN_ABS;
+
+	*res = (Elf_Addr)symval.value;
 	return (0);
 }
 
@@ -591,10 +629,15 @@ kpatch_set_parse(struct kpatch_set_metadata *metadata)
 }
 
 int
-kpatch_register(linker_file_t lf, struct kpatch_metadata *info)
+kpatch_register(linker_file_t lf)
 {
 	struct kpatch_set **sets;
+	struct kpatch_metadata *info;
 	int i, j, error;
+
+	info = lf->kpatch_info;
+	if (info == NULL)
+		return (0);
 
 	sets = malloc(info->sets_count * sizeof(struct kpatch_set *),
 			M_KPATCH, M_WAITOK | M_ZERO);
@@ -630,6 +673,9 @@ kpatch_unregister(linker_file_t lf, int flags)
 	struct kpatch_set *set, *tmp;
 	TAILQ_HEAD(, kpatch_set) dead_list;
 
+	if (lf->kpatch_info == NULL)
+		return (0);
+
 	// TODO: Maybe keep in lf the list of patchsets associated with it?
 
 	sx_xlock(&kpatch_sx);
@@ -637,7 +683,7 @@ kpatch_unregister(linker_file_t lf, int flags)
 	TAILQ_FOREACH(set, &kpatch_list, link) {
 		if (set->lf == lf && set->enabled) {
 			printf("kpatch: Cannot unload %s because patch '%s' is enabled\n",
-					set->name, lf->filename);
+					lf->filename, set->name);
 			sx_xunlock(&kpatch_sx);
 			return (EBUSY);
 		}
