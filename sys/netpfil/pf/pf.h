@@ -737,5 +737,6 @@ RB_PROTOTYPE(pf_anchor_global, pf_anchor, entry_global, pf_anchor_compare);
 RB_PROTOTYPE(pf_anchor_node, pf_anchor, entry_node, pf_anchor_compare);
 
 int	 pf_get_ruleset_number(u_int8_t);
+bool pf_isforlocal(struct mbuf *m, int af);
 
 #endif	/* _NET_PF_H_ */

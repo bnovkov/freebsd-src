@@ -60,6 +60,9 @@
 
 //#include "pflog.h"
 
+#include "opt_inet.h"
+#include "opt_inet6.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/mbuf.h>
@@ -80,10 +83,15 @@
 #include <net/route.h>
 
 #include <netinet/in.h>
+#include <netinet/in_var.h>
 #include <netinet/in_pcb.h>
 #include <netinet/ip.h>
+#include <netinet/ip_var.h>
 #include <netinet/tcp.h>
 #include <netinet/tcp_var.h>
+
+#include <netinet/ip6.h>
+#include <netinet6/ip6_var.h>
 
 #include <net/pfvar.h>
 #include <netpfil/pf/pf_nv.h>
@@ -291,13 +299,53 @@ pf_syncookie_send(struct pf_pdesc *pd)
 {
 	uint16_t	mss;
 	uint32_t	iss;
+	struct mbuf *m;
 
 	mss = max(V_tcp_mssdflt, pf_get_mss(pd));
 	iss = pf_syncookie_generate(pd, mss);
-	pf_send_tcp(NULL, pd->af, pd->dst, pd->src, *pd->dport, *pd->sport,
-	    iss, ntohl(pd->hdr.tcp.th_seq) + 1, TH_SYN|TH_ACK, 0, mss,
-	    0, M_SKIP_FIREWALL | (pd->m->m_flags & M_LOOP), 0, 0,
+	m = pf_build_tcp(NULL, pd->af, pd->dst, pd->src, *pd->dport, *pd->sport,
+	    iss, ntohl(pd->hdr.tcp.th_seq) + 1, TH_SYN | TH_ACK, 0, mss, 0,
+	    M_SKIP_FIREWALL | (pd->m->m_flags & M_LOOP), 0, 0, 0,
 	    pd->act.rtableid);
+	if (m == NULL)
+		return;
+
+	switch (pd->af) {
+#ifdef INET
+	case AF_INET:
+		if (pf_isforlocal(m, AF_INET)) {
+			KASSERT(m->m_pkthdr.rcvif == V_loif,
+			    ("%s: rcvif != loif", __func__));
+
+			m->m_flags |= M_SKIP_FIREWALL;
+			m->m_pkthdr.csum_flags |= CSUM_IP_VALID |
+			    CSUM_IP_CHECKED | CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
+			m->m_pkthdr.csum_data = 0xffff;
+			ip_input(m);
+		} else {
+			ip_output(m, NULL, NULL, 0, NULL, NULL);
+		}
+		break;
+#endif /* INET */
+#ifdef INET6
+	case AF_INET6:
+		if (pf_isforlocal(m, AF_INET6)) {
+			KASSERT(m->m_pkthdr.rcvif == V_loif,
+			    ("%s: rcvif != loif", __func__));
+
+			m->m_flags |= M_SKIP_FIREWALL | M_LOOP;
+			m->m_pkthdr.csum_flags |= CSUM_DATA_VALID |
+			    CSUM_PSEUDO_HDR;
+			m->m_pkthdr.csum_data = 0xffff;
+			ip6_input(m);
+		} else {
+			ip6_output(m, NULL, NULL, 0, NULL, NULL, NULL);
+		}
+		break;
+#endif /* INET6 */
+	default:
+		unhandled_af(pd->af);
+	}
 	counter_u64_add(V_pf_status.lcounters[KLCNT_SYNCOOKIES_SENT], 1);
 	/* XXX Maybe only in adaptive mode? */
 	atomic_add_64(&V_pf_status.syncookies_inflight[V_pf_syncookie_status.oddeven],

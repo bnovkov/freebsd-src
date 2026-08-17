@@ -2245,7 +2245,7 @@ pf_send(struct pf_send_entry *pfse)
 	swi_sched(V_pf_swi_cookie, 0);
 }
 
-static bool
+bool
 pf_isforlocal(struct mbuf *m, int af)
 {
 	switch (af) {
