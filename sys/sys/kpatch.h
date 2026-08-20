@@ -5,21 +5,24 @@
 
 struct kpatch_metadata {
 	int version;
-	int build_id_len;
+	size_t build_id_len;
 	uint8_t build_id[32];
-
 	struct kpatch_set_metadata *sets;
-	int sets_count;
+	size_t sets_count;
 	struct kpatch_reloc_metadata *relocs;
-	int relocs_count;
+	size_t relocs_count;
 };
 
-// TODO: Maybe add a register-on-load flag for sets. Mainly for preloading
+// TODO: Maybe add a enable-on-load flag for sets. Mainly for preloading
 struct kpatch_set_metadata {
 	const char *name;
 	struct kpatch_func_metadata *funcs;
-	int funcs_count;
+	size_t funcs_count;
 	int flags;
+	int (*pre_patch)(void);
+	void (*post_patch)(int);
+	int (*pre_unpatch)(void);
+	void (*post_unpatch)(int);
 };
 
 // TODO: Does it make sense to add a separate entity for objects?
@@ -70,6 +73,10 @@ struct kpatch_set {
 	TAILQ_ENTRY(kpatch_set) link;
 	struct sysctl_ctx_list ctx;
 	struct sysctl_oid *oidp;
+	int (*pre_patch)(void);
+	void (*post_patch)(int);
+	int (*pre_unpatch)(void);
+	void (*post_unpatch)(int);
 };
 
 /*
@@ -84,7 +91,7 @@ struct kpatch_func {
 	const char *old_obj;
 	linker_file_t old_lf;
 	bool patched;
-	int old_size;
+	unsigned old_size;
 	uint8_t old_text[KPATCH_TEXTLEN];
 	RB_ENTRY(kpatch_func) node;
 	TAILQ_ENTRY(kpatch_func) link;
