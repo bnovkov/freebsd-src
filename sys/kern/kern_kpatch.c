@@ -24,7 +24,6 @@ static TAILQ_HEAD(, kpatch_set)			kpatch_list;
 static struct sx				kpatch_sx;
 static RB_HEAD(kpatch_syms, kpatch_func)	kpatch_syms;
 
-static volatile int	kpatch_checked_cpus;
 static volatile int	kpatch_failed_cpus;
 
 static MALLOC_DEFINE(M_KPATCH, "kpatch", "Kernel live-patching memory");
@@ -382,11 +381,10 @@ kpatch_check_allproc(struct kpatch_set *set)
 }
 
 static void
-kpatch_rendezvous_action(void *arg)
+kpatch_rendezvous_setup(void *arg)
 {
 	struct stack st;
 	struct rendezvous_ctx *ctx;
-	struct kpatch_func *func;
 
 	ctx = arg;
 
@@ -394,22 +392,29 @@ kpatch_rendezvous_action(void *arg)
 	stack_zero(&st);
 	stack_save(&st);
 
-	if (kpatch_check_stack(&st, ctx->patch))
+	if (kpatch_check_stack(&st, ctx->patch)) {
 		atomic_add_int(&kpatch_failed_cpus, 1);
-
-	atomic_add_int(&kpatch_checked_cpus, 1);
+		return;
+	}
 
 	/* The master cpu checks all the stacks in allproc */
+	if (curcpu == ctx->cpuid) {
+		if (kpatch_check_allproc(ctx->patch)) {
+			atomic_add_int(&kpatch_failed_cpus, 1);
+		}
+	}
+}
+
+static void
+kpatch_rendezvous_action(void *arg)
+{
+	struct rendezvous_ctx *ctx;
+	struct kpatch_func *func;
+
+	ctx = arg;
+
 	if (curcpu != ctx->cpuid)
 		return;
-
-	if (kpatch_check_allproc(ctx->patch))
-		atomic_add_int(&kpatch_failed_cpus, 1);
-
-	/* Wait for all other cpus to finish */
-	while (atomic_load_acq_int(&kpatch_checked_cpus) < mp_ncpus) {
-		cpu_spinwait();
-	}
 
 	/* If any one of the checks failed, bail */
 	if (kpatch_failed_cpus > 0) {
@@ -445,11 +450,9 @@ kpatch_rendezvous(struct kpatch_set *set, int (*action)(struct kpatch_func *, vo
 		.error	= 0,
 	};
 
-	/* Reset rendezvous action counters */
-	kpatch_checked_cpus = 0;
 	kpatch_failed_cpus = 0;
-
-	smp_rendezvous(NULL, kpatch_rendezvous_action, kpatch_rendezvous_teardown, &ctx);
+	smp_rendezvous(kpatch_rendezvous_setup, kpatch_rendezvous_action,
+			kpatch_rendezvous_teardown, &ctx);
 	return ctx.error;
 }
 
@@ -515,6 +518,18 @@ kpatch_set_enable(struct kpatch_set *set)
 		return (error);
 	}
 
+	if (set->pre_patch != NULL) {
+		error = set->pre_patch();
+		if (error != 0) {
+			TAILQ_FOREACH(func, &set->funcs, link) {
+				RB_REMOVE(kpatch_syms, &kpatch_syms, func);
+			}
+
+			sx_sunlock(&allproc_lock);
+			return (error);
+		}
+	}
+
 	error = kpatch_rendezvous(set, kpatch_func_apply);
 	if (error == 0) {
 		set->enabled = true;
@@ -523,6 +538,9 @@ kpatch_set_enable(struct kpatch_set *set)
 			RB_REMOVE(kpatch_syms, &kpatch_syms, func);
 		}
 	}
+
+	if (set->post_patch != NULL)
+		set->post_patch(error);
 
 	sx_sunlock(&allproc_lock);
 	return (error);
@@ -542,6 +560,14 @@ kpatch_set_disable(struct kpatch_set *set)
 		return (EALREADY);
 	}
 
+	if (set->pre_unpatch != NULL) {
+		error = set->pre_unpatch();
+		if (error != 0) {
+			sx_sunlock(&allproc_lock);
+			return (error);
+		}
+	}
+
 	error = kpatch_rendezvous(set, kpatch_func_rollback);
 	if (error == 0) {
 		set->enabled = false;
@@ -550,6 +576,9 @@ kpatch_set_disable(struct kpatch_set *set)
 			RB_REMOVE(kpatch_syms, &kpatch_syms, func);
 		}
 	}
+
+	if (set->post_unpatch != NULL)
+		set->post_unpatch(error);
 
 	sx_sunlock(&allproc_lock);
 	return (error);
@@ -638,6 +667,10 @@ kpatch_set_parse(struct kpatch_set_metadata *set_md)
 
 	set = malloc(sizeof(struct kpatch_set), M_KPATCH, M_WAITOK | M_ZERO);
 	set->name = set_md->name;
+	set->pre_patch = set_md->pre_patch;
+	set->post_patch = set_md->post_patch;
+	set->pre_unpatch = set_md->pre_unpatch;
+	set->post_unpatch = set_md->post_unpatch;
 
 	sysctl_ctx_init(&set->ctx);
 	TAILQ_INIT(&set->funcs);
