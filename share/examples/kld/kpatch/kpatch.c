@@ -43,7 +43,23 @@ patch_test3(void)
 PATCH_FUNC(test3, patch_test3,
 	   "sys___sysctl", "kernel", "kern_sysctl.c");
 
-PATCH_DECLARE(test1, 0);
+static int
+pre_patch1(void)
+{
+	printf("Patching test1 (pre)\n");
+	return (0);
+}
+
+static void
+post_patch1(int x)
+{
+	printf("Patching test1 (post) -> %d\n", x);
+}
+
+PATCH_DECLARE_FULL(test1, 0,
+		pre_patch1, post_patch1,
+		pre_patch1, post_patch1);
+
 PATCH_DECLARE(test2, 0);
 PATCH_DECLARE(test3, 0);
 
