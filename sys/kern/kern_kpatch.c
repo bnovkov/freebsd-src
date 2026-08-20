@@ -78,9 +78,12 @@ kpatch_sysctl_enable(SYSCTL_HANDLER_ARGS)
 	if (error != 0 || req->newptr == NULL)
 		return (error);
 
+	sx_slock(&allproc_lock);
 	sx_xlock(&kpatch_sx);
+
 	if (!set->attached) {
 		sx_xunlock(&kpatch_sx);
+		sx_sunlock(&allproc_lock);
 		return (EBUSY);
 	}
 
@@ -91,6 +94,7 @@ kpatch_sysctl_enable(SYSCTL_HANDLER_ARGS)
 	}
 
 	sx_xunlock(&kpatch_sx);
+	sx_sunlock(&allproc_lock);
 	return (error);
 }
 
@@ -485,12 +489,10 @@ kpatch_set_enable(struct kpatch_set *set)
 	int error, count;
 
 	sx_assert(&kpatch_sx, SA_XLOCKED);
-	sx_slock(&allproc_lock);
+	sx_assert(&allproc_lock, SA_SLOCKED);
 
-	if (set->enabled) {
-		sx_sunlock(&allproc_lock);
+	if (set->enabled)
 		return (EALREADY);
-	}
 
 	count = 0;
 	error = 0;
@@ -513,8 +515,6 @@ kpatch_set_enable(struct kpatch_set *set)
 
 			RB_REMOVE(kpatch_syms, &kpatch_syms, func);
 		}
-
-		sx_sunlock(&allproc_lock);
 		return (error);
 	}
 
@@ -524,8 +524,6 @@ kpatch_set_enable(struct kpatch_set *set)
 			TAILQ_FOREACH(func, &set->funcs, link) {
 				RB_REMOVE(kpatch_syms, &kpatch_syms, func);
 			}
-
-			sx_sunlock(&allproc_lock);
 			return (error);
 		}
 	}
@@ -542,7 +540,6 @@ kpatch_set_enable(struct kpatch_set *set)
 	if (set->post_patch != NULL)
 		set->post_patch(error);
 
-	sx_sunlock(&allproc_lock);
 	return (error);
 }
 
@@ -553,19 +550,15 @@ kpatch_set_disable(struct kpatch_set *set)
 	int error;
 
 	sx_assert(&kpatch_sx, SA_XLOCKED);
-	sx_slock(&allproc_lock);
+	sx_assert(&allproc_lock, SA_SLOCKED);
 
-	if (!set->enabled) {
-		sx_sunlock(&allproc_lock);
+	if (!set->enabled)
 		return (EALREADY);
-	}
 
 	if (set->pre_unpatch != NULL) {
 		error = set->pre_unpatch();
-		if (error != 0) {
-			sx_sunlock(&allproc_lock);
+		if (error != 0)
 			return (error);
-		}
 	}
 
 	error = kpatch_rendezvous(set, kpatch_func_rollback);
@@ -580,7 +573,6 @@ kpatch_set_disable(struct kpatch_set *set)
 	if (set->post_unpatch != NULL)
 		set->post_unpatch(error);
 
-	sx_sunlock(&allproc_lock);
 	return (error);
 }
 
