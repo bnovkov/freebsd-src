@@ -213,23 +213,25 @@ static int
 kpatch_each_symbol_nameval(linker_file_t file,
     linker_function_nameval_callback_t callback, void *opaque)
 {
-       linker_symval_t symval;
-       const Elf_Sym *symtab;
-       int i, count, error;
+	linker_symval_t symval;
+	const Elf_Sym *symtab;
+	int i, count, error;
 
-       count = LINKER_SYMTAB_GET(file, &symtab);
+	count = LINKER_SYMTAB_GET(file, &symtab);
 
-       for (i = 0; i < count; i++) {
-               if (symtab[i].st_value != 0) {
-                       error = LINKER_DEBUG_SYMBOL_VALUES(file,
-                                       (c_linker_sym_t)&symtab[i], &symval);
-                       if (error == 0)
-                               error = callback(file, i, &symval, opaque);
-                       if (error != 0)
-                               return (error);
-               }
-       }
-       return (0);
+	for (i = 0; i < count; i++) {
+		if (symtab[i].st_value != 0) {
+			error = LINKER_DEBUG_SYMBOL_VALUES(file,
+					(c_linker_sym_t)&symtab[i], &symval);
+
+			if (error == 0)
+				error = callback(file, i, &symval, opaque);
+
+			if (error != 0)
+				return (error);
+		}
+	}
+	return (0);
 }
 
 static int
@@ -310,7 +312,7 @@ kpatch_func_resolve(struct kpatch_func *func)
 	int error;
 
 	if (kpatch_func_protected(func)) {
-		printf("kpatch: Function %s is protected\n", func->old_sym);
+		printf("kpatch: Patching function %s is not permitted\n", func->old_sym);
 		return (EPERM);
 	}
 
@@ -627,25 +629,28 @@ kpatch_set_detach(struct kpatch_set *set)
 }
 
 static struct kpatch_set *
-kpatch_set_parse(struct kpatch_set_metadata *metadata)
+kpatch_set_parse(struct kpatch_set_metadata *set_md)
 {
+	struct kpatch_func_metadata *func_md;
 	struct kpatch_set *set;
 	struct kpatch_func *func;
 	int i;
 
 	set = malloc(sizeof(struct kpatch_set), M_KPATCH, M_WAITOK | M_ZERO);
-	set->name = metadata->name;
+	set->name = set_md->name;
 
 	sysctl_ctx_init(&set->ctx);
 	TAILQ_INIT(&set->funcs);
 
-	for (i = 0; i < metadata->funcs_count; i++) {
+	for (i = 0; i < set_md->funcs_count; i++) {
+		func_md = &set_md->funcs[i];
+
 		func = malloc(sizeof(struct kpatch_func), M_KPATCH, M_WAITOK | M_ZERO);
 		func->patch = set;
-		func->new_addr = metadata->funcs[i].new_addr;
-		func->old_sym = metadata->funcs[i].old_sym;
-		func->old_sympos = metadata->funcs[i].sympos;
-		func->old_obj = metadata->funcs[i].old_obj;
+		func->new_addr = func_md->new_addr;
+		func->old_sym = func_md->old_sym;
+		func->old_sympos = func_md->sympos;
+		func->old_obj = func_md->old_obj;
 		TAILQ_INSERT_TAIL(&set->funcs, func, link);
 	}
 
@@ -695,7 +700,7 @@ int
 kpatch_unregister(linker_file_t lf, int flags)
 {
 	struct kpatch_set *set, *tmp;
-	TAILQ_HEAD(, kpatch_set) dead_list;
+	TAILQ_HEAD(, kpatch_set) tofree;
 
 	if (lf->kpatch_info == NULL)
 		return (0);
@@ -713,20 +718,20 @@ kpatch_unregister(linker_file_t lf, int flags)
 		}
 	}
 
-	TAILQ_INIT(&dead_list);
+	TAILQ_INIT(&tofree);
 
 	TAILQ_FOREACH_SAFE(set, &kpatch_list, link, tmp) {
 		if (set->lf != lf)
 			continue;
 
 		kpatch_set_detach(set);
-		TAILQ_INSERT_TAIL(&dead_list, set, link);
+		TAILQ_INSERT_TAIL(&tofree, set, link);
 	}
 
 	sx_xunlock(&kpatch_sx);
 
 	// Clean up the memory outside of the lock
-	TAILQ_FOREACH_SAFE(set, &dead_list, link, tmp) {
+	TAILQ_FOREACH_SAFE(set, &tofree, link, tmp) {
 		kpatch_set_free(set);
 	}
 
