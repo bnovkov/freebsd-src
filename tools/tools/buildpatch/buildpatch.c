@@ -1,7 +1,7 @@
-#include "../../../sys/sys/kpatch.h"
-#include "../../../sys/sys/elf_common.h"
-
 #include <sys/types.h>
+#include <sys/kpatch.h>
+#include <sys/elf_common.h>
+
 #include <err.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -29,6 +29,7 @@ static struct {
 	int fd;
 	Elf *elf;
 	Elf_Scn *symtab_scn;
+	GElf_Shdr symtab_shdr;
 	Elf_Data *symtab_data;
 	int symtab_count;
 	long shstrndx;
@@ -425,6 +426,7 @@ copy_patch_sections(void)
 
 		if (shdr.sh_type == SHT_SYMTAB) {
 			in_patch.symtab_scn = scn_in;
+			in_patch.symtab_shdr = shdr;
 			in_patch.symtab_data = elf_getdata(scn_in, NULL);
 			in_patch.symtab_count = shdr.sh_size / shdr.sh_entsize;
 		}
@@ -498,6 +500,10 @@ parse_patch_sets(void)
 		printf("Parsed patch set:\n");
 		printf("\tName: %s\n", RELSTR_STR(in_patch.sets_md[i].name));
 		printf("\tFlags: %lx\n", in_patch.sets_md[i].flags);
+		printf("\tPre patch: %s\n", in_patch.sets_md[i].pre_patch ? "yes" : "no");
+		printf("\tPost patch: %s\n", in_patch.sets_md[i].post_patch ? "yes" : "no");
+		printf("\tPre unpatch: %s\n", in_patch.sets_md[i].pre_unpatch ? "yes" : "no");
+		printf("\tPost unpatch: %s\n", in_patch.sets_md[i].post_unpatch ? "yes" : "no");
 	}
 }
 
@@ -760,7 +766,7 @@ create_kpatch_sets(Elf_Scn *funcs_scn)
 	Elf_Scn *scn, *symtab_scn;
 	unsigned long funcs_sec_sym_idx;
 	size_t total_size, s_off;
-	int i, j, fcount, first_func_idx, relocs_count = 0;
+	int i, j, fcount, first_func_idx, relocs_count;
 
 	symtab_scn = elf_getscn(out_patch.elf, index_map_get(elf_ndxscn(in_patch.symtab_scn)));
 	funcs_sec_sym_idx = add_section_symbol(symtab_scn, elf_ndxscn(funcs_scn));
@@ -768,8 +774,9 @@ create_kpatch_sets(Elf_Scn *funcs_scn)
 	total_size = in_patch.sets_count * sizeof(struct kpatch_set_metadata);
 	sets_buf = calloc(in_patch.sets_count, sizeof(struct kpatch_set_metadata));
 
-	// Current number of relas for each set is 1
-	relas = calloc(in_patch.sets_count * 2, sizeof(GElf_Rela));
+	// Current number of relas for each set is 6
+	relas = calloc(in_patch.sets_count * 6, sizeof(GElf_Rela));
+	relocs_count = 0;
 
 	for (i = 0; i < in_patch.sets_count; i++) {
 		s_off = i * sizeof(struct kpatch_set_metadata);
@@ -797,6 +804,27 @@ create_kpatch_sets(Elf_Scn *funcs_scn)
 			relas[relocs_count].r_offset = s_off + offsetof(struct kpatch_set_metadata, funcs);
 			relas[relocs_count].r_info = GELF_R_INFO(funcs_sec_sym_idx, R_X86_64_64);
 			relas[relocs_count].r_addend = first_func_idx * sizeof(struct kpatch_func_metadata);
+			relocs_count++;
+		}
+
+		if (in_patch.sets_md[i].pre_patch) {
+			relas[relocs_count] = RELSTR_RELA(in_patch.sets_md[i].pre_patch);
+			relas[relocs_count].r_offset = s_off + offsetof(struct kpatch_set_metadata, pre_patch);
+			relocs_count++;
+		}
+		if (in_patch.sets_md[i].post_patch) {
+			relas[relocs_count] = RELSTR_RELA(in_patch.sets_md[i].post_patch);
+			relas[relocs_count].r_offset = s_off + offsetof(struct kpatch_set_metadata, post_patch);
+			relocs_count++;
+		}
+		if (in_patch.sets_md[i].pre_unpatch) {
+			relas[relocs_count] = RELSTR_RELA(in_patch.sets_md[i].pre_unpatch);
+			relas[relocs_count].r_offset = s_off + offsetof(struct kpatch_set_metadata, pre_unpatch);
+			relocs_count++;
+		}
+		if (in_patch.sets_md[i].post_unpatch) {
+			relas[relocs_count] = RELSTR_RELA(in_patch.sets_md[i].post_unpatch);
+			relas[relocs_count].r_offset = s_off + offsetof(struct kpatch_set_metadata, post_unpatch);
 			relocs_count++;
 		}
 	}
@@ -943,7 +971,7 @@ create_kpatch_info(Elf_Scn *sets_scn, Elf_Scn *relocs_scn)
 
 	add_symbol(symtab_scn, KPATCH_METADATA, elf_ndxscn(scn), sizeof(struct kpatch_metadata));
 
-	printf("Created .kpatch.info (for symbol %s)\n", KPATCH_METADATA);
+	printf("Created .kpatch.info (%zu bytes, symbol %s)\n", sizeof(struct kpatch_metadata), KPATCH_METADATA);
 	return (scn);
 }
 
