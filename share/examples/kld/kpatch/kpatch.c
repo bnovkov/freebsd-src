@@ -4,8 +4,7 @@
 #include <sys/kernel.h>
 #include <sys/sysctl.h>
 
-// TODO: How to cleanly include the header from tools?
-#include "../../../../tools/tools/buildpatch/buildpatch.h"
+#include <buildpatch.h>
 
 #define HELPER(str) \
 	do { \
