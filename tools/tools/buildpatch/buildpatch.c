@@ -1085,5 +1085,5 @@ main(int argc, const char **argv)
 	fix_patch_relocations();
 
 	close_kernel();
-	return (close_patch() != 0);
+	return (close_patch() < 0);
 }
