@@ -66,6 +66,9 @@
 #include <contrib/zlib/zlib.h>
 #endif
 
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+
 #include "linker_if.h"
 
 typedef struct {
@@ -687,6 +690,11 @@ link_elf_link_preload_finish(linker_file_t lf)
 	elf_file_t ef;
 	int error;
 
+	/* Look for kpatch metadata */
+	error = kpatch_detect(lf);
+	if (error != 0)
+		return (error);
+
 	ef = (elf_file_t)lf;
 	error = relocate_file(ef);
 	if (error)
@@ -1241,6 +1249,11 @@ link_elf_load_file(linker_class_t cls, const char *filename,
 	if (error != 0)
 		goto out;
 
+	/* Look for kpatch metadata */
+	error = kpatch_detect(lf);
+	if (error != 0)
+		goto out;
+
 	/* Pull in dependencies */
 	VOP_UNLOCK(nd->ni_vp);
 	error = linker_load_dependencies(lf);
@@ -1745,6 +1758,11 @@ elf_obj_lookup(linker_file_t lf, Elf_Size symidx, int deps, Elf_Addr *res)
 	}
 
 	sym = ef->ddbsymtab + symidx;
+
+	/* Special case for patch relocations */
+	if (sym->st_shndx == SHN_FREEBSD_KPATCH) {
+		return (kpatch_lookup_elf(lf, sym, res));
+	}
 
 	/* Quick answer if there is a definition included. */
 	if (sym->st_shndx != SHN_UNDEF) {
