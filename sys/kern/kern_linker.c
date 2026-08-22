@@ -533,12 +533,6 @@ linker_load_file(const char *filename, linker_file_t *result)
 				return (error);
 			}
 
-			error = kpatch_register(lf);
-			if (error) {
-				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
-				return (error);
-			}
-
 			modules = !TAILQ_EMPTY(&lf->modules);
 			linker_file_register_sysctls(lf, false);
 #ifdef VIMAGE
@@ -558,6 +552,13 @@ linker_load_file(const char *filename, linker_file_t *result)
 				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 				return (ENOEXEC);
 			}
+
+			error = kpatch_register(lf);
+			if (error) {
+				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
+				return (error);
+			}
+
 			linker_file_enable_sysctls(lf);
 
 			/*
