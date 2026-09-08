@@ -59,6 +59,7 @@ FILES=	\
 	bsd.sys.mk \
 	bsd.sysdir.mk \
 	bsd.test.mk \
+	buildpatch.mk \
 	dirdeps.mk \
 	dirdeps-options.mk \
 	dirdeps-targets.mk \
