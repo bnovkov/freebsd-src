@@ -331,6 +331,7 @@ ipsec_invalidate_cache(struct inpcb *inp, u_int dir)
 	}
 	if (sp != NULL)
 		key_freesp(&sp); /* release extra reference */
+	inp->inp_sp->hdrsz = 0;
 }
 
 static void
@@ -1181,6 +1182,9 @@ ipsec_hdrsiz_inpcb(struct inpcb *inp)
 	struct secpolicy *sp;
 	size_t sz;
 
+	if (inp->inp_sp->hdrsz != 0)
+		return inp->inp_sp->hdrsz;
+
 	sp = ipsec_getpcbpolicy(inp, IPSEC_DIR_OUTBOUND);
 	if (sp == NULL && key_havesp(IPSEC_DIR_OUTBOUND)) {
 		ipsec_setspidx_inpcb(inp, &spidx, IPSEC_DIR_OUTBOUND);
@@ -1189,7 +1193,9 @@ ipsec_hdrsiz_inpcb(struct inpcb *inp)
 	if (sp == NULL)
 		sp = key_allocsp_default();
 	sz = ipsec_hdrsiz_internal(sp);
+	inp->inp_sp->hdrsz = sz;
 	key_freesp(&sp);
+
 	return (sz);
 }
 

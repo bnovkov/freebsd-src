@@ -1054,13 +1054,7 @@ send:
 			    len);
 #endif /* STATS */
 		}
-#ifdef INET6
-		if (MHLEN < hdrlen + max_linkhdr)
-			m = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
-		else
-#endif
-			m = m_gethdr(M_NOWAIT, MT_DATA);
-
+		m = m_get2(max_linkhdr + hdrlen + ipoptlen, M_NOWAIT, MT_DATA, M_PKTHDR);
 		if (m == NULL) {
 			SOCK_SENDBUF_UNLOCK(so);
 			error = ENOBUFS;
@@ -1068,7 +1062,7 @@ send:
 			goto out;
 		}
 
-		m->m_data += max_linkhdr;
+		m->m_data += max_linkhdr + ipoptlen;
 		m->m_len = hdrlen;
 
 		/*
@@ -1076,7 +1070,7 @@ send:
 		 * to the offset in the socket buffer chain.
 		 */
 		mb = sbsndptr_noadv(&so->so_snd, off, &moff);
-		if (len <= MHLEN - hdrlen - max_linkhdr && !hw_tls) {
+		if (len + hdrlen + max_linkhdr + ipoptlen <= MHLEN && !hw_tls) {
 			m_copydata(mb, moff, len,
 			    mtod(m, caddr_t) + hdrlen);
 			if (SEQ_LT(tp->snd_nxt, tp->snd_max))
@@ -1134,19 +1128,13 @@ send:
 		else
 			TCPSTAT_INC(tcps_sndwinup);
 
-		m = m_gethdr(M_NOWAIT, MT_DATA);
+		m = m_get2(max_linkhdr + hdrlen + ipoptlen, M_NOWAIT, MT_DATA, M_PKTHDR);
 		if (m == NULL) {
 			error = ENOBUFS;
 			sack_rxmit = false;
 			goto out;
 		}
-#ifdef INET6
-		if (isipv6 && (MHLEN < hdrlen + max_linkhdr) &&
-		    MHLEN >= hdrlen) {
-			M_ALIGN(m, hdrlen);
-		} else
-#endif
-		m->m_data += max_linkhdr;
+		m->m_data += max_linkhdr + ipoptlen;
 		m->m_len = hdrlen;
 	}
 	SOCK_SENDBUF_UNLOCK_ASSERT(so);

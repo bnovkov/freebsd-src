@@ -36,11 +36,21 @@
 #include <sys/systm.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
+#include <sys/sdt.h>
 #include <sys/socket.h>
 
 #include <net/vnet.h>
 #include <netinet/in.h>
 #include <netipsec/ipsec.h>
+
+SDT_PROVIDER_DEFINE(ipsec);
+
+SDT_PROBE_DEFINE1(ipsec, mbuf, m_makespace, alloc,
+    "struct mbuf *");
+SDT_PROBE_DEFINE1(ipsec, mbuf, m_makespace, move_leading,
+    "size_t");
+SDT_PROBE_DEFINE1(ipsec, mbuf, m_makespace, move_trailing,
+    "size_t");
 
 /*
  * Make space for a new header of length hlen at skip bytes
@@ -59,6 +69,7 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 	IPSEC_ASSERT(m0 != NULL, ("null mbuf"));
 	IPSEC_ASSERT(hlen < MHLEN, ("hlen too big: %u", hlen));
 
+	/* Find the mbuf containing the 'skip' offset. */
 	for (m = m0; m && skip > m->m_len; m = m->m_next)
 		skip -= m->m_len;
 	if (m == NULL)
@@ -72,21 +83,36 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 	 * the contents of m as needed.
 	 */
 	remain = m->m_len - skip;		/* data to move */
-	if (remain > skip &&
-	    hlen + max_linkhdr < M_LEADINGSPACE(m)) {
+	/*
+	 * XXX: which operation is the most heavy - copying of
+	 *	possible several hundred of bytes or allocation
+	 *	of new mbuf? We can remove max_linkhdr check
+	 *	here, but it is possible that this will lead
+	 *	to allocation of new mbuf in Layer 2 code.
+	 */
+	bool can_prepend = hlen + max_linkhdr < M_LEADINGSPACE(m);
+	bool can_append = hlen <= M_TRAILINGSPACE(m);
+
+	if (can_prepend) {
 		/*
 		 * mbuf has enough free space at the beginning.
-		 * XXX: which operation is the most heavy - copying of
-		 *	possible several hundred of bytes or allocation
-		 *	of new mbuf? We can remove max_linkhdr check
-		 *	here, but it is possible that this will lead
-		 *	to allocation of new mbuf in Layer 2 code.
+		 * Check whether there is enough trailing space
+		 * and choose whichever method moves the least
+		 * amount of bytes.
 		 */
-		m->m_data -= hlen;
-		bcopy(mtodo(m, hlen), mtod(m, caddr_t), skip);
+		if (can_append && remain < skip) {
+			bcopy(mtod(m, caddr_t) + skip,
+			    mtod(m, caddr_t) + skip + hlen, remain);
+			SDT_PROBE1(ipsec, mbuf, m_makespace, move_trailing, remain);
+		} else {
+			m->m_data -= hlen;
+			bcopy(mtodo(m, hlen), mtod(m, caddr_t), skip);
+			SDT_PROBE1(ipsec, mbuf, m_makespace, move_leading, skip);
+		}
 		m->m_len += hlen;
 		*off = skip;
-	} else if (hlen > M_TRAILINGSPACE(m)) {
+	} else if (!can_append) {
+
 		struct mbuf *n0, *n, **np;
 		int todo, len, done;
 
@@ -98,8 +124,7 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 			if (todo > MHLEN) {
 				n = m_getcl(M_NOWAIT, m->m_type, 0);
 				len = MCLBYTES;
-			}
-			else {
+			} else {
 				n = m_get(M_NOWAIT, m->m_type);
 				len = MHLEN;
 			}
@@ -107,6 +132,7 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 				m_freem(n0);
 				return NULL;
 			}
+			SDT_PROBE1(ipsec, mbuf, m_makespace, alloc, n);
 			*np = n;
 			np = &n->m_next;
 			len = min(todo, len);
@@ -123,14 +149,13 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 				*np = m->m_next;
 				m->m_next = n0;
 			}
-		}
-		else {
+		} else {
 			n = m_get(M_NOWAIT, m->m_type);
 			if (n == NULL) {
 				m_freem(n0);
 				return NULL;
 			}
-
+			SDT_PROBE1(ipsec, mbuf, m_makespace, alloc, n);
 			if ((n->m_next = n0) == NULL)
 				np = &n->m_next;
 			n0 = n;
@@ -154,6 +179,7 @@ m_makespace(struct mbuf *m0, int skip, int hlen, int *off)
 		    mtod(m, caddr_t) + skip + hlen, remain);
 		m->m_len += hlen;
 		*off = skip;
+		SDT_PROBE1(ipsec, mbuf, m_makespace, move_trailing, remain);
 	}
 	m0->m_pkthdr.len += hlen;		/* adjust packet length */
 	return m;
