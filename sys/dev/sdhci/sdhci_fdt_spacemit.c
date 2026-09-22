@@ -35,6 +35,9 @@
 #include "opt_mmccam.h"
 #include "opt_soc.h"
 
+/* As set by uboot. */
+#define K1_SDHCI_DEFAULT_MAX_IO_CLK 204800000UL
+
 static struct ofw_compat_data compat_data[] = {
 	{ "spacemit,k1-sdhci", 1 },
 	{ NULL, 0 }
@@ -65,8 +68,11 @@ static int
 sdhci_fdt_spacemit_attach(device_t dev)
 {
 	struct sdhci_fdt_softc *sc;
-	clk_t clk_core;
+	clk_t clk_core, clk_io;
+	uint64_t max_io_clk;
+	phandle_t node;
 	hwreset_t rst;
+	pcell_t cid;
 
 	sc = device_get_softc(dev);
 	sc->quirks = SDHCI_QUIRK_PRESET_VALUE_BROKEN |
@@ -76,7 +82,7 @@ sdhci_fdt_spacemit_attach(device_t dev)
 		device_printf(dev, "cannot get core clock\n");
 		return (ENXIO);
 	}
-	if (clk_get_by_ofw_name(dev, 0, "io", &sc->clk_core)) {
+	if (clk_get_by_ofw_name(dev, 0, "io", &clk_io)) {
 		device_printf(dev, "cannot get io clock\n");
 		return (ENXIO);
 	}
@@ -93,26 +99,20 @@ sdhci_fdt_spacemit_attach(device_t dev)
 		device_printf(dev, "cannot enable core clock\n");
 		return (ENXIO);
 	}
-	if (clk_enable(sc->clk_core) != 0) {
+	if (clk_enable(clk_io) != 0) {
 		device_printf(dev, "cannot enable io clock\n");
 		return (ENXIO);
 	}
 
+	node = ofw_bus_get_node(dev);
+	if ((OF_getencprop(node, "max-frequency", &cid, sizeof(cid))) > 0 &&
+	    cid <= K1_SDHCI_DEFAULT_MAX_IO_CLK)
+		max_io_clk = cid;
+	else
+		max_io_clk = K1_SDHCI_DEFAULT_MAX_IO_CLK;
+	clk_set_freq(clk_io, max_io_clk, CLK_SET_ROUND_ANY);
+
 	return (sdhci_fdt_attach(dev));
-}
-
-static int
-sdhci_fdt_spacemit_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
-{
-	struct sdhci_fdt_softc *sc;
-	uint64_t freq;
-
-	sc = device_get_softc(dev);
-
-	clk_set_freq(sc->clk_core, clock, CLK_SET_ROUND_ANY);
-	clk_get_freq(sc->clk_core, &freq);
-
-	return ((int)freq);
 }
 
 static device_method_t sdhci_fdt_spacemit_methods[] = {
@@ -120,7 +120,6 @@ static device_method_t sdhci_fdt_spacemit_methods[] = {
 	DEVMETHOD(device_probe,		sdhci_fdt_spacemit_probe),
 	DEVMETHOD(device_attach,	sdhci_fdt_spacemit_attach),
 
-	DEVMETHOD(sdhci_set_clock,	sdhci_fdt_spacemit_set_clock),
 	DEVMETHOD_END
 };
 extern driver_t sdhci_fdt_driver;
