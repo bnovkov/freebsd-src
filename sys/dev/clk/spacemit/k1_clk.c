@@ -330,10 +330,10 @@ k1_clk_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
 	if ((flags & CLK_SET_DRYRUN) != 0)
 		return (0);
 
-	DEVICE_LOCK(clk);
 	if (clk_sc->mux_nbits != 0 && p_idx != best_parent) {
 
 		clknode_set_parent_by_idx(clk, best_parent);
+		DEVICE_LOCK(clk);
 		mux_mask = (1 << clk_sc->mux_nbits) - 1;
 		mux_mask <<= clk_sc->mux_shift;
 		val = READ4(sc, clk_sc->reg);
@@ -348,10 +348,12 @@ k1_clk_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
 			DEVICE_UNLOCK(clk);
 			return (ENXIO);
 		}
+		DEVICE_UNLOCK(clk);
 	}
 
 	if (clk_sc->div_nbits != 0) {
 		div_mask = (1 << clk_sc->div_nbits) - 1;
+		DEVICE_LOCK(clk);
 		val = READ4(sc, clk_sc->reg);
 		val &= ~(div_mask << clk_sc->div_shift);
 
@@ -366,8 +368,8 @@ k1_clk_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
 			DEVICE_UNLOCK(clk);
 			return (ENXIO);
 		}
+		DEVICE_UNLOCK(clk);
 	}
-	DEVICE_UNLOCK(clk);
 
 	return (0);
 }
@@ -398,10 +400,36 @@ k1_clk_init(struct clknode *clk, device_t dev)
 	return (0);
 }
 
+static int
+k1_clk_recalc_freq(struct clknode *clk, uint64_t *freq)
+{
+	struct k1_clkdev_softc *sc;
+	struct k1_clk_def *clk_sc;
+	uint32_t reg, div;
+	uint32_t div_mask;
+
+	sc = device_get_softc(clknode_get_device(clk));
+	clk_sc = clknode_get_softc(clk);
+
+	div = 0;
+	if (clk_sc->div_nbits != 0) {
+		DEVICE_LOCK(clk);
+		reg = READ4(sc, clk_sc->reg);
+		DEVICE_UNLOCK(clk);
+		div_mask = ((1 << clk_sc->div_nbits) - 1) << clk_sc->div_shift;
+		div = (reg & div_mask) >> clk_sc->div_shift;
+	}
+
+	*freq = *freq / (div + 1);
+
+	return (0);
+}
+
 static clknode_method_t k1_clknode_methods[] = {
 	CLKNODEMETHOD(clknode_init,		k1_clk_init),
 	CLKNODEMETHOD(clknode_set_gate,		k1_clk_set_gate),
 	CLKNODEMETHOD(clknode_set_freq,		k1_clk_set_freq),
+	CLKNODEMETHOD(clknode_recalc_freq,		k1_clk_recalc_freq),
 	CLKNODEMETHOD_END
 };
 
