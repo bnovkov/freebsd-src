@@ -85,6 +85,7 @@
 #include <sys/refcount.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
+#include <sys/sbuf.h>
 #include <sys/sched.h>
 #include <sys/sf_buf.h>
 #include <sys/signalvar.h>
@@ -92,6 +93,7 @@
 #include <sys/sysent.h>
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
+#include "sys/types.h"
 #ifdef KTRACE
 #include <sys/ktrace.h>
 #endif
@@ -493,6 +495,19 @@ vm_fault_populate_check_page(vm_page_t m)
 }
 
 static void
+vm_pager_populate_check_range(vm_object_t obj, vm_pindex_t pager_first,
+    vm_pindex_t pager_last, vm_pindex_t first_pindex)
+{
+	VM_OBJECT_ASSERT_WLOCKED(obj);
+
+	/* Ensure that the driver is obeying the 'vm_pager_populate' interface. */
+	MPASS(pager_first <= pager_last);
+	MPASS(first_pindex <= pager_last);
+	MPASS(first_pindex >= pager_first);
+	MPASS(pager_last < obj->size);
+}
+
+static void
 vm_fault_populate_cleanup(vm_object_t object, vm_pindex_t first,
     vm_pindex_t last)
 {
@@ -561,11 +576,8 @@ vm_fault_populate(struct faultstate *fs)
 	if (rv != VM_PAGER_OK)
 		return (FAULT_FAILURE); /* AKA SIGSEGV */
 
-	/* Ensure that the driver is obeying the interface. */
-	MPASS(pager_first <= pager_last);
-	MPASS(fs->first_pindex <= pager_last);
-	MPASS(fs->first_pindex >= pager_first);
-	MPASS(pager_last < fs->first_object->size);
+	vm_pager_populate_check_range(fs->first_object, pager_first, pager_last,
+	    fs->first_pindex);
 
 	vm_fault_restore_map_lock(fs);
 	bdry_idx = MAP_ENTRY_SPLIT_BOUNDARY_INDEX(fs->entry);
@@ -2512,4 +2524,149 @@ vm_fault_enable_pagefaults(int save)
 {
 
 	curthread_pflags_restore(save);
+}
+
+static enum fault_status
+vm_fault_wire_quick(vm_map_t map, vm_object_t obj, vm_map_entry_t entry,
+    vm_offset_t *faddr)
+{
+	vm_pindex_t pager_first, pager_last, pidx;
+	vm_pindex_t entry_first, entry_last;
+	struct pctrie_iter pages;
+	int npages, i;
+	vm_page_t m;
+	int rv;
+
+	KASSERT(vm_map_locked(map) != 0, ("%s: map is not locked", __func__));
+
+	VM_OBJECT_WLOCK(obj);
+	vm_object_reference_locked(obj);
+	vm_object_pip_add(obj, 1);
+
+	entry_first = pager_first = OFF_TO_IDX(
+	    (*faddr - entry->start) + entry->offset);
+	entry_last = pager_last = pager_first +
+	    atop(entry->end - entry->start) - 1;
+#if VM_NRESERVLEVEL > 0
+	vm_object_color(obj, entry_first);
+#endif
+
+	/*
+	 * Let the pager populate the entire entry.
+	 */
+	rv = vm_pager_populate(obj, entry_first, VM_PROT_NONE,
+	    entry->max_protection, &pager_first, &pager_last);
+	if (rv != VM_PAGER_OK) {
+		/*
+		 * Fall back to the slow path if the pager requested normal
+		 * fault handling through VM_PAGER_BAD.
+		 */
+		rv = rv == VM_PAGER_BAD ? FAULT_CONTINUE : FAULT_FAILURE;
+		goto out;
+	}
+	vm_pager_populate_check_range(obj, pager_first, pager_last,
+	    entry_first);
+
+	/*
+	 * Remove any extraneous pages that the pager might have allocated.
+	 */
+	if (entry_first > pager_first) {
+		vm_fault_populate_cleanup(obj, pager_first, entry_first - 1);
+		pager_first = entry_first;
+	}
+	if (entry_last < pager_last) {
+		vm_fault_populate_cleanup(obj, entry_last + 1, pager_last);
+		pager_last = entry_last;
+	}
+
+	vm_page_iter_init(&pages, obj);
+	for (pidx = pager_first; pidx <= pager_last;) {
+		m = vm_radix_iter_lookup(&pages, pidx);
+		KASSERT(m != NULL, ("page not found for pindex 0x%lu", pidx));
+		KASSERT(m->pindex == pidx, ("%s: pindex mismatch", __func__));
+		rv = pmap_enter(map->pmap, *faddr, m, entry->protection,
+		    VM_PROT_NONE | PMAP_ENTER_NOSLEEP | PMAP_ENTER_WIRED,
+		    m->psind);
+		if (rv != KERN_SUCCESS)
+			break;
+		npages = pagesizes[m->psind] >> PAGE_SHIFT;
+		for (i = 0; i < npages; i++) {
+			vm_page_wire(&m[i]);
+			vm_page_xunbusy(&m[i]);
+		}
+		*faddr += npages << PAGE_SHIFT;
+		pidx += npages;
+	}
+
+	if (pidx <= pager_last) {
+		/*
+		 * We broke out of the loop due to a pmap_enter error.
+		 * Deactivate and unbusy the pages that we were not able to
+		 * enter into the pmap and let the slow path cope with whatever
+		 * caused the pmap_enter error.
+		 */
+		rv = FAULT_CONTINUE;
+		vm_fault_populate_cleanup(obj, pidx, pager_last);
+	} else
+		rv = FAULT_SUCCESS;
+
+out:
+	vm_object_pip_wakeup(obj);
+	VM_OBJECT_WUNLOCK(obj);
+	vm_object_deallocate(obj);
+
+	return (rv);
+}
+
+int
+vm_fault_wire(vm_map_t map, vm_map_entry_t entry, vm_offset_t *faddr)
+{
+	enum fault_status res;
+	vm_offset_t saved_end;
+	vm_object_t obj;
+	int bidx, incr;
+	int rv;
+
+	KASSERT(vm_map_locked(map) != 0, ("%s: map is not locked", __func__));
+
+	obj = entry->object.vm_object;
+	if (((entry->eflags &
+		 (MAP_SPLIT_BOUNDARY_MASK | MAP_ENTRY_COW |
+		     MAP_ENTRY_NEEDS_COPY)) == 0) &&
+	    (obj->flags & OBJ_POPULATE) != 0) {
+		res = vm_fault_wire_quick(map, obj, entry, faddr);
+		switch (res) {
+		case FAULT_SUCCESS:
+			return (KERN_SUCCESS);
+		case FAULT_FAILURE:
+			return (KERN_FAILURE);
+		case FAULT_CONTINUE:
+			/* Fall back to the slow path. */
+			break;
+		default:
+			panic("%s: Unhandled status %d", __func__, res);
+		}
+	}
+
+	bidx = MAP_ENTRY_SPLIT_BOUNDARY_INDEX(entry);
+	incr = pagesizes[bidx];
+	saved_end = entry->end;
+	vm_map_busy(map);
+	vm_map_unlock(map);
+	for (; *faddr < saved_end; *faddr += incr) {
+		/*
+		 * Simulate a fault to get the page and enter
+		 * it into the physical map.
+		 */
+		rv = vm_fault(map, *faddr, VM_PROT_NONE, VM_FAULT_WIRE, NULL);
+		if (rv != KERN_SUCCESS) {
+			vm_map_lock(map);
+			vm_map_unbusy(map);
+			return (rv);
+		}
+	}
+	vm_map_lock(map);
+	vm_map_unbusy(map);
+
+	return (KERN_SUCCESS);
 }
