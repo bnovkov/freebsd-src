@@ -85,6 +85,7 @@
 #include <sys/refcount.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
+#include <sys/sbuf.h>
 #include <sys/sched.h>
 #include <sys/sf_buf.h>
 #include <sys/signalvar.h>
@@ -92,6 +93,7 @@
 #include <sys/sysent.h>
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
+#include "sys/types.h"
 #ifdef KTRACE
 #include <sys/ktrace.h>
 #endif
@@ -2513,3 +2515,269 @@ vm_fault_enable_pagefaults(int save)
 
 	curthread_pflags_restore(save);
 }
+
+int
+vm_fault_wire(vm_map_t map, vm_map_entry_t entry, vm_offset_t *faddr, vm_offset_t end)
+{
+	vm_pindex_t pstart, pend, pidx;
+	struct pctrie_iter pages;
+	vm_object_t obj;
+	int bidx, incr, npages, i;
+	vm_page_t m;
+	int rv;
+
+	vm_map_busy(map);
+	vm_map_unlock(map);
+	obj = entry->object.vm_object;
+	bidx = MAP_ENTRY_SPLIT_BOUNDARY_INDEX(entry);
+	if (bidx != 0 || (obj->flags & OBJ_POPULATE) == 0) {
+		incr = pagesizes[bidx];
+
+		for (*faddr = entry->start; *faddr < entry->end;
+			 *faddr += incr) {
+			/*
+			 * Simulate a fault to get the page and enter
+			 * it into the physical map.
+			 */
+			rv = vm_fault(map, *faddr, VM_PROT_NONE,
+			    VM_FAULT_WIRE, NULL);
+			if (rv != KERN_SUCCESS) {
+				vm_map_lock(map);
+				vm_map_unbusy(map);
+				return (rv);
+			}
+		}
+
+		vm_map_lock(map);
+		vm_map_unbusy(map);
+		return (KERN_SUCCESS);
+	}
+
+	VM_OBJECT_WLOCK(obj);
+	vm_object_reference_locked(obj);
+	vm_object_pip_add(obj, 1);
+	pstart = OFF_TO_IDX((*faddr - entry->start) + entry->offset);
+	pend = pstart + atop(end - entry->start) - 1;
+	rv = vm_pager_populate(obj, pstart, VM_PROT_NONE, entry->protection,
+	    &pstart, &pend);
+	if (rv != VM_PAGER_OK) {
+		panic("wtf");
+	}
+
+	vm_page_iter_init(&pages, obj);
+	for (pidx = pstart; pidx <= pend;) {
+		m = vm_radix_iter_lookup(&pages, pidx);
+		KASSERT(m != NULL, ("page not found for pindex 0x%lu", pidx));
+		KASSERT(m->pindex == pidx,
+		    ("%s: pindex mismatch", __func__));
+		rv = pmap_enter(map->pmap, *faddr, m, entry->protection, VM_PROT_NONE |
+	    PMAP_ENTER_NOSLEEP | PMAP_ENTER_WIRED, m->psind);
+		if (rv != KERN_SUCCESS) {
+			panic("wtf 2");
+		}
+		npages = pagesizes[m->psind] >> PAGE_SHIFT;
+		for (i = 0; i < npages; i++) {
+			vm_page_wire(&m[i]);
+			vm_page_xunbusy(&m[i]);
+		}
+		*faddr += npages << PAGE_SHIFT;
+		pidx += npages;
+	}
+	vm_object_pip_wakeup(obj);
+	VM_OBJECT_WUNLOCK(obj);
+	vm_object_deallocate(obj);
+
+	vm_map_lock(map);
+	vm_map_unbusy(map);
+	return (KERN_SUCCESS);
+}
+
+#define	VM_RESERV_INDEX(object, pindex)	\
+    (((object)->pg_color + (pindex)) & (512 - 1))
+
+static int
+vm_phys_populate(vm_object_t object, vm_pindex_t pidx,
+    int fault_type, vm_prot_t max_prot, vm_pindex_t *first, vm_pindex_t *last)
+{
+	int ahead;
+	vm_page_t m;
+	struct pctrie_iter pages;
+	vm_pindex_t base, end, i, j;
+	const vm_pindex_t reserv_pidx = pagesizes[1] / PAGE_SIZE;
+
+	VM_OBJECT_ASSERT_WLOCKED(object);
+	base = pidx;
+	end = *last;
+	if (end >= object->size)
+		end = object->size - 1;
+	if (*first > base)
+		base = *first;
+	if (end > *last)
+		end = *last;
+	*first = base;
+	*last = end;
+	vm_page_iter_init(&pages, object);
+
+	for (i = base; i <= end;) {
+#if VM_NRESERVLEVEL > 0
+		/* First run - try to allocate a superpage. */
+		if ((object->flags & OBJ_COLORED) != 0 &&
+			VM_RESERV_INDEX(object, i) == 0 &&
+			(end - i) >= reserv_pidx) {
+			m = vm_page_alloc_contig(object, i,
+			    VM_ALLOC_NORMAL,
+			    (1 << VM_LEVEL_0_ORDER), 0, ~0, pagesizes[1], 0,
+			    VM_MEMATTR_DEFAULT);
+			if (m != NULL) {
+				for (j = 0; j < reserv_pidx; j++, m++) {
+					if (!vm_page_all_valid(m))
+						vm_page_zero_invalid(m, TRUE);
+				}
+				i += reserv_pidx;
+				continue;
+			}
+		}
+#endif
+		ahead = (i & (reserv_pidx - 1)) ? roundup2(i, reserv_pidx) - i : reserv_pidx;
+		m = vm_page_grab_iter(object, i,
+		    VM_ALLOC_NORMAL | VM_ALLOC_COUNT(ahead), &pages);
+		if (!vm_page_all_valid(m))
+			vm_page_zero_invalid(m, TRUE);
+		KASSERT(m->dirty == 0,
+		    ("%s: dirty page %p", __func__, m));
+		i++;
+	}
+	return (VM_PAGER_OK);
+}
+
+static const struct phys_pager_ops shm_largepage_phys_ops = {
+	.phys_pg_populate =	vm_phys_populate
+};
+
+static int
+sysctl_vm_fault_wire_test(SYSCTL_HANDLER_ARGS)
+{
+	int rv, error;
+	vm_object_t obj;
+	struct sbuf sbuf;
+	vm_offset_t vaddr;
+	const struct thread *td;
+	const size_t len = 0xc0000000;
+	vm_map_t map;
+	uint64_t start, end;
+
+	rv = sysctl_wire_old_buffer(req, 0);
+	if (rv != 0)
+		return (rv);
+	sbuf_new_for_sysctl(&sbuf, NULL, 128, req);
+
+	td = curthread;
+	map = &td->td_proc->p_vmspace->vm_map;
+	obj = phys_pager_allocate(NULL, &shm_largepage_phys_ops,
+	    NULL, len, VM_PROT_ALL, 0, td->td_ucred);
+	if (obj == NULL) {
+		sbuf_printf(&sbuf,"Failed to allocate object\n");
+		error = sbuf_finish(&sbuf);
+		sbuf_delete(&sbuf);
+		return (error);
+	}
+
+	vaddr = 0x10000;
+	vm_object_color(obj, atop(vaddr));
+	vm_map_lock(map);
+	rv = vm_map_insert(map, obj, 0, vaddr, vaddr + len,
+	    VM_PROT_ALL, VM_PROT_ALL, 0);
+	vm_map_unlock(map);
+	if (rv != KERN_SUCCESS) {
+		sbuf_printf(&sbuf, "Failed to insert object\n");
+		error = sbuf_finish(&sbuf);
+		sbuf_delete(&sbuf);
+		return (error);
+	}
+	vm_object_reference(obj);
+	start = rdtsc();
+	rv = vm_map_wire(map, vaddr, vaddr + len,
+	    VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+	end = rdtsc();
+	printf("%lu\n", end - start);
+	if (rv != KERN_SUCCESS) {
+		sbuf_printf(&sbuf, "Failed to wire object\n");
+		error = sbuf_finish(&sbuf);
+		sbuf_delete(&sbuf);
+		return (error);
+	}
+
+	vm_map_remove(map, vaddr, vaddr + len);
+	vm_object_deallocate(obj);
+
+	error = sbuf_finish(&sbuf);
+	sbuf_delete(&sbuf);
+	return (error);
+}
+SYSCTL_OID(_vm, OID_AUTO, fault_wire_test,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_vm_fault_wire_test, "A",
+    "Phys Free Info");
+
+
+static int
+sysctl_vm_fault_wire_baseline_test(SYSCTL_HANDLER_ARGS)
+{
+	int rv, error;
+	vm_object_t obj;
+	struct sbuf sbuf;
+	vm_offset_t vaddr;
+	const struct thread *td;
+	const size_t len = 0xc0000000;
+	vm_map_t map;
+	uint64_t start, end;
+
+	rv = sysctl_wire_old_buffer(req, 0);
+	if (rv != 0)
+		return (rv);
+	sbuf_new_for_sysctl(&sbuf, NULL, 128, req);
+
+	td = curthread;
+	map = &td->td_proc->p_vmspace->vm_map;
+	obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
+	if (obj == NULL) {
+		sbuf_printf(&sbuf,"Failed to allocate object\n");
+		error = sbuf_finish(&sbuf);
+		sbuf_delete(&sbuf);
+		return (error);
+	}
+
+	vaddr = 0x10000;
+	vm_map_lock(map);
+	rv = vm_map_insert(map, obj, 0, vaddr, vaddr + len,
+	    VM_PROT_ALL, VM_PROT_ALL, 0);
+	vm_map_unlock(map);
+	if (rv != KERN_SUCCESS) {
+		sbuf_printf(&sbuf, "Failed to insert object\n");
+		error = sbuf_finish(&sbuf);
+		sbuf_delete(&sbuf);
+		return (error);
+	}
+	vm_object_reference(obj);
+	start = rdtsc();
+	rv = vm_map_wire(map, vaddr, vaddr + len,
+	    VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+	end = rdtsc();
+	if (rv != KERN_SUCCESS) {
+		sbuf_printf(&sbuf, "Failed to wire object\n");
+		error = sbuf_finish(&sbuf);
+		sbuf_delete(&sbuf);
+		return (error);
+	}
+
+	vm_map_remove(map, vaddr, vaddr + len);
+	vm_object_deallocate(obj);
+	printf("%lu\n", end - start);
+	error = sbuf_finish(&sbuf);
+	sbuf_delete(&sbuf);
+	return (error);
+}
+SYSCTL_OID(_vm, OID_AUTO, fault_wire_baseline_test,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    sysctl_vm_fault_wire_baseline_test, "A",
+    "Phys Free Info");

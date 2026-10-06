@@ -3561,8 +3561,8 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 {
 	vm_map_entry_t entry, first_entry, next_entry, prev_entry;
 	vm_offset_t faddr, saved_end, saved_start;
-	u_long incr, npages;
-	u_int bidx, last_timestamp;
+	u_long npages;
+	u_int last_timestamp;
 	int rv;
 	bool holes_ok, need_wakeup, user_wire;
 	vm_prot_t prot;
@@ -3643,24 +3643,8 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 			saved_start = entry->start;
 			saved_end = entry->end;
 			last_timestamp = map->timestamp;
-			bidx = MAP_ENTRY_SPLIT_BOUNDARY_INDEX(entry);
-			incr =  pagesizes[bidx];
-			vm_map_busy(map);
-			vm_map_unlock(map);
-
-			for (faddr = saved_start; faddr < saved_end;
-			    faddr += incr) {
-				/*
-				 * Simulate a fault to get the page and enter
-				 * it into the physical map.
-				 */
-				rv = vm_fault(map, faddr, VM_PROT_NONE,
-				    VM_FAULT_WIRE, NULL);
-				if (rv != KERN_SUCCESS)
-					break;
-			}
-			vm_map_lock(map);
-			vm_map_unbusy(map);
+			faddr = saved_start;
+			rv = vm_fault_wire(map, entry, &faddr, saved_end);
 			if (last_timestamp + 1 != map->timestamp) {
 				/*
 				 * Look again for the entry because the map was

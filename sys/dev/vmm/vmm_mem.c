@@ -10,6 +10,9 @@
 #include <sys/malloc.h>
 #include <sys/sx.h>
 #include <sys/systm.h>
+#include <sys/proc.h>
+#include <sys/rwlock.h>
+#include <sys/ucred.h>
 
 #include <machine/vmm.h>
 
@@ -24,6 +27,9 @@
 #include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_mem.h>
 #include <dev/vmm/vmm_vm.h>
+#include "sys/pcpu.h"
+#include "sys/pctrie.h"
+#include "vm/vm_pager.h"
 
 static void vm_free_memmap(struct vm *vm, int ident);
 
@@ -172,6 +178,67 @@ vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa)
 	return (false);
 }
 
+#define	VM_RESERV_INDEX(object, pindex)	\
+    (((object)->pg_color + (pindex)) & (512 - 1))
+static int
+vm_phys_populate(vm_object_t object, vm_pindex_t pidx,
+    int fault_type, vm_prot_t max_prot, vm_pindex_t *first, vm_pindex_t *last)
+{
+	int ahead;
+	vm_page_t m;
+	struct pctrie_iter pages;
+	vm_pindex_t base, end, i, j;
+	const vm_pindex_t reserv_pidx = pagesizes[1] / PAGE_SIZE;
+
+	KASSERT((object->flags & OBJ_COLORED) != 0, ("object not colored"));
+	VM_OBJECT_ASSERT_WLOCKED(object);
+	base = pidx;
+	end = *last;
+	if (end >= object->size)
+		end = object->size - 1;
+	if (*first > base)
+		base = *first;
+	if (end > *last)
+		end = *last;
+	*first = base;
+	*last = end;
+	vm_page_iter_init(&pages, object);
+
+	for (i = base; i <= end;) {
+#if VM_NRESERVLEVEL > 0
+		/* First run - try to allocate a superpage. */
+		if ((object->flags & OBJ_COLORED) != 0 &&
+			VM_RESERV_INDEX(object, i) == 0) {
+			m = vm_page_alloc_contig(object, i,
+			    VM_ALLOC_NORMAL,
+			    (1 << VM_LEVEL_0_ORDER), 0, ~0, pagesizes[1], 0,
+			    VM_MEMATTR_DEFAULT);
+			if (m != NULL) {
+				for (j = 0; j < reserv_pidx; j++, m++) {
+					if (!vm_page_all_valid(m))
+						vm_page_zero_invalid(m, TRUE);
+				}
+				i += reserv_pidx;
+				continue;
+			}
+		}
+#endif
+		ahead = (i & (reserv_pidx - 1)) ? roundup2(i, reserv_pidx) - i : reserv_pidx;
+		m = vm_page_grab_iter(object, i,
+		    VM_ALLOC_NORMAL | VM_ALLOC_COUNT(ahead), &pages);
+		if (!vm_page_all_valid(m))
+			vm_page_zero_invalid(m, TRUE);
+		KASSERT(m->dirty == 0,
+		    ("%s: dirty page %p", __func__, m));
+		i++;
+	}
+	return (VM_PAGER_OK);
+}
+
+static const struct phys_pager_ops shm_largepage_phys_ops = {
+	.phys_pg_populate =	vm_phys_populate
+};
+
 int
 vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
     struct domainset *obj_domainset)
@@ -179,7 +246,9 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
 	struct vm_mem_seg *seg;
 	struct vm_mem *mem;
 	vm_object_t obj;
+	const struct thread *td;
 
+	td = curthread;
 	mem = vm_mem(vm);
 	vm_assert_memseg_xlocked(vm);
 
@@ -203,7 +272,11 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
 	 */
 	if (obj_domainset != NULL && domainset_empty_vm(obj_domainset))
 		return (EINVAL);
-	obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
+	if (sysmem)
+		obj = phys_pager_allocate(NULL, &shm_largepage_phys_ops,
+		    NULL, len, VM_PROT_ALL, 0, td->td_ucred);
+	else
+		obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
 	if (obj == NULL)
 		return (ENOMEM);
 
@@ -310,6 +383,7 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 	vm_object_reference(seg->object);
 
 	if (flags & VM_MEMMAP_F_WIRED) {
+		vm_object_color(seg->object, atop(gpa) - first);
 		error = vm_map_wire(vmmap, gpa, gpa + len,
 		    VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
 		if (error != KERN_SUCCESS) {

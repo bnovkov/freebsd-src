@@ -32,6 +32,7 @@
 #ifndef _VM_EXTERN_H_
 #define	_VM_EXTERN_H_
 
+#include "sys/types.h"
 struct pmap;
 struct proc;
 struct vmspace;
@@ -133,7 +134,7 @@ u_int vm_active_count(void);
 u_int vm_inactive_count(void);
 u_int vm_laundry_count(void);
 u_int vm_wait_count(void);
-
+int   vm_fault_wire(vm_map_t, vm_map_entry_t, vm_offset_t *, vm_offset_t);
 /*
  * Is pa a multiple of alignment, which is a power-of-two?
  */
