@@ -61,6 +61,9 @@
 #include <ddb/ddb.h>
 #endif
 
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+
 #include <net/vnet.h>
 
 #include <security/mac/mac_framework.h>
@@ -337,7 +340,7 @@ linker_file_register_exterr(linker_file_t lf)
 	struct exterr_cat **start, **stop;
 
 	KLD_DPF(FILE,
-	    (__func__ ": registering exterror categories for %s\n",
+	    ("%s: registering exterror categories for %s\n", __func__,
 	    lf->filename));
 
 	sx_assert(&kld_sx, SA_XLOCKED);
@@ -354,8 +357,8 @@ linker_file_unregister_exterr(linker_file_t lf)
 	struct exterr_cat **start, **stop;
 
 	KLD_DPF(FILE,
-	    (__func__ ": unregistering exterror categories for %s\n",
-	    lf->filename));
+	    ("%s: unregistering exterror categories for %s\n",
+	    __func__, lf->filename));
 
 	sx_assert(&kld_sx, SA_XLOCKED);
 
@@ -529,6 +532,7 @@ linker_load_file(const char *filename, linker_file_t *result)
 				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 				return (error);
 			}
+
 			modules = !TAILQ_EMPTY(&lf->modules);
 			linker_file_register_sysctls(lf, false);
 #ifdef VIMAGE
@@ -538,6 +542,7 @@ linker_load_file(const char *filename, linker_file_t *result)
 			linker_file_sysinit(lf);
 			lf->flags |= LINKER_FILE_LINKED;
 
+			// TODO: What if kpatch successfully loaded but the modules did not?
 			/*
 			 * If all of the modules in this file failed
 			 * to load, unload the file and return an
@@ -547,6 +552,13 @@ linker_load_file(const char *filename, linker_file_t *result)
 				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 				return (ENOEXEC);
 			}
+
+			error = kpatch_register(lf);
+			if (error) {
+				linker_file_unload(lf, LINKER_UNLOAD_FORCE);
+				return (error);
+			}
+
 			linker_file_enable_sysctls(lf);
 
 			/*
@@ -745,6 +757,11 @@ linker_file_unload(linker_file_t file, int flags)
 		if (error != 0)
 			return (EBUSY);
 	}
+
+	/* Check if there are patches that would prevent the unload. */
+	error = kpatch_unregister(file, flags);
+	if (error != 0)
+		return (error);
 
 	KLD_DPF(FILE, ("linker_file_unload: file is unloading,"
 	    " informing modules\n"));
@@ -1872,6 +1889,14 @@ restart:
 		linker_file_register_modules(lf);
 		if (!TAILQ_EMPTY(&lf->modules))
 			lf->flags |= LINKER_FILE_MODULES;
+
+		error = kpatch_register(lf);
+		if (error) {
+			printf("KLD file %s - could not register patches\n",
+				lf->filename);
+			goto fail;
+		}
+
 		if (linker_file_lookup_set(lf, "sysinit_set", &si_start,
 		    &si_stop, NULL) == 0)
 			sysinit_add(si_start, si_stop);

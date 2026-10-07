@@ -16,6 +16,7 @@ struct rpcrdma_reduce_pg {
 	uint32_t	len;
 	uint32_t	npg;
 	uint32_t	into_mem;
+	uint32_t	pg_allocd;
 	vm_page_t	pg[];
 };
 
@@ -27,7 +28,7 @@ struct rpcrdma_xprt {
 	uint32_t	maxbck;
 	uint32_t	maxio;
 	uint32_t	maxsge;
-	uint32_t	use_bounce;
+	uint32_t	maxsegs;
 	void		*ep;
 };
 
@@ -105,7 +106,7 @@ int xprt_rdma_acquire_buf(struct rpcrdma_xprt *xp, int start, int end);
 
 void xprt_rdma_unmap_chunk(struct rpcrdma_xprt *xp, struct rpcrdma_chunk *chp);
 
-struct mbuf *rpc_reduce_pg(int len, int pos, bool to_mem);
+struct mbuf *rpc_reduce_pg(vm_page_t *pgp, int len, int pos, bool to_mem);
 
 void rpc_free_rdma_reduction(struct mbuf *mr);
 

@@ -1,0 +1,9 @@
+#ifndef _MACHINE_KPATCH_H_
+#define _MACHINE_KPATCH_H_
+
+#define AMD64_JMP_LEN		5
+#define AMD64_JMP_OPCODE	0xE9
+
+#define KPATCH_TEXTLEN		AMD64_JMP_LEN
+
+#endif

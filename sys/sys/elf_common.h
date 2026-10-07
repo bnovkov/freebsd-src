@@ -423,6 +423,9 @@ typedef struct {
 					/* Transient, for sys/kern/link_elf_obj
 					   linker only: Cached global in local
 					   symtab. */
+#define SHN_FREEBSD_KPATCH	(SHN_LOOS+1)
+					/* Marks the relocations directed at
+					 * private symbols in a kpatch file. */
 #define	SHN_HIOS	0xff3f		/* Last operating system-specific. */
 #define	SHN_ABS		0xfff1		/* Absolute values. */
 #define	SHN_COMMON	0xfff2		/* Common data. */
