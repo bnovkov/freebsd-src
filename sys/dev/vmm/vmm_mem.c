@@ -10,6 +10,10 @@
 #include <sys/malloc.h>
 #include <sys/sx.h>
 #include <sys/systm.h>
+#include <sys/pctrie.h>
+#include <sys/proc.h>
+#include <sys/rwlock.h>
+#include <sys/ucred.h>
 
 #include <machine/vmm.h>
 
@@ -20,6 +24,8 @@
 #include <vm/vm_map.h>
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
+#include <vm/vm_pager.h>
+#include <vm/vm_reserv.h>
 
 #include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_mem.h>
@@ -172,6 +178,57 @@ vm_mem_allocated(struct vcpu *vcpu, vm_paddr_t gpa)
 	return (false);
 }
 
+static int
+vm_phys_populate(vm_object_t object, vm_pindex_t pidx, int fault_type,
+    vm_prot_t max_prot, vm_pindex_t *first, vm_pindex_t *last)
+{
+	vm_page_t m;
+	struct pctrie_iter pages;
+	vm_pindex_t base, end, i, j;
+
+	VM_OBJECT_ASSERT_WLOCKED(object);
+	base = pidx;
+	end = *last;
+	if (end >= object->size)
+		end = object->size - 1;
+	if (*first > base)
+		base = *first;
+	*first = base;
+	*last = end;
+
+	vm_page_iter_init(&pages, object);
+	for (i = base; i <= end;) {
+#if VM_NRESERVLEVEL > 0
+		/* First run - try to allocate a superpage. */
+		if (vm_reserv_pindex_aligned(object, i) &&
+		    (end - i) >= (pagesizes[1] / PAGE_SIZE)) {
+			m = vm_page_alloc_contig(object, i,
+			    VM_ALLOC_NORMAL | VM_ALLOC_ZERO,
+			    (1 << VM_LEVEL_0_ORDER), 0, ~0, pagesizes[1], 0,
+			    VM_MEMATTR_DEFAULT);
+			if (m != NULL) {
+				for (j = 0; j < pagesizes[1] / PAGE_SIZE; j++) {
+					if ((m[j].flags & PG_ZERO) == 0)
+						pmap_zero_page(&m[j]);
+					vm_page_valid(&m[j]);
+				}
+				i += pagesizes[1] / PAGE_SIZE;
+				continue;
+			}
+		}
+#endif
+		m = vm_page_grab_iter(object, i,
+		    VM_ALLOC_NORMAL | VM_ALLOC_ZERO, &pages);
+		vm_page_valid(m);
+		i++;
+	}
+	return (VM_PAGER_OK);
+}
+
+static const struct phys_pager_ops vmm_phys_ops = {
+	.phys_pg_populate = vm_phys_populate
+};
+
 int
 vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
     struct domainset *obj_domainset)
@@ -179,7 +236,9 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
 	struct vm_mem_seg *seg;
 	struct vm_mem *mem;
 	vm_object_t obj;
+	const struct thread *td;
 
+	td = curthread;
 	mem = vm_mem(vm);
 	vm_assert_memseg_xlocked(vm);
 
@@ -203,7 +262,11 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
 	 */
 	if (obj_domainset != NULL && domainset_empty_vm(obj_domainset))
 		return (EINVAL);
-	obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
+	if (sysmem)
+		obj = phys_pager_allocate(NULL, &vmm_phys_ops, NULL, len,
+		    VM_PROT_ALL, 0, td->td_ucred);
+	else
+		obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
 	if (obj == NULL)
 		return (ENOMEM);
 
