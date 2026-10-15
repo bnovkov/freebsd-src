@@ -1503,4 +1503,13 @@ vm_reserv_to_superpage(vm_page_t m)
 	return (NULL);
 }
 
+bool
+vm_reserv_pindex_aligned(vm_object_t obj, vm_pindex_t pindex)
+{
+	if ((obj->flags & OBJ_COLORED) == 0)
+		return (false);
+
+	return (VM_RESERV_INDEX(obj, pindex) == 0);
+}
+
 #endif	/* VM_NRESERVLEVEL > 0 */
