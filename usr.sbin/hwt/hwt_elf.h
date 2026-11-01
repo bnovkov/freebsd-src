@@ -32,7 +32,7 @@
  * Metadata for the .text loaded from executable
  * 'path' into the traced process's address space.
  */
-struct hwt_exec_img {
+struct hwt_elf_img {
 	size_t size;
 	uint64_t offs;
 	uint64_t addr;

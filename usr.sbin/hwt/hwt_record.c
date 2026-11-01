@@ -50,6 +50,7 @@
 
 #include "hwt.h"
 #include "hwt_elf.h"
+#include "hwt_file.h"
 #include "hwt_record.h"
 
 #include "libpmcstat_stubs.h"
@@ -66,8 +67,8 @@
 
 static int
 hwt_record_to_elf_img(struct trace_context *tc,
-    struct hwt_record_user_entry *entry, struct hwt_exec_img *img,
-    struct hwt_exec_img *img2)
+    struct hwt_record_user_entry *entry, struct hwt_elf_img *img,
+    struct hwt_elf_img *img2)
 {
 	pmcstat_interned_string path;
 	struct pmcstat_image *rtldimage;
@@ -158,9 +159,10 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 {
 	struct hwt_record_user_entry *entry;
 	struct hwt_record_get record_get;
-	struct hwt_exec_img img, img2;
+	struct hwt_elf_img img, img2;
 	struct hwt_wakeup w;
 	int nentries;
+	int imgref;
 	int error;
 	int j;
 
@@ -185,16 +187,25 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 
 		switch (entry->record_type) {
 		case HWT_RECORD_MMAP:
+		case HWT_RECORD_MUNMAP:
 		case HWT_RECORD_EXECUTABLE:
 		case HWT_RECORD_KERNEL:
 			if (hwt_record_to_elf_img(tc, entry, &img, &img2) != 0)
 				continue;
-			/* Invoke backend callback, if any. */
-			if (tc->backend->methods->image_load_cb != NULL &&
-			    (error = tc->backend->methods->image_load_cb(tc,
-				&img))) {
+			switch (tc->action) {
+			case HWT_ACTION_RAW:
 				ioctl(tc->thr_fd, HWT_IOC_WAKEUP, &w);
-				return (error);
+				continue;
+			case HWT_ACTION_SAVE_FILE:
+				imgref = hwt_file_add_exec_region(tc->trace_file, &img2);
+				if (hwt_file_add_map_event(tc->trace_file, entry->record_type,
+				    imgref, &img2) != 0) {
+					fprintf(stderr, "%s: Failed to append address space event\n"
+					    __func__);
+					return (-1);
+				}
+			default:
+				break;
 			}
 
 			if (entry->record_type != HWT_RECORD_KERNEL)
@@ -207,15 +218,15 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 				return (error);
 			break;
 		case HWT_RECORD_THREAD_SET_NAME:
-		case HWT_RECORD_MUNMAP:
 			break;
 		case HWT_RECORD_BUFFER:
 			/* Invoke backend process method. */
 			assert(tc->backend->methods->process_buffer != NULL);
 			if ((error = tc->backend->methods->process_buffer(tc,
-				entry->buf_id, entry->curpage,
-				entry->offset)) != 0)
+			    entry->buf_id, entry->curpage,
+			    entry->offset)) != 0)
 				return (error);
+			break;
 		default:
 			break;
 		}

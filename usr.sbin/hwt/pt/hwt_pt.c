@@ -38,6 +38,7 @@
 #include <sys/hwt_record.h>
 
 #include <err.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -78,7 +79,7 @@ pt_ctx_compare(const void *n1, const void *n2)
 }
 
 /*
- * Iterate over all active decoders and invoked provided callback.
+ * Iterate over all active decoders and invoke provided callback.
  */
 static void
 pt_foreach_ctx(struct trace_context *tc, pt_ctx_iter_cb callback, void *arg)
@@ -137,42 +138,6 @@ pt_cpu_ctx_init_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		    __func__, cpu_id, strerror(errno));
 	}
 	dctx->id = cpu_id;
-
-	if (!tc->raw) {
-		memset(&config, 0, sizeof(config));
-		config.size = sizeof(config);
-		config.begin = dctx->tracebuf;
-		config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
-
-		dctx->dec = pt_insn_alloc_decoder(&config);
-		if (dctx->dec == NULL) {
-			printf("%s: failed to allocate PT decoder for CPU %d\n",
-			    __func__, cpu_id);
-			free(dctx);
-			return;
-		}
-	}
-}
-
-/*
- * Add a new ELF section to the trace decoder.
- * Invoked as a callback from 'pt_foreach_ctx'.
- */
-static void
-pt_update_image_cb(struct trace_context *tc __unused, struct pt_dec_ctx *dctx,
-    void *arg)
-{
-	int isid;
-	int error;
-	struct pt_image *image;
-
-	isid = *(int *)arg;
-	image = pt_insn_get_image(dctx->dec);
-	error = pt_image_add_cached(image, pt_iscache, isid, NULL);
-	if (error)
-		errx(EXIT_FAILURE,
-		    "%s: failed to add cached section to decoder image: %s",
-		    __func__, pt_strerror(error));
 }
 
 /*
@@ -180,21 +145,11 @@ pt_update_image_cb(struct trace_context *tc __unused, struct pt_dec_ctx *dctx,
  * Invoked as a callback from 'pt_foreach_ctx'.
  */
 static int
-pt_image_load_cb(struct trace_context *tc, struct hwt_exec_img *img)
+pt_image_load_cb(struct trace_context *tc, struct hwt_elf_img *img)
 {
 	int isid;
 
-	if (tc->raw)
-		return (0);
-	isid = pt_iscache_add_file(pt_iscache, img->path, img->offs, img->size,
-	    img->addr);
-	if (isid < 0) {
-		printf("%s: error adding file '%s' to the section cache: %s\n",
-		    __func__, img->path, pt_strerror(isid));
-		return (-1);
-	}
-	pt_foreach_ctx(tc, pt_update_image_cb, &isid);
-
+	// TODO: section rbtree
 	return (0);
 }
 
@@ -205,15 +160,22 @@ pt_init(struct trace_context *tc)
 	/* Buffer size must be power of two. */
 	assert((tc->bufsize & (tc->bufsize - 1)) == 0);
 
-	if (tc->raw)
-		pt_decode_ops = pt_dump_ops;
-	else
+	switch (tc->action) {
+	case HWT_ACTION_SAVE_FILE:
+		break;
+	case HWT_ACTION_DECODE_FILE:
 		pt_decode_ops = pt_decode_generic_ops;
-
-	pt_iscache = pt_iscache_alloc(tc->image_name);
-	if (pt_iscache == NULL)
-		errx(EXIT_FAILURE, "%s: failed to allocate section cache",
-		    __func__);
+		break;
+	case HWT_ACTION_RAW:
+		pt_decode_ops = pt_dump_ops;
+		break;
+	case HWT_ACTION_DECODE:
+		errx(EXIT_FAILURE,
+		    "live decoding is not available when using Intel Processor Trace");
+	default:
+		errx(EXIT_FAILURE,
+		    "unknown action '%d'", tc->action);
+	}
 
 	switch (tc->mode) {
 	case HWT_MODE_CPU:
@@ -284,34 +246,6 @@ pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 		}
 		dctx->id = tid;
 		dctx->dev_fd = fd;
-		if (tc->raw) {
-			RB_INSERT(threads, &threads, dctx);
-			break;
-		}
-
-		/*
-		 * Grab another context, if any, and copy its decoder
-		 * image.
-		 */
-		if (!RB_EMPTY(&threads)) {
-			srcctx = RB_ROOT(&threads);
-			srcimg = pt_insn_get_image(srcctx->dec);
-			dstimg = pt_insn_get_image(dctx->dec);
-			pt_image_copy(dstimg, srcimg);
-		}
-		memset(&config, 0, sizeof(config));
-		config.size = sizeof(config);
-		config.begin = dctx->tracebuf;
-		config.end = (uint8_t *)dctx->tracebuf + tc->bufsize;
-
-		dctx->dec = pt_insn_alloc_decoder(&config);
-		if (dctx->dec == NULL) {
-			printf(
-			    "%s: failed to allocate PT decoder for thread\n",
-			    __func__);
-			free(dctx);
-			return (ENOMEM);
-		}
 		RB_INSERT(threads, &threads, dctx);
 		break;
 	default:
@@ -379,8 +313,28 @@ pt_get_decoder_ctx(struct trace_context *tc, int id)
 }
 
 /*
- * Decode part of the tracing buffer.
+ * Process part of the tracing buffer.
  */
+static int
+pt_process_buffer_chunk(struct trace_context *tc __unused, struct pt_dec_ctx *dctx,
+    uint64_t offs, size_t len, uint64_t *processed)
+{
+	int error;
+
+	switch (tc->action) {
+	case HWT_ACTION_SAVE_FILE:
+		error = hwt_file_add_trace(tc->trace_file, id,
+		    (uint8_t *)dctx->tracebuf + curoff, len);
+		break;
+	default:
+		error = pt_decode_ops.decode_chunk(tc, dctx, curoff, len,
+		    &processed);
+		break;
+	}
+
+	return (error);
+}
+
 static int
 pt_process_buffer(struct trace_context *tc, int id, int curpage,
     vm_offset_t offset)
@@ -419,17 +373,16 @@ pt_process_buffer(struct trace_context *tc, int id, int curpage,
 	if (newoff > curoff) {
 		/* New entries in the trace buffer. */
 		len = newoff - curoff;
-		error = pt_decode_ops.decode_chunk(tc, dctx, curoff, len,
+		error = pt_process_buffer_chunk(tc, dctx, curoff, len,
 		    &processed);
 		if (error != 0)
 			return (error);
-
 		dctx->curoff += processed;
 		dctx->ts += processed;
 	} else if (newoff < curoff) {
 		/* New entries in the trace buffer. Buffer wrapped. */
 		len = tc->bufsize - curoff;
-		error = pt_decode_ops.decode_chunk(tc, dctx, curoff, len,
+		error = pt_process_buffer_chunk(tc, dctx, curoff, len,
 		    &processed);
 		if (error != 0)
 			return (error);
@@ -439,7 +392,7 @@ pt_process_buffer(struct trace_context *tc, int id, int curpage,
 
 		curoff = 0;
 		len = newoff;
-		error = pt_decode_ops.decode_chunk(tc, dctx, curoff, len,
+		error = pt_process_buffer_chunk(tc, dctx, curoff, len,
 		    &processed);
 		if (error != 0)
 			return (error);
@@ -482,5 +435,5 @@ struct backend_methods pt_methods = {
 	.shutdown = pt_shutdown,
 	.process_buffer = pt_process_buffer,
 	.set_config = pt_set_config,
-	.image_load_cb = pt_image_load_cb
+	.image_load_cb = pt_image_load_cb,
 };

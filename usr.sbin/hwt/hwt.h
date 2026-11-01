@@ -30,11 +30,25 @@
 #define	_HWTVAR_H_
 
 #include "hwt_fmt.h"
+
 #define	TC_MAX_ADDR_RANGES	16
 
 struct trace_context;
-struct hwt_exec_img;
+struct hwt_elf_img;
 struct pmcstat_image;
+
+enum hwt_action {
+	HWT_ACTION_RAW,
+	HWT_ACTION_DECODE,
+	HWT_ACTION_DECODE_FILE,
+	HWT_ACTION_SAVE_FILE
+};
+
+enum hwt_backend_type {
+	HWT_PT = 1,
+	HWT_CORESIGHT = 2,
+	HWT_SPE = 3,
+};
 
 struct backend_methods {
 	int (*init)(struct trace_context *tc);
@@ -51,7 +65,7 @@ struct backend_methods {
 	 * Called whenever the traced process's address space layout changes.
 	 */
 	int (
-	    *image_load_cb)(struct trace_context *tc, struct hwt_exec_img *img);
+	    *image_load_cb)(struct trace_context *tc, struct hwt_elf_img *img);
 
 	/*
 	 * Trace data processing methods.
@@ -74,6 +88,7 @@ struct backend_methods {
 	int (*process)(struct trace_context *tc);
 	int (*process_buffer)(struct trace_context *tc, int buf_id, int curpage,
 	    vm_offset_t offset);
+	int (*process_file)(struct trace_context *tc, struct hwt_file *f);
 };
 
 struct backend {
@@ -110,15 +125,17 @@ struct trace_context {
 	void *config;
 	int flag_format;
 
+	int tracing_mode;
+	enum hwt_action action;
+
 	/* Raw trace. */
-	int raw;
 	FILE *raw_f;
 	uint64_t bytes_written;
 
 	/* Trace file. */
-	char *filename;
+	const char *trace_file_path;
+	struct hwt_file *trace_file;
 
-	int mode;
 	const char *fs_root;
 	enum hwt_fmt_column fmt;
 };

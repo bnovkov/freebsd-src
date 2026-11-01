@@ -123,6 +123,6 @@ pt_decode_generic_init(struct trace_context *tc, struct pt_dec_ctx *dctx)
 }
 
 struct pt_decode_ops pt_decode_generic_ops = {
-	.init = pt_decode_generic_init,
-	.decode_chunk = pt_decode_chunk_insn
+.init = pt_decode_generic_init,
+.decode_chunk = pt_decode_chunk_insn
 };

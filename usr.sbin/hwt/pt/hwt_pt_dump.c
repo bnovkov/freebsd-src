@@ -24,7 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <amd64/pt/pt.h>
 #include <sys/errno.h>
 #include <sys/hwt.h>
 #include <sys/hwt_record.h>
@@ -42,6 +41,8 @@
 
 #include "libpmcstat_stubs.h"
 #include <libpmcstat.h>
+
+#include <machine/pt/pt.h>
 
 #include "hwt.h"
 #include "hwt_pt.h"
@@ -81,6 +82,6 @@ pt_dump_chunk(struct trace_context *tc __unused, struct pt_dec_ctx *dctx,
 }
 
 struct pt_decode_ops pt_dump_ops = {
-	.init = pt_dump_init,
-	.decode_chunk = pt_dump_chunk
+.init = pt_dump_init,
+.decode_chunk = pt_dump_chunk
 };
