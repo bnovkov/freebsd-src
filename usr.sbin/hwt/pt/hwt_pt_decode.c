@@ -60,39 +60,45 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 	error = 0;
 	offs = start;
 	dec = dctx->dec;
-	/* Set decoder to current offset. */
+	/* Extend the decoder to the last known valid offset. */
 	cfg = __DECONST(struct pt_config *, pt_insn_get_config(dec));
 	cfg->end = (uint8_t *)dctx->tracebuf + (start + len);
-	ret = pt_insn_sync_set(dec, start);
-	do {
-		/* Process any pending events. */
-		while (ret & pts_event_pending) {
-			ret = pt_insn_event(dec, &event, sizeof(event));
-			pt_insn_get_offset(dec, &offs);
-			pt_print_event(tc, dctx, &event, start + offs);
-		}
-		ret = pt_insn_next(dec, &insn, sizeof(insn));
-		if (ret >= 0) {
-			pt_insn_get_offset(dec, &offs);
-			pt_print_insn(tc, dctx, &insn, start + offs);
-			continue;
-		}
-		if (ret == -pte_eos)
-			break;
-		/* A decoding error occured - try to resync.  */
+
+	ret = 0;
+	if (pt_insn_get_sync_offset(dec, &offs) < 0) {
 		ret = pt_insn_sync_forward(dec);
 		if (ret < 0) {
-			if (ret != -pte_eos) {
-				printf(
-				    "%s: error decoding next instruction: %s\n",
-				    __func__, pt_strerror(ret));
-				error = ret;
-			}
+			/*
+			 * No PSB packet in current buffer.
+			 * Don't report an error since the
+			 * PSB emitting frequency is user-configurable
+			 * and the packet might show up in a later buffer.
+			 */
+			*processed = 0;
+			return (0);
+		}
+	}
+
+	do {
+		/* Process any pending events. */
+		while (ret >= 0 && (ret & pts_event_pending) != 0) {
+			ret = pt_insn_event(dec, &event, sizeof(event));
 			pt_insn_get_offset(dec, &offs);
+			pt_print_event(tc, dctx, &event, offs);
+		}
+		ret = pt_insn_next(dec, &insn, sizeof(insn));
+		if (ret < 0) {
+			if (ret == -pte_eos)
+				error = 0;
+			else
+				error = pt_errcode(ret);
 			break;
 		}
+
 		pt_insn_get_offset(dec, &offs);
+		pt_print_insn(tc, dctx, &insn, offs);
 	} while (1);
+
 	pt_insn_get_offset(dec, &offs);
 	*processed = offs - start;
 

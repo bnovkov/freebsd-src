@@ -137,6 +137,10 @@ pt_cpu_ctx_init_cb(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		    __func__, cpu_id, strerror(errno));
 	}
 	dctx->id = cpu_id;
+	if (pt_decode_ops.init(tc, dctx) != 0)
+		errx(EXIT_FAILURE,
+		    "%s: failed to initialize decoder\n",
+		    __func__);
 
 	if (!tc->raw) {
 		memset(&config, 0, sizeof(config));
@@ -284,6 +288,8 @@ pt_mmap(struct trace_context *tc, struct hwt_record_user_entry *rec)
 		}
 		dctx->id = tid;
 		dctx->dev_fd = fd;
+		if (pt_decode_ops.init(tc, dctx) != 0)
+			return (-1);
 		if (tc->raw) {
 			RB_INSERT(threads, &threads, dctx);
 			break;

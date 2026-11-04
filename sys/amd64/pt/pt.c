@@ -56,6 +56,7 @@
 #include <vm/vm_page.h>
 
 #include <machine/atomic.h>
+#include <machine/cpu.h>
 #include <machine/cpufunc.h>
 #include <machine/fpu.h>
 #include <machine/smp.h>
@@ -541,7 +542,7 @@ pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 	    cpu_id);
 	pt_cpu_set_state(cpu_id, PT_INACTIVE);
 	while (atomic_cmpset_int(&cpu->in_pcint_handler, 1, 0))
-		;
+		cpu_spinwait();
 
 	pt_cpu_stop(NULL);
 	CPU_CLR(cpu_id, &ctx->cpu_map);
