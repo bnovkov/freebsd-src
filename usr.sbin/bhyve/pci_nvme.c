@@ -81,6 +81,9 @@
 #include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 
 static int nvme_debug = 0;
@@ -315,6 +318,7 @@ struct pci_nvme_softc {
 	struct pci_devinst *nsc_pi;
 
 	pthread_mutex_t	mtx;
+	pthread_cond_t	idle_cond;	/* pending_ios has become 0 */
 
 	struct nvme_registers regs;
 
@@ -2297,6 +2301,8 @@ pci_nvme_release_ioreq(struct pci_nvme_softc *sc, struct pci_nvme_ioreq *req)
 
 	STAILQ_INSERT_TAIL(&sc->ioreqs_free, req, link);
 	sc->pending_ios--;
+	if (sc->pending_ios == 0)
+		pthread_cond_broadcast(&sc->idle_cond);
 
 	/* when no more IO pending, can set to ready if device reset/enabled */
 	if (sc->pending_ios == 0 &&
@@ -3357,6 +3363,7 @@ pci_nvme_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	pthread_mutex_init(&sc->mtx, NULL);
+	pthread_cond_init(&sc->idle_cond, NULL);
 	sem_init(&sc->iosemlock, 0, sc->ioslots);
 	blockif_register_resize_callback(sc->nvstore.ctx, pci_nvme_resized, sc);
 
@@ -3400,11 +3407,209 @@ pci_nvme_legacy_config(nvlist_t *nvl, const char *opts)
 		return (blockif_legacy_config(nvl, opts));
 }
 
+#ifdef BHYVE_SNAPSHOT
+/*
+ * The state of the controller: its registers, the identify data and the log
+ * pages, the features, the queues and the asynchronous events.  There is no
+ * I/O request in flight, see pci_nvme_pause().  A completion queue's phase
+ * bit is in guest memory: pci_nvme_cq_update() flips the bit of the entry it
+ * writes to.
+ *
+ * A restore runs after pci_nvme_init() with the same configuration, so the
+ * queue arrays and the I/O request slots exist.
+ */
+static int
+pci_nvme_snapshot(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_nvme_softc *sc;
+	struct nvme_submission_queue *sq;
+	struct nvme_completion_queue *cq;
+	struct pci_nvme_aer *aer;
+	uint32_t i, ioslots, max_queues, naer;
+	uint16_t cids[UINT8_MAX + 1];	/* AERL is 8 bits wide and 0's based */
+	int ret;
+
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+
+	if (sc->nvstore.type != NVME_STOR_BLOCKIF) {
+		EPRINTLN("%s: a RAM backed namespace is not supported",
+		    __func__);
+		return (ENOTSUP);
+	}
+
+	max_queues = sc->max_queues;
+	ioslots = sc->ioslots;
+	SNAPSHOT_VAR_OR_LEAVE(max_queues, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(ioslots, meta, ret, done);
+	if (max_queues != sc->max_queues || ioslots != sc->ioslots) {
+		EPRINTLN("%s: configuration mismatch: maxq %u ioslots %u, "
+		    "expected %u and %u", __func__, sc->max_queues,
+		    sc->ioslots, max_queues, ioslots);
+		ret = EINVAL;
+		goto done;
+	}
+
+	pthread_mutex_lock(&sc->mtx);
+	if (meta->op == VM_SNAPSHOT_SAVE && sc->pending_ios != 0) {
+		EPRINTLN("%s: %u I/O requests pending", __func__,
+		    sc->pending_ios);
+		ret = EBUSY;
+		goto unlock;
+	}
+	SNAPSHOT_VAR_OR_LEAVE(sc->regs, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->nsdata, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->ctrldata, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->err_log, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->health_log, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->fw_log, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->ns_log, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->num_cqueues, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->num_squeues, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->num_q_is_set, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->read_data_units, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->write_data_units, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->read_commands, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->write_commands, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->read_dunits_remainder, meta, ret, unlock);
+	SNAPSHOT_VAR_OR_LEAVE(sc->write_dunits_remainder, meta, ret, unlock);
+	for (i = 0; i < NVME_FID_MAX; i++)
+		SNAPSHOT_VAR_OR_LEAVE(sc->feat[i].cdw11, meta, ret, unlock);
+	if (sc->num_squeues > sc->max_queues ||
+	    sc->num_cqueues > sc->max_queues)
+		ret = EINVAL;
+unlock:
+	pthread_mutex_unlock(&sc->mtx);
+	if (ret != 0)
+		goto done;
+
+	/* The admin queues (0) and the I/O queues. */
+	for (i = 0; i < sc->max_queues + 1; i++) {
+		sq = &sc->submit_queues[i];
+		pthread_mutex_lock(&sq->mtx);
+		SNAPSHOT_VAR_OR_LEAVE(sq->size, meta, ret, sq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(sq->head, meta, ret, sq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(sq->tail, meta, ret, sq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(sq->cqid, meta, ret, sq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(sq->qpriority, meta, ret, sq_unlock);
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(pi->pi_vmctx, sq->qbase,
+		    sizeof(struct nvme_command) * sq->size, true, meta, ret,
+		    sq_unlock);
+sq_unlock:
+		pthread_mutex_unlock(&sq->mtx);
+		if (ret != 0)
+			goto done;
+
+		cq = &sc->compl_queues[i];
+		pthread_mutex_lock(&cq->mtx);
+		SNAPSHOT_VAR_OR_LEAVE(cq->size, meta, ret, cq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(cq->head, meta, ret, cq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(cq->tail, meta, ret, cq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(cq->intr_vec, meta, ret, cq_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(cq->intr_en, meta, ret, cq_unlock);
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(pi->pi_vmctx, cq->qbase,
+		    sizeof(struct nvme_completion) * cq->size, true, meta, ret,
+		    cq_unlock);
+cq_unlock:
+		pthread_mutex_unlock(&cq->mtx);
+		if (ret != 0)
+			goto done;
+	}
+
+	/*
+	 * The Asynchronous Event Requests that wait for an event (their
+	 * command IDs), and the events that wait for a request.
+	 */
+	pthread_mutex_lock(&sc->aen_mtx);
+	naer = 0;
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		pthread_mutex_lock(&sc->aer_mtx);
+		STAILQ_FOREACH(aer, &sc->aer_list, link) {
+			if (naer < nitems(cids))
+				cids[naer++] = aer->cid;
+		}
+		pthread_mutex_unlock(&sc->aer_mtx);
+	}
+	SNAPSHOT_VAR_OR_LEAVE(naer, meta, ret, aen_unlock);
+	if (naer > nitems(cids)) {
+		ret = EINVAL;
+		goto aen_unlock;
+	}
+	SNAPSHOT_BUF_OR_LEAVE(cids, naer * sizeof(cids[0]), meta, ret,
+	    aen_unlock);
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		pci_nvme_aer_destroy(sc);
+		for (i = 0; i < naer; i++) {
+			if (pci_nvme_aer_add(sc, cids[i]) != 0) {
+				ret = ENOMEM;
+				goto aen_unlock;
+			}
+		}
+	}
+	for (i = 0; i < PCI_NVME_AE_TYPE_MAX; i++) {
+		SNAPSHOT_VAR_OR_LEAVE(sc->aen[i].event_data, meta, ret,
+		    aen_unlock);
+		SNAPSHOT_VAR_OR_LEAVE(sc->aen[i].posted, meta, ret, aen_unlock);
+	}
+aen_unlock:
+	pthread_mutex_unlock(&sc->aen_mtx);
+
+	/* A restored event may find a restored request. */
+	if (ret == 0 && meta->op == VM_SNAPSHOT_RESTORE)
+		pci_nvme_aen_notify(sc);
+done:
+	return (ret);
+}
+
+static int
+pci_nvme_pause(struct pci_devinst *pi)
+{
+	struct pci_nvme_softc *sc;
+
+	sc = pi->pi_arg;
+
+	/*
+	 * The vCPUs are paused, so no new command arrives.  Wait for the
+	 * commands in progress: a Dataset Management command issues the block
+	 * request for its next range when the previous one completes, and
+	 * blockif_pause() only waits for the requests in flight.
+	 */
+	pthread_mutex_lock(&sc->mtx);
+	while (sc->pending_ios != 0)
+		pthread_cond_wait(&sc->idle_cond, &sc->mtx);
+	pthread_mutex_unlock(&sc->mtx);
+
+	if (sc->nvstore.type == NVME_STOR_BLOCKIF)
+		blockif_pause(sc->nvstore.ctx);
+
+	return (0);
+}
+
+static int
+pci_nvme_resume(struct pci_devinst *pi)
+{
+	struct pci_nvme_softc *sc;
+
+	sc = pi->pi_arg;
+
+	if (sc->nvstore.type == NVME_STOR_BLOCKIF)
+		blockif_resume(sc->nvstore.ctx);
+
+	return (0);
+}
+#endif	/* BHYVE_SNAPSHOT */
+
 static const struct pci_devemu pci_de_nvme = {
 	.pe_emu =	"nvme",
 	.pe_init =	pci_nvme_init,
 	.pe_legacy_config = pci_nvme_legacy_config,
 	.pe_barwrite =	pci_nvme_write,
-	.pe_barread =	pci_nvme_read
+	.pe_barread =	pci_nvme_read,
+#ifdef BHYVE_SNAPSHOT
+	.pe_snapshot =	pci_nvme_snapshot,
+	.pe_pause =	pci_nvme_pause,
+	.pe_resume =	pci_nvme_resume,
+#endif
 };
 PCI_EMUL_SET(pci_de_nvme);
