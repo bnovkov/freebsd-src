@@ -613,6 +613,12 @@ pt_backend_init(struct hwt_context *ctx)
 	dprintf("%s\n", __func__);
 	if (ctx->mode != HWT_MODE_CPU)
 		return (0);
+
+	/* Concurrent MODE_CPU tracing sessions are not allowed. */
+	if (ctx->mode == HWT_MODE_CPU &&
+	    atomic_swap_32(&cpu_mode_ctr, 1) != 0)
+		return (-1);
+
 	TAILQ_FOREACH(hwt_cpu, &ctx->cpus, next) {
 		error = pt_init_ctx(&pt_pcpu_ctx[hwt_cpu->cpu_id], hwt_cpu->vm,
 		    hwt_cpu->cpu_id);
