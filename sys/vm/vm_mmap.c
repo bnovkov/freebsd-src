@@ -634,10 +634,23 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 	if (HWT_HOOK_INSTALLED && rv == KERN_SUCCESS) {
 		struct hwt_record_entry ent;
 
-		ent.addr = (uintptr_t) addr;
-		ent.fullpath = NULL;
-		ent.record_type = HWT_RECORD_MUNMAP;
-		HWT_CALL_HOOK(td, HWT_RECORD, &ent);
+		ent.addr = 0;
+		if (vm_map_lookup_entry(map, addr, &entry)) {
+			for (; entry->start < end;
+				 entry = vm_map_entry_succ(entry)) {
+				if (vm_map_check_protection(map, entry->start,
+				    entry->end, VM_PROT_EXECUTE) == TRUE) {
+					ent.addr = (uintptr_t) addr;
+					eng.size = (size_t) size;
+					break;
+				}
+			}
+		}
+		if (ent.addr != 0) {
+			ent.record_type = HWT_RECORD_MUNMAP;
+			ent.fullpath = NULL;
+			HWT_CALL_HOOK(td, HWT_RECORD, &ent);
+		}
 	}
 #endif
 
