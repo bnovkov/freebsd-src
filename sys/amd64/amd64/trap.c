@@ -100,6 +100,9 @@ PMC_SOFT_DEFINE( , , page_fault, write);
 #include <sys/dtrace_bsd.h>
 #endif
 
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+
 extern inthand_t IDTVEC(bpt), IDTVEC(bpt_pti), IDTVEC(dbg),
     IDTVEC(fast_syscall), IDTVEC(fast_syscall_pti), IDTVEC(fast_syscall32),
     IDTVEC(int0x80_syscall_pti), IDTVEC(int0x80_syscall);
@@ -532,6 +535,14 @@ trap(struct trapframe *frame)
 			return;
 
 		switch (type) {
+		case T_ALIGNFLT:
+			if (curpcb->pcb_onfault != NULL) {
+				frame->tf_rip = (long)curpcb->pcb_onfault;
+				return;
+			}
+			trap_fatal(frame, 0);
+			return;
+
 		case T_PAGEFLT:			/* page fault */
 			(void)trap_pfault(frame, false, NULL, NULL);
 			return;
@@ -1301,6 +1312,9 @@ amd64_syscall(struct thread *td, int traced)
 	    td->td_md.md_invl_gen.gen));
 
 	syscallret(td);
+
+	// XXX
+	td->td_kpatch_mask = atomic_load_64(&kpatch_active_mask);
 
 	/*
 	 * If the user-supplied value of %rip is not a canonical

@@ -252,7 +252,7 @@ alltraps_pushregs_no_rax:
 	pushfq
 	andq	$~(PSL_D | PSL_AC),(%rsp)
 	popfq
-#ifdef KDTRACE_HOOKS
+
 	/*
 	 * DTrace Function Boundary Trace (fbt) probes are triggered
 	 * by int3 (0xcc) which causes the #BP (T_BPTFLT) breakpoint
@@ -264,6 +264,14 @@ alltraps_pushregs_no_rax:
 	cmpl	$T_BPTFLT,TF_TRAPNO(%rsp)
 	jne	calltrap
 
+	movq	%rsp, %rdi
+	call	kpatch_trap_handler
+
+	cmpl	$0, %eax
+	je	doreti
+	jg	kpatch_emulate_push
+
+#ifdef KDTRACE_HOOKS
 	/* Check if there is no DTrace hook registered. */
 	cmpq	$0,dtrace_invop_jump_addr
 	je	calltrap
@@ -1703,5 +1711,29 @@ fred_out_of_nmi:
 #ifdef HWPMC_HOOKS
 	ENTRY(end_exceptions)
 #endif
+
+	ALIGN_TEXT
+	.globl  kpatch_emulate_push
+	.type   kpatch_emulate_push,@function
+kpatch_emulate_push:
+	RESTORE_REGS
+	addq	$TF_RIP, %rsp
+	subq	$16, %rsp		/* make room for %rbp */
+	pushq	%rax			/* push temp */
+	movq	24(%rsp), %rax		/* load calling RIP */
+	movq	%rax, 8(%rsp)		/* store calling RIP */
+	movq	32(%rsp), %rax		/* load calling CS */
+	movq	%rax, 16(%rsp)		/* store calling CS */
+	movq	40(%rsp), %rax		/* load calling RFLAGS */
+	movq	%rax, 24(%rsp)		/* store calling RFLAGS */
+	movq	48(%rsp), %rax		/* load calling RSP */
+	subq	$8, %rax		/* make room for %rbp */
+	movq	%rax, 32(%rsp)		/* store calling RSP */
+	movq	56(%rsp), %rax		/* load calling SS */
+	movq	%rax, 40(%rsp)		/* store calling SS */
+	movq	32(%rsp), %rax		/* reload calling RSP */
+	movq	%rbp, (%rax)		/* store %rbp there */
+	popq	%rax			/* pop off temp */
+	iretq				/* return from interrupt */
 
 	.section .note.GNU-stack,"",%progbits

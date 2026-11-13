@@ -74,6 +74,9 @@
 #include <sys/epoch.h>
 #endif
 
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+
 /*
  * Define the code needed before returning to user mode, for trap and
  * syscall.
@@ -349,6 +352,8 @@ ast_handler(struct thread *td, struct trapframe *framep, bool dtor)
 		if (run)
 			f(td, td_ast);
 	}
+
+	//td->td_kpatch_mask = atomic_load_64(&kpatch_active_mask);
 }
 
 void

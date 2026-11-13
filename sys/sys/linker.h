@@ -105,6 +105,11 @@ struct linker_file {
     int			nenabled;	/* number of enabled probes. */
     int			fbt_nentries;	/* number of fbt entries created. */
 
+    /*
+     * Kernel live-patching subsystem
+     */
+    void*		kpatch_info;
+
 #ifdef __arm__
     caddr_t		exidx_addr;	/* Unwind data index table start */
     size_t		exidx_size;	/* Unwind data index table size */

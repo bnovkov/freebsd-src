@@ -57,6 +57,7 @@ MAN=	aac.4 \
 	${_bxe.4} \
 	${_aout.4} \
 	${_apic.4} \
+	${_apm.4} \
 	aq.4 \
 	arcmsr.4 \
 	arswitch.4 \
@@ -211,6 +212,7 @@ MAN=	aac.4 \
 	h_ertt.4 \
 	hconf.4 \
 	hcons.4 \
+	hfsts.4 \
 	hgame.4 \
 	hidbus.4 \
 	hidquirk.4 \
@@ -735,7 +737,9 @@ MLINKS+=em.4 if_em.4 \
 	em.4 if_igbv.4 \
 	em.4 lem.4 \
 	em.4 if_lem.4
+MLINKS+=ena.4 if_ena.4
 MLINKS+=enc.4 if_enc.4
+MLINKS+=enic.4 if_enic.4
 MLINKS+=epair.4 if_epair.4
 MLINKS+=et.4 if_et.4
 MLINKS+=ext2fs.4 ext4fs.4
@@ -758,6 +762,7 @@ MLINKS+=gpio.4 gpiobus.4
 MLINKS+=gpioths.4 dht11.4
 MLINKS+=gpioths.4 dht22.4
 MLINKS+=gre.4 if_gre.4
+MLINKS+=hfsts.4 hfstsfd.4
 MLINKS+=hpet.4 acpi_hpet.4
 MLINKS+=${_hv_netvsc.4} ${_hn.4} \
 	${_hv_netvsc.4} ${_if_hn.4}
@@ -872,6 +877,7 @@ _acpi_wmi.4=	acpi_wmi.4
 _aesni.4=	aesni.4
 _aout.4=	aout.4
 _apic.4=	apic.4
+_apm.4=		apm.4
 _atrtc.4=	atrtc.4
 _attimer.4=	attimer.4
 _aibs.4=	aibs.4
@@ -1085,14 +1091,6 @@ MAN+=		mlx5ib.4
 
 .if ${MK_MLX5TOOL} != "no"
 MAN+=		mlx5io.4
-.endif
-
-.if ${MK_TESTS} != "no"
-MANGROUPS+=	ATF
-ATFTOP=		${SRCTOP}/contrib/atf
-.PATH:          ${ATFTOP}/doc
-ATF=		atf-test-case.4
-ATFPACKAGE=	atf
 .endif
 
 .if ${MK_PF} != "no"

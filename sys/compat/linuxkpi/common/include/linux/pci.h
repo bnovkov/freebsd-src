@@ -98,7 +98,8 @@ MODULE_PNP_INFO("U32:vendor;U32:device;V32:subvendor;V32:subdevice",	\
 
 #define PCI_VDEVICE(_vendor, _device)					\
 	    .vendor = PCI_VENDOR_ID_##_vendor, .device = (_device),	\
-	    .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID
+	    .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID,		\
+	    .class = 0, .class_mask = 0
 #define	PCI_DEVICE(_vendor, _device)					\
 	    .vendor = (_vendor), .device = (_device),			\
 	    .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID
@@ -147,6 +148,7 @@ MODULE_PNP_INFO("U32:vendor;U32:device;V32:subvendor;V32:subdevice",	\
 #define	PCI_EXP_TYPE_ROOT_PORT	PCIEM_TYPE_ROOT_PORT		/* Root Port */
 #define	PCI_EXP_TYPE_ENDPOINT	PCIEM_TYPE_ENDPOINT		/* Express Endpoint */
 #define	PCI_EXP_TYPE_LEG_END	PCIEM_TYPE_LEGACY_ENDPOINT	/* Legacy Endpoint */
+#define	PCI_EXP_TYPE_UPSTREAM	PCIEM_TYPE_UPSTREAM_PORT	/* Upstream Port */
 #define	PCI_EXP_TYPE_DOWNSTREAM PCIEM_TYPE_DOWNSTREAM_PORT	/* Downstream Port */
 #define	PCI_EXP_FLAGS_SLOT	PCIEM_FLAGS_SLOT		/* Slot implemented */
 #define	PCI_EXP_TYPE_RC_EC	PCIEM_TYPE_ROOT_EC		/* Root Complex Event Collector */

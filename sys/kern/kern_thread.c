@@ -75,6 +75,9 @@
 #include <vm/vm_phys.h>
 #include <sys/eventhandler.h>
 
+#define KPATCH_INTERNAL
+#include <sys/kpatch.h>
+
 /*
  * Asserts below verify the stability of struct thread and struct proc
  * layout, as exposed by KBI to modules.  On head, the KBI is allowed
@@ -805,6 +808,8 @@ thread_alloc(int pages)
 	cpu_thread_alloc(td);
 	cpu_thread_new_kstack(td);
 	EVENTHANDLER_DIRECT_INVOKE(thread_ctor, td);
+
+	td->td_kpatch_mask = atomic_load_64(&kpatch_active_mask);
 	return (td);
 }
 

@@ -392,6 +392,7 @@ struct thread {
 #ifdef EPOCH_TRACE
 	SLIST_HEAD(, epoch_tracker) td_epochs;
 #endif
+	uint64_t	td_kpatch_mask;
 };
 
 struct thread0_storage {
