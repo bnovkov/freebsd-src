@@ -108,10 +108,8 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 				ioctl(tc->thr_fd, HWT_IOC_WAKEUP, &w);
 				return (error);
 			}
-			hwt_elf_link_pmcstat_img(tc, entry);
-
-			if (entry->record_type != HWT_RECORD_KERNEL)
-				hwt_mmap_received(tc, entry);
+			hwt_elf_link_pmcstat_img(tc, entry, false);
+			hwt_mmap_received(tc, entry);
 			break;
 		case HWT_RECORD_KERNEL:
 		case HWT_RECORD_EXECUTABLE:

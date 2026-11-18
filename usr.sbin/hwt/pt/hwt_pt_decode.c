@@ -65,7 +65,8 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 	cfg->end = (uint8_t *)dctx->tracebuf + (start + len);
 
 	ret = 0;
-	if (pt_insn_get_sync_offset(dec, &offs) < 0) {
+	if (pt_insn_get_sync_offset(dec, &offs) < 0 || dctx->needs_sync) {
+		dctx->needs_sync = false;
 		ret = pt_insn_sync_forward(dec);
 		if (ret < 0) {
 			/*
@@ -96,16 +97,24 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 			if (ret == -pte_eos) {
 				error = 0;
 			} else if (ret == -pte_nomap) {
-				/*
-				 *
-				 */
 				fprintf(stdout,
 				    "%s: no map at offset 0x%lu; resyncing\n",
 				    __func__, offs);
 				ret = pt_insn_sync_forward(dec);
 				pt_insn_get_offset(dec, &offs);
+				if (ret < 0) {
+					dctx->needs_sync = true;
+					error = 0;
+					break;
+				}
 				continue;
 			} else {
+				pt_insn_get_offset(dec, &offs);
+				if (offs + 16 >= (uint64_t)start + len) {
+					dctx->needs_sync = true;
+					error = 0;
+					break;
+				}
 				fprintf(stderr,
 				    "%s: error decoding next instruction: %s\n",
 				    __func__, pt_strerror(ret));
