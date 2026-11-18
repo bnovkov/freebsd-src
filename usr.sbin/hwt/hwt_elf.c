@@ -27,7 +27,7 @@
 
 static int
 hwt_elf_find_exec_seg(const char *fullpath, uint64_t *vaddr, uint64_t *foffset,
-    size_t *size, char **dynlinker_path)
+    size_t *size, uint64_t *base_vaddr, char **dynlinker_path)
 {
 	int error;
 	GElf_Phdr ph;
@@ -39,7 +39,7 @@ hwt_elf_find_exec_seg(const char *fullpath, uint64_t *vaddr, uint64_t *foffset,
 	size_t i;
 	uint64_t start, end;
 	const char *elfbase;
-	bool have_phdr;
+	bool have_phdr, have_base;
 
 	fd = open(fullpath, O_RDONLY, 0);
 
@@ -50,6 +50,11 @@ hwt_elf_find_exec_seg(const char *fullpath, uint64_t *vaddr, uint64_t *foffset,
 	assert(elf != NULL);
 	assert(elf_kind(elf) == ELF_K_ELF);
 
+	/*
+	 * ET_REL objects are linked at address 0 and don't have any headers.
+	 */
+	*vaddr = 0;
+	*base_vaddr = 0;
 	error = 0;
 	if (dynlinker_path != NULL)
 		*dynlinker_path = NULL;
@@ -75,6 +80,7 @@ hwt_elf_find_exec_seg(const char *fullpath, uint64_t *vaddr, uint64_t *foffset,
 	}
 
 	have_phdr = false;
+	have_base = false;
 	if (eh.e_type != ET_REL) {
 		for (i = 0; i < eh.e_phnum; i++) {
 			if (gelf_getphdr(elf, i, &ph) != &ph) {
@@ -100,6 +106,10 @@ hwt_elf_find_exec_seg(const char *fullpath, uint64_t *vaddr, uint64_t *foffset,
 					*vaddr = ph.p_vaddr;
 					*foffset = ph.p_offset;
 					have_phdr = true;
+				}
+				if (!have_base) {
+					*base_vaddr = ph.p_vaddr;
+					have_base = true;
 				}
 			}
 		}
@@ -149,19 +159,22 @@ int
 hwt_elf_process_exec(struct trace_context *tc,
     struct hwt_record_user_entry *rec)
 {
-	int error;
-	uint64_t seg_vaddr, foffset;
+	uint64_t seg_vaddr, foffset, base_vaddr;
 	struct hwt_record_user_entry mmap_rec;
 	struct hwt_wakeup wakeup;
 	char* dynlinker_path;
+	int error;
 
 	assert(elf_version(EV_CURRENT) != EV_NONE);
 
 	if (hwt_elf_find_exec_seg(rec->fullpath, &seg_vaddr,
-	    &foffset, &mmap_rec.size, &dynlinker_path) != 0)
+	    &foffset, &mmap_rec.size, &base_vaddr, &dynlinker_path) != 0)
 		return (0);
 	strlcpy(mmap_rec.fullpath, rec->fullpath, PATH_MAX);
-	mmap_rec.addr = rec->addr + seg_vaddr;
+	if (rec->record_type == HWT_RECORD_KERNEL)
+		mmap_rec.addr = rec->addr + (seg_vaddr - base_vaddr);
+	else
+		mmap_rec.addr = rec->addr + seg_vaddr;
 	mmap_rec.foffset = foffset;
 	mmap_rec.record_type = HWT_RECORD_MMAP;
 
@@ -179,13 +192,13 @@ hwt_elf_process_exec(struct trace_context *tc,
 
 	/* Fetch and register RTLD. */
 	if (hwt_elf_find_exec_seg(dynlinker_path,
-	    &seg_vaddr, &foffset, &mmap_rec.size, NULL) != 0) {
+	    &seg_vaddr, &foffset, &mmap_rec.size, &base_vaddr, NULL) != 0) {
 		free(dynlinker_path);
 		return (-1);
 	}
 	strlcpy(mmap_rec.fullpath, dynlinker_path,
 	    PATH_MAX);
-	mmap_rec.addr = rec->baseaddr + seg_vaddr;
+	mmap_rec.addr = rec->baseaddr + (seg_vaddr - base_vaddr);
 	mmap_rec.foffset = foffset;
 	mmap_rec.record_type = HWT_RECORD_MMAP;
 	free(dynlinker_path);

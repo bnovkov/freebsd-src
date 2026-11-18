@@ -43,6 +43,7 @@ struct pt_dec_ctx {
 	void *tracebuf;
 	struct pt_insn_decoder *dec;
 	int dev_fd;
+	bool enabled;
 	bool needs_sync;
 
 	int id;

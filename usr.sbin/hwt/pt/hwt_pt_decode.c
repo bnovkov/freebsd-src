@@ -51,7 +51,7 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 {
 	int ret;
 	int error;
-	uint64_t offs;
+	uint64_t offs, end;
 	struct pt_insn insn;
 	struct pt_event event;
 	struct pt_config *cfg;
@@ -60,11 +60,16 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 	error = 0;
 	offs = start;
 	dec = dctx->dec;
-	/* Extend the decoder to the last known valid offset. */
 	cfg = __DECONST(struct pt_config *, pt_insn_get_config(dec));
-	cfg->end = (uint8_t *)dctx->tracebuf + (start + len);
+	/*
+	 * Extend the decoder to the last known valid offset if we're shutting down.
+	 */
+	if (tc->shutdown) {
+		cfg->end = (uint8_t *)dctx->tracebuf + (start + len);
+	}
 
 	ret = 0;
+	end = start + len;
 	if (pt_insn_get_sync_offset(dec, &offs) < 0 || dctx->needs_sync) {
 		dctx->needs_sync = false;
 		ret = pt_insn_sync_forward(dec);
@@ -80,7 +85,8 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		}
 	}
 
-	do {
+	pt_insn_get_offset(dec, &offs);
+	while (offs < end) {
 		/* Process any pending events. */
 		while (ret >= 0 && (ret & pts_event_pending) != 0) {
 			ret = pt_insn_event(dec, &event, sizeof(event));
@@ -89,6 +95,8 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 			}
 			pt_insn_get_offset(dec, &offs);
 		}
+		if (offs >= end)
+			break;
 		if (ret >= 0) {
 			ret = pt_insn_next(dec, &insn, sizeof(insn));
 			pt_insn_get_offset(dec, &offs);
@@ -107,6 +115,8 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 					error = 0;
 					break;
 				}
+				if (offs >= end)
+					break;
 				continue;
 			} else {
 				pt_insn_get_offset(dec, &offs);
@@ -124,7 +134,8 @@ pt_decode_chunk_insn(struct trace_context *tc, struct pt_dec_ctx *dctx,
 		}
 
 		pt_print_insn(tc, dctx, &insn, offs);
-	} while (1);
+		pt_insn_get_offset(dec, &offs);
+	}
 
 	pt_insn_get_offset(dec, &offs);
 	*processed = offs - start;

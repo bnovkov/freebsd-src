@@ -92,6 +92,7 @@ hwt_record_fetch(struct trace_context *tc, int *nrecords, int wait)
 
 	*nrecords = 0;
 	for (j = 0; j < nentries; j++) {
+		error = 0;
 		entry = &tc->records[j];
 
 		switch (entry->record_type) {
