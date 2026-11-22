@@ -697,6 +697,10 @@
 #define	MSR_FRED_SSP3		0x1d3
 #define	MSR_FRED_CONFIG		0x1d4
 #define	MSR_DEBUGCTLMSR		0x1d9
+#define	 DEBUGCTL_LBR		(1ULL << 0)
+#define	 DEBUGCTL_BTF		(1ULL << 1)
+#define	 DEBUGCTL_FLBRI		(1ULL << 11)
+#define	 DEBUGCTL_FPMCI		(1ULL << 12)
 #define	MSR_LASTBRANCHFROMIP	0x1db
 #define	MSR_LASTBRANCHTOIP	0x1dc
 #define	MSR_LASTINTFROMIP	0x1dd
