@@ -6,6 +6,7 @@
 	[EXTERR_CAT_HWPMC_IBS] = "dev/hwpmc/hwpmc_ibs.c",
 	[EXTERR_CAT_HWPMC_MOD] = "dev/hwpmc/hwpmc_mod.c",
 	[EXTERR_CAT_VMM] = "dev/vmm/vmm_dev.c",
+	[EXTERR_CAT_VMM_MEM] = "dev/vmm/vmm_mem.c",
 	[EXTERR_CAT_FUSE_DEVICE] = "fs/fuse/fuse_device.c",
 	[EXTERR_CAT_FUSE_VFS] = "fs/fuse/fuse_vfsops.c",
 	[EXTERR_CAT_FUSE_VNOPS] = "fs/fuse/fuse_vnops.c",

@@ -6,6 +6,8 @@
  */
 
 #include <sys/types.h>
+#define EXTERR_CATEGORY EXTERR_CAT_VMM_MEM
+#include <sys/exterrvar.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/sx.h>
@@ -184,17 +186,18 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
 	vm_assert_memseg_xlocked(vm);
 
 	if (ident < 0 || ident >= VM_MAX_MEMSEGS)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid memory segment identifier"));
 
 	if (len == 0 || (len & PAGE_MASK))
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "Zero or non page-aligned segment length"));
 
 	seg = &mem->mem_segs[ident];
 	if (seg->object != NULL) {
 		if (seg->len == len && seg->sysmem == sysmem)
 			return (EEXIST);
 		else
-			return (EINVAL);
+			return (EXTERROR(EINVAL, "Mismatched segment length or type"));
 	}
 
 	/*
@@ -202,10 +205,11 @@ vm_alloc_memseg(struct vm *vm, int ident, size_t len, bool sysmem,
 	 * error to the user.
 	 */
 	if (obj_domainset != NULL && domainset_empty_vm(obj_domainset))
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid NUMA policy"));
 	obj = vm_object_allocate(OBJT_SWAP, len >> PAGE_SHIFT);
 	if (obj == NULL)
-		return (ENOMEM);
+		return (
+		    EXTERROR(ENOMEM, "Failed to allocate segment vm_object"));
 
 	seg->len = len;
 	seg->object = obj;
@@ -228,7 +232,7 @@ vm_get_memseg(struct vm *vm, int ident, size_t *len, bool *sysmem,
 	vm_assert_memseg_locked(vm);
 
 	if (ident < 0 || ident >= VM_MAX_MEMSEGS)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid memory segment index"));
 
 	seg = &mem->mem_segs[ident];
 	if (len)
@@ -267,27 +271,30 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 	int i, error;
 
 	if (prot == 0 || (prot & ~(VM_PROT_ALL)) != 0)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid protection flags"));
 
 	if (flags & ~VM_MEMMAP_F_WIRED)
-		return (EINVAL);
+		return (
+		    EXTERROR(EINVAL, "Invalid vmm mapping flags specified"));
 
 	if (segid < 0 || segid >= VM_MAX_MEMSEGS)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid segment identifier"));
 
 	mem = vm_mem(vm);
 	seg = &mem->mem_segs[segid];
 	if (seg->object == NULL)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Missing vm_object"));
 
 	if (first + len < first || gpa + len < gpa)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "Malformed offset or guest physical address"));
 	last = first + len;
 	if (first >= last || last > seg->len)
-		return (EINVAL);
+		return (EXTERROR(EINVAL, "Invalid mapping length or offset"));
 
 	if ((gpa | first | last) & PAGE_MASK)
-		return (EINVAL);
+		return (EXTERROR(EINVAL,
+		    "Guest physical address or object offset not page aligned"));
 
 	map = NULL;
 	for (i = 0; i < VM_MAX_MEMMAPS; i++) {
