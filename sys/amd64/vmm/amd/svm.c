@@ -562,9 +562,11 @@ vmcb_init(struct svm_softc *sc, struct svm_vcpu *vcpu, uint64_t iopm_base_pa,
 	 */
 	ctrl->v_intr_masking = 1;
 
-	/* Enable Last Branch Record aka LBR for debugging */
-	ctrl->lbr_virt_en = 1;
-	state->dbgctl = BIT(0);
+	/* Enable Last Branch Record (LBR) virtualization if the CPU supports it. */
+	if ((svm_feature & AMD_CPUID_SVM_LBR) != 0) {
+		ctrl->lbr_virt_en = 1;
+		state->dbgctl = BIT(0);
+	}
 
 	/* EFER_SVM must always be set when the guest is executing */
 	state->efer = EFER_SVM;
