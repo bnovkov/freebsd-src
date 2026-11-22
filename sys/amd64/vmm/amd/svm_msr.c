@@ -130,6 +130,13 @@ svm_rdmsr(struct svm_vcpu *vcpu, u_int num, uint64_t *result, bool *retu)
 	case MSR_EXTFEATURES:
 		*result = 0;
 		break;
+	case MSR_DEBUGCTLMSR: {
+		struct vmcb_state *state;
+
+		state = svm_get_vmcb_state(vcpu);
+		*result = state->dbgctl;
+		break;
+	}
 	default:
 		error = EINVAL;
 		break;
@@ -176,6 +183,26 @@ svm_wrmsr(struct svm_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 #endif
 	case MSR_EXTFEATURES:
 		break;
+	case MSR_DEBUGCTLMSR: {
+		struct vmcb_ctrl *ctrl;
+		struct vmcb_state *state;
+
+		ctrl = svm_get_vmcb_ctrl(vcpu);
+		state = svm_get_vmcb_state(vcpu);
+
+		/*
+		 * Only enable bits that virtualize cleanly.
+		 * This currently includes the "Last-Branch Record"
+		 * (LBR) bit, provided that the CPU supports
+		 * LBR virtualization and has turned it on.
+		 */
+		if (ctrl->lbr_virt_en != 0) {
+			state->dbgctl = val & DEBUGCTL_LBR;
+		} else
+			state->dbgctl = 0;
+		svm_set_dirty(vcpu, VMCB_CACHE_LBR);
+		break;
+	}
 	default:
 		error = EINVAL;
 		break;
