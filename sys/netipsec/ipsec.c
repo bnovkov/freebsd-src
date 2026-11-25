@@ -329,6 +329,8 @@ ipsec_invalidate_cache(struct inpcb *inp, u_int dir)
 		sp = inp->inp_sp->sp_out;
 		inp->inp_sp->sp_out = NULL;
 	}
+	if (inp->inp_sp->sav_out != NULL)
+		key_freesav(&inp->inp_sp->sav_out);
 	if (sp != NULL)
 		key_freesp(&sp); /* release extra reference */
 	inp->inp_sp->hdrsz = 0;

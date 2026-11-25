@@ -132,6 +132,10 @@ struct inpcbpolicy {
 	struct secpolicy	*sp_in;
 	struct secpolicy	*sp_out;
 
+	/* Resolved SA cache. */
+	struct secasvar *sav_out;
+	uint32_t        sa_genid;
+
 	uint32_t		genid;
 	uint16_t		flags;
 #define	INP_INBOUND_POLICY	0x0001

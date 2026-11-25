@@ -164,6 +164,9 @@ VNET_DEFINE_STATIC(u_int32_t, acq_seq) = 0;
 VNET_DEFINE_STATIC(uint32_t, sp_genid) = 0;
 #define	V_sp_genid		VNET(sp_genid)
 
+VNET_DEFINE_STATIC(uint32_t, sa_genid) = 0;
+#define	V_sa_genid		VNET(sa_genid)
+
 /* SPD */
 TAILQ_HEAD(secpolicy_queue, secpolicy);
 LIST_HEAD(secpolicy_list, secpolicy);
@@ -892,6 +895,8 @@ key_bumpspgen(void)
 {
 
 	V_sp_genid++;
+	/* Every SP gen change bumps the SA gen as well. */
+	key_bumpsagen();
 }
 
 static int
@@ -1304,6 +1309,7 @@ key_detach(struct secpolicy *sp)
 		/* SP is already unlinked */
 		return;
 	}
+	key_bumpsagen();
 	sp->state = IPSEC_SPSTATE_DEAD;
 	ipsec_accel_spddel(sp);
 	TAILQ_REMOVE(&V_sptree[sp->spidx.dir], sp, chain);
@@ -1425,6 +1431,14 @@ key_unregister_ifnet(struct secpolicy **spp, u_int count)
 	}
 }
 
+
+void
+key_refsav(struct secasvar *sav)
+{
+
+	SAV_ADDREF(sav);
+}
+
 /*
  * Must be called after calling key_allocsa().
  * This function is called by key_freesp() to free some SA allocated
@@ -1460,6 +1474,7 @@ key_unlinksav(struct secasvar *sav)
 	KEYDBG(KEY_STAMP,
 	    printf("%s: SA(%p)\n", __func__, sav));
 
+	key_bumpsagen();
 	CURVNET_ASSERT_SET();
 	SAHTREE_UNLOCK_ASSERT();
 	SAHTREE_WLOCK();
@@ -2634,6 +2649,7 @@ key_spdflush(struct socket *so, struct mbuf *m, const struct sadb_msghdr *mhp)
 		return key_senderror(so, m, EINVAL);
 
 	TAILQ_INIT(&drainq);
+	key_bumpsagen();
 	SPTREE_WLOCK();
 	for (dir = 0; dir < IPSEC_DIR_MAX; dir++) {
 		TAILQ_CONCAT(&drainq, &V_sptree[dir], chain);
@@ -3149,6 +3165,7 @@ again:
 		sav->state = SADB_SASTATE_MATURE;
 	}
 
+	key_bumpsagen();
 	SAHTREE_WLOCK();
 	/*
 	 * Check that existing SAH wasn't unlinked.
@@ -3713,6 +3730,7 @@ key_setsaval(struct secasvar *sav, const struct sadb_msghdr *mhp)
 	/* Initialize lifetime for CURRENT */
 	sav->firstused = 0;
 	sav->created = time_second;
+	key_bumpsagen();
 
 	/* lifetimes for HARD and SOFT */
 	error = key_updatelifetimes(sav, mhp);
@@ -4673,6 +4691,7 @@ key_flush_spd(time_t now)
 	if (LIST_EMPTY(&drainq))
 		return;
 
+	key_bumpsagen();
 	SPTREE_WLOCK();
 	sp = LIST_FIRST(&drainq);
 	while (sp != NULL) {
@@ -4796,6 +4815,7 @@ key_flush_sad(time_t now)
 	    LIST_EMPTY(&hexpireq) && LIST_EMPTY(&sexpireq))
 		return;
 
+	key_bumpsagen();
 	LIST_INIT(&freeq);
 	SAHTREE_WLOCK();
 	/* Unlink stale LARVAL SAs */
@@ -4910,6 +4930,20 @@ key_flush_sad(time_t now)
 		key_freesah(&sah); /* release last reference */
 		sah = nextsah;
 	}
+}
+
+uint32_t
+key_getsagen(void)
+{
+
+	return (atomic_load_acq_32(&V_sa_genid));
+}
+
+void
+key_bumpsagen(void)
+{
+
+	atomic_add_rel_32(&V_sa_genid, 1);
 }
 
 static void
@@ -5766,6 +5800,7 @@ key_update(struct socket *so, struct mbuf *m, const struct sadb_msghdr *mhp)
 	KEYDBG(KEY_STAMP,
 	    printf("%s: SA(%p)\n", __func__, sav));
 	KEYDBG(KEY_DATA, kdebug_secasv(sav));
+	key_bumpsagen();
 	ipsec_accel_sa_newkey(sav);
 	key_freesav(&sav);
 
@@ -6413,6 +6448,7 @@ key_delete_all(struct socket *so, struct mbuf *m,
 	struct secashead *sah;
 	struct secasvar *sav, *nextsav;
 
+	key_bumpsagen();
 	TAILQ_INIT(&drainq);
 	SAHTREE_WLOCK();
 	LIST_FOREACH(sah, SAHADDRHASH_HASH(saidx), addrhash) {
@@ -7820,6 +7856,7 @@ key_flush(struct socket *so, struct mbuf *m, const struct sadb_msghdr *mhp)
 	KEYDBG(KEY_STAMP,
 	    printf("%s: proto %u\n", __func__, proto));
 
+	key_bumpsagen();
 	TAILQ_INIT(&flushq);
 	if (proto == IPSEC_PROTO_ANY) {
 		/* no SATYPE specified, i.e. flushing all SA. */

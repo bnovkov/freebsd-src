@@ -60,6 +60,8 @@ int key_havesp(u_int);
 int key_havesp_any(void);
 void key_bumpspgen(void);
 uint32_t key_getspgen(void);
+void key_bumpsagen(void);
+uint32_t key_getsagen(void);
 uint32_t key_newreqid(void);
 struct mbuf *key_setaccelif(const char *ifname);
 
@@ -69,6 +71,7 @@ struct secasvar *key_allocsa_tunnel(union sockaddr_union *,
 struct secasvar *key_allocsa_policy(struct secpolicy *,
     const struct secasindex *, int *);
 struct secasvar *key_allocsa_tcpmd5(struct secasindex *);
+void key_refsav(struct secasvar *);
 void key_freesav(struct secasvar **);
 
 int key_sockaddrcmp(const struct sockaddr *, const struct sockaddr *, int);

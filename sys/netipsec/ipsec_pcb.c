@@ -186,6 +186,9 @@ ipsec_delete_pcbpolicy(struct inpcb *inp)
 		key_freesp(&inp_sp->sp_out);
 	}
 
+	if (inp_sp->sav_out != NULL)
+		key_freesav(&inp_sp->sav_out);
+
 	free(inp_sp, M_IPSEC_INPCB);
 	return (0);
 }
@@ -353,6 +356,8 @@ ipsec_set_pcbpolicy(struct inpcb *inp, struct ucred *cred,
 		spp = &inp->inp_sp->sp_out;
 		flags = INP_OUTBOUND_POLICY;
 	}
+	/* Clear the cached outbound SA. */
+	inp->inp_sp->sav_out = NULL;
 	/* Clear old SP and set new SP. */
 	if (*spp != NULL) {
 		ipsec_accel_spddel(*spp);

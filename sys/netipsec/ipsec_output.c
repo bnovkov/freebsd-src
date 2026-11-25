@@ -182,6 +182,50 @@ next:
 	return (sav);
 }
 
+static void
+ipsec4_clear_savcache(struct inpcb *inp)
+{
+	bool wlocked;
+
+	INP_LOCK_ASSERT(inp);
+	if (INP_WLOCKED(inp))
+		wlocked = false;
+	else if ((wlocked = INP_TRY_UPGRADE(inp)) == 0)
+		return;
+
+	if (inp->inp_sp->sav_out != NULL &&
+	    inp->inp_sp->sa_genid != key_getsagen()) {
+		key_freesav(&inp->inp_sp->sav_out);
+		inp->inp_sp->sav_out = NULL;
+	}
+
+	if (wlocked)
+		INP_DOWNGRADE(inp);
+}
+
+static void
+ipsec4_cache_sav(struct inpcb *inp, struct secasvar *sav)
+{
+	bool wlocked;
+
+	INP_LOCK_ASSERT(inp);
+	if (inp->inp_sp->sav_out == sav)
+		return;
+	if (INP_WLOCKED(inp))
+		wlocked = false;
+	else if ((wlocked = INP_TRY_UPGRADE(inp)) == 0)
+		return;
+
+	if (inp->inp_sp->sav_out != NULL)
+		key_freesav(&inp->inp_sp->sav_out);
+	key_refsav(sav);
+	inp->inp_sp->sa_genid = key_getsagen();
+	inp->inp_sp->sav_out = sav;
+
+	if (wlocked)
+		INP_DOWNGRADE(inp);
+}
+
 /*
  * IPsec output logic for IPv4.
  */
@@ -195,7 +239,7 @@ ipsec4_perform_request(struct ifnet *ifp, struct mbuf *m, struct ip *ip1,
 	struct ip *ip;
 	struct mbuf *m1;
 	int error, hwassist, i, off;
-	bool accel;
+	bool accel, can_cache_sav;
 
 	IPSEC_ASSERT(idx < sp->tcount, ("Wrong IPsec request index %d", idx));
 
@@ -208,16 +252,34 @@ ipsec4_perform_request(struct ifnet *ifp, struct mbuf *m, struct ip *ip1,
 	 * determine next transform. At the end of transform we can
 	 * release reference to SP.
 	 */
-	sav = ipsec4_allocsa(ifp, m, ip1, sp, &idx, &error);
-	if (sav == NULL) {
-		if (error == EJUSTRETURN) { /* No IPsec required */
-			(void)ipsec_accel_output(ifp, m, inp, sp, NULL,
-			    AF_INET, mtu, &hwassist);
-			key_freesp(&sp);
-			return (error);
-		}
-		goto bad;
+	sav = NULL;
+	/* Don't cache bundled SAs */
+	can_cache_sav = inp != NULL && inp->inp_faddr.s_addr != INADDR_ANY &&
+		idx == 0;
+	if (can_cache_sav && inp->inp_sp->sav_out != NULL) {
+	    if (inp->inp_sp->sa_genid == key_getsagen()) {
+			/* The cached SA is still valid, use it. */
+			sav = inp->inp_sp->sav_out;
+			key_refsav(sav);
+		} else
+			ipsec4_clear_savcache(inp);
 	}
+	if (sav == NULL) {
+		sav = ipsec4_allocsa(ifp, m, ip1, sp, &idx, &error);
+		if (sav == NULL) {
+			if (error == EJUSTRETURN) { /* No IPsec required */
+				(void)ipsec_accel_output(ifp, m, inp, sp, NULL,
+				    AF_INET, mtu, &hwassist);
+				key_freesp(&sp);
+				return (error);
+			}
+			goto bad;
+		}
+	}
+
+	if (can_cache_sav && inp->inp_sp->sav_out != sav)
+		ipsec4_cache_sav(inp, sav);
+
 	/*
 	 * XXXAE: most likely ip_sum at this point is wrong.
 	 */
